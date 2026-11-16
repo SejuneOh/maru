@@ -57,7 +57,8 @@ public static class Idempotency
     public static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(60);
 
     private sealed record StoredKey(
-        string State, string RequestHash, int? StatusCode, string? Response, bool PendingStale, DateTime CreatedAt);
+        string State, string RequestHash, int? StatusCode, string? Response, bool PendingStale, DateTime CreatedAt,
+        DateTime? FirstAttemptAt);
 
     // Binds the key to the caller, method, path with query, and body.
     public static string HashRequest(Guid memberId, string method, string pathAndQuery, ReadOnlySpan<byte> body)
@@ -118,6 +119,7 @@ public static class Idempotency
         var tenantId = user.Identity.TenantId;
         var reservationId = Guid.NewGuid();
         DateTimeOffset? takenOverFrom = null;
+        DateTime? firstAttemptAt = null;
         var early = await db.WriteAsync<IdempotentResponse?>(async session =>
         {
             await LockAsync(session, tenantId, key);
@@ -125,15 +127,16 @@ public static class Idempotency
             var decided = Decide(stored, requestHash);
             if (decided is not null)
                 return decided;
-            takenOverFrom = stored is { State: "pending" }
-                ? new DateTimeOffset(DateTime.SpecifyKind(stored.CreatedAt, DateTimeKind.Utc))
-                : null;
+            // The first attempt's time survives chained takeovers: the stale row's own created_at is only the
+            // previous takeover, which may be long after an attempt that reached GitHub.
+            firstAttemptAt = stored is { State: "pending" } ? stored.FirstAttemptAt ?? stored.CreatedAt : null;
+            takenOverFrom = firstAttemptAt is { } first ? new DateTimeOffset(DateTime.SpecifyKind(first, DateTimeKind.Utc)) : null;
 
             await DeleteAsync(session, tenantId, key);
             await session.ExecuteAsync("""
-                insert into idempotency_keys (tenant_id, key, member_id, request_hash, state, reservation_id)
-                values (@tenantId, @key, @memberId, @requestHash, 'pending', @reservationId)
-                """, new { tenantId, key, memberId = user.Identity.Member.Id, requestHash, reservationId });
+                insert into idempotency_keys (tenant_id, key, member_id, request_hash, state, reservation_id, first_attempt_at)
+                values (@tenantId, @key, @memberId, @requestHash, 'pending', @reservationId, coalesce(@firstAttemptAt, now()))
+                """, new { tenantId, key, memberId = user.Identity.Member.Id, requestHash, reservationId, firstAttemptAt });
             return null;
         }, ct);
         if (early is not null)
@@ -199,7 +202,8 @@ public static class Idempotency
     private static Task<StoredKey?> FindAsync(TenantSession session, Guid tenantId, string key) =>
         session.QuerySingleOrDefaultAsync<StoredKey>("""
             select state as State, request_hash as RequestHash, status_code as StatusCode, response::text as Response,
-                   (state = 'pending' and created_at <= now() - @pendingTimeout) as PendingStale, created_at as CreatedAt
+                   (state = 'pending' and created_at <= now() - @pendingTimeout) as PendingStale, created_at as CreatedAt,
+                   first_attempt_at as FirstAttemptAt
               from idempotency_keys
              where tenant_id = @tenantId and key = @key and created_at > now() - @lifetime
             """, new { tenantId, key, lifetime = Lifetime, pendingTimeout = PendingTimeout });

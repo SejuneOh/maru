@@ -131,8 +131,18 @@ public class GitHubWriterTests
 
         var full = ListJson(Enumerable.Range(1, GitHubWriter.LookupPageSize).Select(i => (i, "2026-11-01T10:00:00Z", "n")).ToArray());
         var (w2, h2, _) = Make(_ => Json(HttpStatusCode.OK, full));
-        Assert.Null(await w2.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
+        var e = await Assert.ThrowsAsync<GitHubWriteException>(() =>
+            w2.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
+        Assert.Equal(GitHubWriteErrorKind.Unavailable, e.Kind);
         Assert.Equal(GitHubWriter.LookupMaxPages, h2.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Find_created_issue_ignores_a_marker_copied_into_a_human_issue()
+    {
+        var marker = GitHubWriter.CreateMarker("abc");
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.OK, ListJson((9, "2026-11-01T10:00:00Z", marker)).Replace("app[bot]", "human")));
+        Assert.Null(await w.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
     }
 
     [Fact]

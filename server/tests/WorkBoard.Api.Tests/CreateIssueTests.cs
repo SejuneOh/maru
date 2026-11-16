@@ -518,4 +518,29 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         Assert.Equal(await ExpectedMarkerAsync(t, "k", other), writer.FindMarker);
         Assert.Equal(1, writer.Calls);
     }
+
+    [DbFact]
+    public async Task Chained_takeovers_search_from_the_first_attempt()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var payload = new { repositoryId = repo, title = "x" };
+        await SeedStalePendingAsync(t, "k", payload, ageMinutes: 10);
+        var writer = new FakeWriter { FindFail = new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "502") };
+        using var client = Client(writer);
+
+        var first = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+        Assert.Equal(HttpStatusCode.GatewayTimeout, first.Status);
+        await t.ExecAsync("update idempotency_keys set created_at = now() - interval '5 minutes' where tenant_id = @tid and key = 'k'", new { tid = t.Id });
+        writer.FindFail = null;
+        writer.Existing = Found(77);
+
+        var (status, body) = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.Created, status);
+        Assert.Equal(77, body.GetProperty("number").GetInt32());
+        Assert.Equal(0, writer.Calls);
+        Assert.Equal(2, writer.FindCalls);
+        Assert.True(writer.FindSince < DateTimeOffset.UtcNow.AddMinutes(-14));
+    }
 }

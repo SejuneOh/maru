@@ -42,13 +42,15 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
             {
                 if (issue.CreatedAt < since)
                     return null;
-                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true)
+                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true
+                    && issue.User?.Login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) == true)
                     return ToIssue(issue);
             }
             if (issues.Count < LookupPageSize)
                 return null;
         }
-        return null;
+        throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+            "The issue list is longer than the lookup window, so absence cannot be shown.");
     }
 
     public async Task<SourceIssue> SetAssigneesAsync(
