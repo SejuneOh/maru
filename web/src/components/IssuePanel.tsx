@@ -64,6 +64,7 @@ export function IssuePanel() {
 
   useEffect(() => {
     setAssign((a) => (a?.issueId === issueId ? a : null));
+    setAssignSignal(0);
   }, [issueId]);
 
   const onPosted = useCallback(
@@ -95,11 +96,19 @@ export function IssuePanel() {
   const justCreated = created && shown && created.issue.id === shown.id ? created : null;
   const assignHere = assign && assign.issueId === issueId ? assign : null;
   const people = members.data ?? [];
-  // Our posted comments show at once; a refetch that already has one replaces it.
+  // Our posted comments show at once; a refetch that already has one replaces it. One saved without an id
+  // (mirrorPending) is matched by author, GitHub's creation time and text once the sync brings it.
   const conversation: ConversationItem[] = shown
     ? [
         ...shown.comments.map((c) => ({ ...c, mirrorPending: false })),
-        ...(posted.issueId === shown.id ? posted.comments : []).filter((c) => !c.id || !shown.comments.some((x) => x.id === c.id)),
+        ...(posted.issueId === shown.id ? posted.comments : []).filter(
+          (c) =>
+            !shown.comments.some((x) =>
+              c.id
+                ? x.id === c.id
+                : x.author.githubLogin === c.author.githubLogin && Date.parse(x.createdAt) === Date.parse(c.createdAt) && x.body === c.body,
+            ),
+        ),
       ]
     : [];
 

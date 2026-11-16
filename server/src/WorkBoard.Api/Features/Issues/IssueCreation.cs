@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Options;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -30,7 +31,8 @@ public sealed record NewIssue(
     IReadOnlyList<(long UserId, string Login)> Assignees, string? Status, string? Priority, string? Size);
 
 public sealed class IssueCreation(
-    ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events)
+    ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events,
+    IOptions<GitHubAppOptions> app)
 {
     public const string RepositoryArchived = "repository_archived";
 
@@ -129,7 +131,7 @@ public sealed class IssueCreation(
 
         await audit.WriteAsync(s, "issue.create", "issue", issueId, null,
             new { repository = $"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", number = created.Number });
-        return (await IssueDetailQueries.GetAsync(s, issueId))!;
+        return (await IssueDetailQueries.GetAsync(s, issueId, app.Value))!;
     }
 
     // Stored names of the repository's mirrored labels (case-insensitive match), and the requested names that match none.

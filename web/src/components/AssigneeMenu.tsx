@@ -26,7 +26,7 @@ export function AssigneeMenu({
   members: Member[] | null;
   membersFailed: boolean;
   disabled: boolean;
-  /** Bumped by the `a` shortcut to open the list. */
+  /** Bumped by the `a` shortcut to open the list; a value from before mount is ignored. */
   openSignal: number;
   onSave: (ids: number[]) => void;
   onRetryMembers: () => void;
@@ -72,8 +72,13 @@ export function AssigneeMenu({
     setPicked((p) => (p.includes(userId) ? p.filter((x) => x !== userId) : p.length >= MAX_ASSIGNEES ? p : [...p, userId]));
   };
 
+  // Only a signal raised after this menu mounted opens it, and never while it is already open (that would reset the picks).
+  const seenSignal = useRef(openSignal);
   useEffect(() => {
-    if (openSignal > 0) show();
+    if (openSignal === seenSignal.current) return;
+    const raised = openSignal > seenSignal.current;
+    seenSignal.current = openSignal;
+    if (raised && !open) show();
     // Only a new signal opens the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSignal]);

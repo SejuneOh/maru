@@ -3,10 +3,11 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Options;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens tokens) : IGitHubWriter
+public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens tokens, IOptions<GitHubAppOptions> options) : IGitHubWriter
 {
     private const string ApiBase = "https://api.github.com";
 
@@ -33,9 +34,17 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
         ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Post, IssuesUrl(repo),
             new { title, body = WithFooter(body, actorLogin, marker), labels, assignees }, ct));
 
+    // Without a configured Slug this App's own items cannot be told apart, so the answer is unknown.
+    private GitHubAppOptions OwnApp() =>
+        options.Value.BotLogin is null
+            ? throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+                "GitHub:App:Slug is not set, so the App's own items cannot be recognised.")
+            : options.Value;
+
     public async Task<SourceIssue?> FindCreatedIssueAsync(
         GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct)
     {
+        var app = OwnApp();
         for (var page = 1; page <= LookupMaxPages; page++)
         {
             var issues = await SendAsync<List<RestIssue>>(repo, HttpMethod.Get,
@@ -44,8 +53,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
             {
                 if (issue.CreatedAt < since)
                     return null;
-                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true
-                    && issue.User?.Login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) == true)
+                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true && app.IsBot(issue.User?.Login))
                     return ToIssue(issue);
             }
             if (issues.Count < LookupPageSize)
@@ -68,14 +76,14 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
     public async Task<SourceComment?> FindCreatedCommentAsync(
         GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct)
     {
+        var app = OwnApp();
         var from = Uri.EscapeDataString(since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
         for (var page = 1; page <= LookupMaxPages; page++)
         {
             var comments = await SendAsync<List<RestComment>>(repo, HttpMethod.Get,
                 $"{IssueUrl(repo, number)}/comments?since={from}&per_page={LookupPageSize}&page={page}", null, ct);
             foreach (var c in comments)
-                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true
-                    && c.User?.Login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) == true)
+                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true && app.IsBot(c.User?.Login))
                     return ToComment(c, number);
             if (comments.Count < LookupPageSize)
                 return null;

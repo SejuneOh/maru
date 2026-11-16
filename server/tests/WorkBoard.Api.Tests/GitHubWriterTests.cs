@@ -53,7 +53,7 @@ public class GitHubWriterTests
     {
         var handler = new FakeHandler(respond);
         var tokens = new FakeTokens();
-        return (new GitHubWriter(new HttpClient(handler), tokens), handler, tokens);
+        return (new GitHubWriter(new HttpClient(handler), tokens, Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions { Slug = "app" })), handler, tokens);
     }
 
     private static JsonElement Body(Recorded r) => JsonDocument.Parse(r.Body).RootElement;
@@ -221,6 +221,21 @@ public class GitHubWriterTests
         var r = Assert.Single(h.Requests);
         Assert.Equal(HttpMethod.Get, r.Method);
         Assert.Contains("/repos/octo/api/issues/7/comments?since=2026-11-01T09%3A00%3A00Z&per_page=100&page=1", r.Uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task Find_created_comment_ignores_another_bot_and_needs_a_slug()
+    {
+        var marker = GitHubWriter.CommentMarker("abc");
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.OK, CommentsJson((1, "github-actions[bot]", "x " + marker))));
+        Assert.Null(await w.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, CommentsJson((1, "app[bot]", "x " + marker))));
+        var noSlug = new GitHubWriter(new HttpClient(handler), new FakeTokens(),
+            Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions()));
+        await Assert.ThrowsAsync<GitHubWriteException>(() => noSlug.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+        await Assert.ThrowsAsync<GitHubWriteException>(() => noSlug.FindCreatedIssueAsync(Repo, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -399,7 +414,7 @@ public class GitHubWriterTests
     public async Task Token_failure_is_unavailable_and_nothing_is_sent()
     {
         var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, IssueJson));
-        var w = new GitHubWriter(new HttpClient(handler), new FakeTokens { Fail = true });
+        var w = new GitHubWriter(new HttpClient(handler), new FakeTokens { Fail = true }, Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions { Slug = "app" }));
         var e = await Assert.ThrowsAsync<GitHubWriteException>(() => w.ReopenIssueAsync(Repo, 7, default));
 
         Assert.Equal(GitHubWriteErrorKind.Unavailable, e.Kind);

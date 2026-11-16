@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
+using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Features.Sprints;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -49,9 +51,9 @@ public static class IssuesEndpoints
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
 
-        api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, CancellationToken ct) =>
+        api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, IOptions<GitHubAppOptions> app, CancellationToken ct) =>
         {
-            var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id), ct);
+            var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id, app.Value), ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 
@@ -75,7 +77,7 @@ public static class IssuesEndpoints
             if (bytes is null || !http.Request.HasJsonContentType()
                 || TenantAssignees.ParseIds(bytes, NewIssueEndpoints.MaxAssignees) is not { } ids)
                 return ApiErrors.BadRequest();
-            if (await TenantAssignees.ResolveAsync(db, ids, ct) is not { } assignees)
+            if (await TenantAssignees.ResolveForIssueAsync(db, id, ids, ct) is not { } assignees)
                 return ApiErrors.BadRequest();
 
             var key = http.Request.Headers[Idempotency.HeaderName].ToString();

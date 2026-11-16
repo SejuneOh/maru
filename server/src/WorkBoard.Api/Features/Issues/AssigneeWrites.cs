@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -18,7 +19,7 @@ public sealed record AssignedIssue : IssueDetail
     public IReadOnlyList<long> DroppedAssignees { get; init; }
 }
 
-// Shared by issue creation and assignee changes: candidates are the caller's tenant members only.
+// Shared by issue creation and assignee changes: new assignees are the caller's tenant members only.
 public static class TenantAssignees
 {
     private sealed record Row(long GithubUserId, string GithubLogin);
@@ -31,6 +32,25 @@ public static class TenantAssignees
                 return [];
             var rows = await s.QueryAsync<Row>(
                 "select github_user_id, github_login from members where github_user_id = any(@ids)", new { ids });
+            return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
+        }, ct);
+
+    // Like ResolveAsync, but an id that is already assigned to the issue (an outside collaborator, say) is accepted
+    // with its mirrored login, so keeping them while adding a member works. New assignees must still be members.
+    public static Task<List<(long UserId, string Login)>?> ResolveForIssueAsync(
+        TenantDb db, Guid issueId, long[] ids, CancellationToken ct) =>
+        db.ReadAsync<List<(long, string)>?>(async s =>
+        {
+            if (ids.Length == 0)
+                return [];
+            var rows = await s.QueryAsync<Row>("""
+                select x.id as github_user_id, coalesce(m.github_login, gu.login) as github_login
+                  from unnest(@ids) as x(id)
+                  left join members m on m.github_user_id = x.id
+                  left join issue_assignees a on a.issue_id = @issueId and a.github_user_id = x.id
+                  left join github_users gu on gu.github_user_id = x.id
+                 where m.github_user_id is not null or (a.github_user_id is not null and gu.login is not null)
+                """, new { ids, issueId });
             return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
         }, ct);
 
@@ -56,7 +76,7 @@ public static class TenantAssignees
 // it succeeds, so a GitHub refusal changes nothing locally. Last write wins: there is no concurrency check.
 public sealed class AssigneeWrites(
     ICurrentUser user, TenantDb db, IAuditLog audit, IGitHubWriteTargets targets, IGitHubWriter github, MirrorWriter mirror,
-    ILogger<AssigneeWrites> log)
+    IOptions<GitHubAppOptions> app, ILogger<AssigneeWrites> log)
 {
     private sealed record Current(Guid RepositoryId, int Number);
 
@@ -114,7 +134,7 @@ public sealed class AssigneeWrites(
                     assignees = written.Assignees.Select(a => a.Login).Order(StringComparer.OrdinalIgnoreCase).ToList(),
                     requested = assignees.Select(a => a.Login).ToList(),
                 });
-            var detail = (await IssueDetailQueries.GetAsync(s, issueId))!;
+            var detail = (await IssueDetailQueries.GetAsync(s, issueId, app.Value))!;
             return new ExternalOutcome(new WriteResult(StatusCodes.Status200OK, new AssignedIssue(detail, dropped)), true);
         }, CancellationToken.None);
     }

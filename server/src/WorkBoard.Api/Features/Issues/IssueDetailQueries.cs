@@ -1,10 +1,11 @@
 using WorkBoard.Api.Infrastructure.Data;
+using WorkBoard.Api.Infrastructure.GitHub;
 
 namespace WorkBoard.Api.Features.Issues;
 
 public static class IssueDetailQueries
 {
-    public static async Task<IssueDetail?> GetAsync(TenantSession s, Guid id)
+    public static async Task<IssueDetail?> GetAsync(TenantSession s, Guid id, GitHubAppOptions app)
     {
         var issue = await IssueQueries.GetAsync(s, id);
         if (issue is null)
@@ -16,7 +17,7 @@ public static class IssueDetailQueries
               left join github_users gu on gu.github_user_id = i.author_github_id
              where i.id = @id
             """, new { id });
-        var body = bodyRow?.Body is { } raw && BoardFooter.IsBot(bodyRow.AuthorLogin) && BoardFooter.Strip(raw) is { } own
+        var body = bodyRow?.Body is { } raw && app.IsBot(bodyRow.AuthorLogin) && BoardFooter.Strip(raw) is { } own
             ? own.Body
             : bodyRow?.Body;
 
@@ -77,7 +78,7 @@ public static class IssueDetailQueries
             PullRequests = pullRequests
                 .Select(p => new PullRequestDto(p.Id, p.Number, p.Title, p.State, p.Draft, p.ReviewRequested, p.HtmlUrl))
                 .ToList(),
-            Comments = await CommentsAsync(s, comments),
+            Comments = await CommentsAsync(s, comments, app),
             MeetingNotes = meetingNotes.Select(n => new LinkedMeetingNote(n.Id, n.Title, n.HeldAt)).ToList(),
             LastBoardChange = boardChange is null
                 ? null
@@ -86,10 +87,10 @@ public static class IssueDetailQueries
     }
 
     // A comment the App wrote for a member is shown as that member's, without the footer.
-    private static async Task<List<CommentDto>> CommentsAsync(TenantSession s, IEnumerable<CommentRow> rows)
+    private static async Task<List<CommentDto>> CommentsAsync(TenantSession s, IEnumerable<CommentRow> rows, GitHubAppOptions app)
     {
         var all = rows
-            .Select(r => (Row: r, Own: r.GithubLogin is null && BoardFooter.IsBot(r.AuthorLogin) ? BoardFooter.Strip(r.Body) : null))
+            .Select(r => (Row: r, Own: r.GithubLogin is null && app.IsBot(r.AuthorLogin) ? BoardFooter.Strip(r.Body) : null))
             .ToList();
         var logins = all.Where(b => b.Own is not null).Select(b => b.Own!.Value.Login.ToLowerInvariant()).Distinct().ToArray();
         var names = logins.Length == 0

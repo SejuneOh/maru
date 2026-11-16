@@ -81,10 +81,18 @@ public sealed class CommentWrites(
 
             // GitHub has the comment from here on, so a local failure still completes the key.
             var author = new CommentAuthor(user.Identity.Member.GithubLogin, user.Identity.Member.DisplayName);
-            Guid? id = null;
             try
             {
                 await mirror.ApplyWrittenCommentAsync(user.Identity.TenantId, current.RepositoryId, posted, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                log.LogError(e, "Comment {CommentId} was posted on GitHub but mirroring it failed", posted.Id);
+            }
+
+            Guid? id = null;
+            try
+            {
                 id = await db.WriteAsync(async s =>
                 {
                     await audit.WriteAsync(s, "issue.comment", "issue", issueId, null,
@@ -95,7 +103,7 @@ public sealed class CommentWrites(
             }
             catch (Exception e)
             {
-                log.LogError(e, "Comment {CommentId} was posted on GitHub but saving it locally failed", posted.Id);
+                log.LogError(e, "Comment {CommentId} was posted on GitHub but its audit row failed", posted.Id);
             }
 
             return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created,

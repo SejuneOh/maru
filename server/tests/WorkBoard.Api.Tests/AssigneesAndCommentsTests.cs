@@ -85,7 +85,7 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
 
     private sealed record Card(TestTenant Tenant, Guid Repo, Guid Issue, FakeWriter Writer, HttpClient Client);
 
-    private async Task<Card> CardAsync(TestTenant t, bool archived = false)
+    private async Task<Card> CardAsync(TestTenant t, bool archived = false, string? slug = "app")
     {
         await t.ExecAsync("update github_connections set installation_id = @installation where id = @id",
             new { id = t.ConnectionId, installation = TestTenant.NextId() });
@@ -97,7 +97,7 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
             GithubId = await t.ScalarAsync<long>("select github_issue_id from issues where id = @issue", new { issue }),
             Number = await t.ScalarAsync<int>("select number from issues where id = @issue", new { issue }),
         };
-        var host = factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        var host = factory.WithWebHostBuilder(b => b.UseSetting("GitHub:App:Slug", slug ?? "").ConfigureServices(s =>
         {
             s.RemoveAll<IGitHubWriter>();
             s.AddSingleton<IGitHubWriter>(writer);
@@ -178,6 +178,49 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
         Assert.Empty(c.Writer.SetCalls);
     }
 
+    private static async Task OutsideAssigneeAsync(TestTenant t, Guid issue, long userId, string login)
+    {
+        await t.ExecAsync("insert into github_users (tenant_id, github_user_id, login) values (@tid, @userId, @login)",
+            new { tid = t.Id, userId, login });
+        await t.AssignAsync(issue, userId);
+    }
+
+    [DbFact]
+    public async Task An_outside_current_assignee_can_be_kept_while_adding_a_member()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        var outsider = TestTenant.NextId();
+        await OutsideAssigneeAsync(t, c.Issue, outsider, "outside-" + t.Suffix);
+        var (alice, aliceId) = await t.AddMemberAsync("alice");
+        c.Writer.Ids["outside-" + t.Suffix] = outsider;
+        c.Writer.Ids[alice] = aliceId;
+
+        var (status, body) = await AssignAsync(c, [outsider, aliceId]);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Contains("outside-" + t.Suffix, c.Writer.SetCalls.Single());
+        Assert.Equal(2, body.GetProperty("assignees").GetArrayLength());
+    }
+
+    [DbFact]
+    public async Task A_new_assignee_who_is_not_a_member_is_400_even_next_to_an_outside_current_one()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        var outsider = TestTenant.NextId();
+        await OutsideAssigneeAsync(t, c.Issue, outsider, "outside-" + t.Suffix);
+        var stranger = TestTenant.NextId();
+        await t.ExecAsync("insert into github_users (tenant_id, github_user_id, login) values (@tid, @stranger, @login)",
+            new { tid = t.Id, stranger, login = "stranger-" + t.Suffix });
+
+        var (status, body) = await AssignAsync(c, [outsider, stranger]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("invalid_request", Err(body));
+        Assert.Empty(c.Writer.SetCalls);
+    }
+
     [DbFact]
     public async Task Issue_of_another_tenant_is_404_and_archived_repository_is_409()
     {
@@ -251,7 +294,7 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
         Assert.Equal(1, await CountAsync(t, "comments", c.Issue));
         Assert.Equal(1, await AuditAsync(t, "issue.comment"));
 
-        var shown = (await t.GetAsync($"/api/issues/{c.Issue}")).GetProperty("comments").EnumerateArray().Single();
+        var shown = (await SendAsync(c, HttpMethod.Get, $"/api/issues/{c.Issue}", null)).Body.GetProperty("comments").EnumerateArray().Single();
         Assert.Equal(id, shown.GetProperty("id").GetGuid());
         Assert.Equal("looks good", shown.GetProperty("body").GetString());
         Assert.Equal(t.ViewerLogin, shown.GetProperty("author").GetProperty("githubLogin").GetString());
@@ -272,10 +315,51 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
             values (@tid, @issue, @gid, @author, @text, now(), now())
             """, new { tid = t.Id, issue = c.Issue, gid = TestTenant.NextId(), author = malloryId, text });
 
-        var shown = (await t.GetAsync($"/api/issues/{c.Issue}")).GetProperty("comments").EnumerateArray().Single();
+        var shown = (await SendAsync(c, HttpMethod.Get, $"/api/issues/{c.Issue}", null)).Body.GetProperty("comments").EnumerateArray().Single();
 
         Assert.Equal(mallory, shown.GetProperty("author").GetProperty("githubLogin").GetString());
         Assert.Equal(text, shown.GetProperty("body").GetString());
+    }
+
+    private static async Task BotCommentAsync(TestTenant t, Guid issue, long botId, string botLogin, string text)
+    {
+        await t.ExecAsync("""
+            insert into github_users (tenant_id, github_user_id, login) values (@tid, @botId, @botLogin)
+            on conflict do nothing
+            """, new { tid = t.Id, botId, botLogin });
+        await t.ExecAsync("""
+            insert into comments (tenant_id, issue_id, github_comment_id, author_github_id, body, github_created_at, github_updated_at)
+            values (@tid, @issue, @gid, @botId, @text, now(), now())
+            """, new { tid = t.Id, issue, gid = TestTenant.NextId(), botId, text });
+    }
+
+    [DbFact]
+    public async Task Another_bot_with_our_footer_is_shown_as_that_bot_and_ours_as_the_member()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        await BotCommentAsync(t, c.Issue, TestTenant.NextId(), "github-actions[bot]", "fake" + GitHubWriter.Footer(t.ViewerLogin));
+        await BotCommentAsync(t, c.Issue, TestTenant.NextId(), "App[bot]", "real" + GitHubWriter.Footer(t.ViewerLogin));
+
+        var shown = (await SendAsync(c, HttpMethod.Get, $"/api/issues/{c.Issue}", null)).Body.GetProperty("comments").EnumerateArray().ToList();
+        var other = shown.Single(x => x.GetProperty("body").GetString()!.StartsWith("fake"));
+        var ours = shown.Single(x => x.GetProperty("body").GetString() == "real");
+
+        Assert.Equal(JsonValueKind.Null, other.GetProperty("author").GetProperty("githubLogin").ValueKind);
+        Assert.Contains("_작성:", other.GetProperty("body").GetString());
+        Assert.Equal(t.ViewerLogin, ours.GetProperty("author").GetProperty("githubLogin").GetString());
+    }
+
+    [DbFact]
+    public async Task Without_a_slug_no_comment_is_treated_as_the_apps()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t, slug: null);
+        await BotCommentAsync(t, c.Issue, TestTenant.NextId(), "app[bot]", "real" + GitHubWriter.Footer(t.ViewerLogin));
+
+        var shown = (await SendAsync(c, HttpMethod.Get, $"/api/issues/{c.Issue}", null)).Body.GetProperty("comments").EnumerateArray().Single();
+
+        Assert.StartsWith("real\n\n---", shown.GetProperty("body").GetString());
     }
 
     [DbFact]
