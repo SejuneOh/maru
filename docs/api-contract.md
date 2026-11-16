@@ -159,7 +159,7 @@ Creating issues (any member, GitHub write through the App):
   installation, archived ones last and flagged), the labels of each non-archived repository, and every member as a possible assignee.
 - `POST /api/issues` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`). Body:
   `repositoryId`, `title` (trimmed, 1..256, no control or invisible format characters), optional `body` (max 60000 characters),
-  `labels` (max 20, names of labels already in the repository's mirrored label list, matched case-insensitively and sent to GitHub with the stored spelling; unknown names are `400 invalid_request` with `unknownLabels: string[]`; duplicates ignored), `assigneeGithubUserIds` (max 10, must be members of the
+  `labels` (max 20, names of labels already in the repository's mirrored label list, matched case-insensitively and sent to GitHub with the stored spelling; unknown names are `400 invalid_request` with `unknownLabels: string[]` (a label just created on GitHub is unknown until the next sync); duplicates ignored), `assigneeGithubUserIds` (max 10, must be members of the
   caller's tenant, else `400 invalid_request`), and the board fields `status` (`todo`, `in_progress`, `in_review`, `done`),
   `priority` (`urgent`, `high`, `normal`, `low`), `size` (`S`, `M`, `L`). Any other value is `400 invalid_request`.
   Order: GitHub create, then the mirror, then board fields (`issue_events` `status_set`, `priority_set`, `size_set`, under the
@@ -169,7 +169,7 @@ Creating issues (any member, GitHub write through the App):
   (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
   `droppedAssignees` lists assignees GitHub did not apply.
   If GitHub created the issue but saving it locally failed, the response is `202 PendingIssue` and is stored under the key, so a retry
-  replays it and never creates a second issue; the next sync adds the issue to the board.
+  replays it and never creates a second issue; the next sync adds the issue to the board. The requested `status`/`priority`/`size` and the `issue.create` audit row are not saved in that case and the sync does not restore them, so the client should ask the person to set them again. If the database itself is down, completing the key can fail too and a retry after the 2-minute pending timeout may create a second issue.
 
 Sprints (UI word: 주기) and the backlog (대기 목록) exist only when the tenant has `sprintsEnabled`. When it is off,
 `GET /api/sprints` and `GET /api/backlog` return empty results and every sprint write is `409 sprints_disabled`.
