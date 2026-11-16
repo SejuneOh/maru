@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { confirmLeave } from "@/lib/leaveGuard";
 
 /**
  * `g` then a letter jumps to a screen. The nav shows the same letters. Keys are matched by
@@ -62,7 +63,7 @@ export function useShortcuts(focusSearch: () => void, newIssue: () => void) {
         const href = GO_KEYS[e.code];
         if (href) {
           e.preventDefault();
-          router.push(href);
+          if (confirmLeave()) router.push(href);
         }
         return;
       }

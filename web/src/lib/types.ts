@@ -273,6 +273,8 @@ export type MeetingNote = {
 
 /** `POST /api/meeting-notes`, and `PATCH /api/meeting-notes/{id}` (every field, plus `expectedUpdatedAt`). */
 export type MeetingNoteRequest = {
+  /** POST only: an id the client generates, so a resent POST returns the note (200) instead of creating another. */
+  id?: string;
   title: string;
   heldAt: string;
   projectId: string | null;
@@ -291,6 +293,7 @@ export type MeetingNoteWriteError =
   | "forbidden"
   | "conflict"
   | "action_item_linked"
+  | "id_taken"
   | "idempotency_key_reused";
 
 export type OverviewIssueRef = {

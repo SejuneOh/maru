@@ -210,4 +210,72 @@ public class MeetingNoteWritesTests(WebApplicationFactory<Program> factory) : IC
         Assert.Equal(0, await CountAsync(t, "select count(*)::int from meeting_action_items where tenant_id = @tid"));
         Assert.Equal(2, await CountAsync(t, "select count(*)::int from audit_log where tenant_id = @tid and action = 'meeting_note.delete'"));
     }
+
+    private static object NewBody(Guid id, string title, Guid[] attendees) => new
+    {
+        id, title, heldAt = "2026-11-12T10:00:00+09:00", attendeeIds = attendees, actionItems = new[] { new { text = "x" } },
+    };
+
+    [DbFact]
+    public async Task Post_with_a_client_id_creates_the_note_once()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        await using var outside = await TestTenant.CreateAsync(factory);
+        var (other, _) = await t.AddMemberAsync("other");
+        var me = await MemberIdAsync(t, t.ViewerLogin);
+        var id = Guid.NewGuid();
+
+        var (created, first) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", NewBody(id, "first", [me]), key: "a");
+        var (repeated, again) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", NewBody(id, "typed more", [me]), key: "b");
+        var (byOther, otherBody) = await SendAsync(other, HttpMethod.Post, "/api/meeting-notes", NewBody(id, "theirs", []));
+        var (foreign, foreignBody) = await SendAsync(outside.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", NewBody(id, "elsewhere", []));
+
+        Assert.Equal(HttpStatusCode.Created, created);
+        Assert.Equal(id, first.GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.OK, repeated);
+        Assert.Equal("first", again.GetProperty("title").GetString());
+        Assert.Equal(first.GetProperty("updatedAt").GetString(), again.GetProperty("updatedAt").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, byOther);
+        Assert.Equal("id_taken", otherBody.GetProperty("error").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, foreign);
+        Assert.Equal("id_taken", foreignBody.GetProperty("error").GetString());
+        Assert.Equal(1, await CountAsync(t, "select count(*)::int from meeting_notes where tenant_id = @tid"));
+        Assert.Equal(1, await CountAsync(t, "select count(*)::int from meeting_action_items where tenant_id = @tid"));
+        Assert.Equal(0, await CountAsync(outside, "select count(*)::int from meeting_notes where tenant_id = @tid"));
+        Assert.Equal(1, await CountAsync(t, "select count(*)::int from audit_log where tenant_id = @tid and action = 'meeting_note.create'"));
+    }
+
+    [DbFact]
+    public async Task Patch_refuses_item_ids_that_are_not_this_notes()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        await using var outside = await TestTenant.CreateAsync(factory);
+        var me = await MemberIdAsync(t, t.ViewerLogin);
+        var (_, note) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", Body("a", [me], [new { text = "mine" }]));
+        var (_, otherNote) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", Body("b", [me], [new { text = "theirs" }]));
+        var outsider = await MemberIdAsync(outside, outside.ViewerLogin);
+        var (_, foreignNote) = await SendAsync(outside.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", Body("c", [outsider], [new { text = "far" }]));
+        var id = note.GetProperty("id").GetGuid();
+        var mine = note.GetProperty("actionItems")[0].GetProperty("id").GetGuid();
+        var expected = note.GetProperty("updatedAt").GetString();
+        var url = $"/api/meeting-notes/{id}";
+
+        var fromOtherNote = await SendAsync(t.ViewerLogin, HttpMethod.Patch, url,
+            Body("a", [me], [new { id = otherNote.GetProperty("actionItems")[0].GetProperty("id").GetGuid(), text = "x" }], expected: expected));
+        var duplicate = await SendAsync(t.ViewerLogin, HttpMethod.Patch, url,
+            Body("a", [me], [new { id = mine, text = "x" }, new { id = mine, text = "y" }], expected: expected));
+        var fromOtherTenant = await SendAsync(t.ViewerLogin, HttpMethod.Patch, url,
+            Body("a", [me], [new { id = foreignNote.GetProperty("actionItems")[0].GetProperty("id").GetGuid(), text = "x" }], expected: expected));
+        var noExpected = await SendAsync(t.ViewerLogin, HttpMethod.Patch, url, Body("a", [me], [new { id = mine, text = "x" }]));
+
+        foreach (var r in new[] { fromOtherNote, duplicate, fromOtherTenant, noExpected })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, r.Status);
+            Assert.Equal("invalid_request", r.Body.GetProperty("error").GetString());
+        }
+        var read = await t.GetAsync(url);
+        Assert.Equal(expected, read.GetProperty("updatedAt").GetString());
+        Assert.Equal(["mine"], ItemTexts(read));
+        Assert.Equal(["far"], ItemTexts(await outside.GetAsync($"/api/meeting-notes/{foreignNote.GetProperty("id").GetGuid()}")));
+    }
 }

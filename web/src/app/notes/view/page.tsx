@@ -27,15 +27,18 @@ export default function MeetingNotePage() {
  */
 function EditScreen({ id }: { id: string | null }) {
   const router = useRouter();
+  const me = useMe();
   const [adopted, setAdopted] = useState<string | null>(null);
   const skip = id === null || id === adopted;
   const note = useApi<MeetingNote>(skip ? null : `/api/meeting-notes/${id}`);
 
+  if (me.error) return <ErrorBox error={me.error} />;
   if (!skip && note.error) return <ErrorBox error={note.error} />;
-  if (!skip && !note.data) return <Loading />;
+  if (!me.data || (!skip && !note.data)) return <Loading />;
   return (
     <NoteEditor
       initial={skip ? null : note.data}
+      owner={{ tenantId: me.data.tenant.id, memberId: me.data.member.id }}
       onCreated={(n) => {
         setAdopted(n.id);
         router.replace(`/notes/view?id=${n.id}&edit=1`);
@@ -50,7 +53,8 @@ function ReadScreen({ id }: { id: string | null }) {
   const t = useT();
   const nt = t.notes;
   const fmt = useFormat();
-  const me = useMe().data?.member;
+  const meData = useMe().data;
+  const me = meData?.member;
   const note = useApi<MeetingNote>(id ? `/api/meeting-notes/${id}` : null);
   const [deleting, setDeleting] = useState(false);
 
@@ -62,7 +66,7 @@ function ReadScreen({ id }: { id: string | null }) {
 
   const remove = async () => {
     setDeleting(true);
-    const gone = await confirmAndDelete(n, nt);
+    const gone = await confirmAndDelete(n, nt, meData ? { tenantId: meData.tenant.id, memberId: meData.member.id } : null);
     setDeleting(false);
     if (gone) router.push("/notes");
   };

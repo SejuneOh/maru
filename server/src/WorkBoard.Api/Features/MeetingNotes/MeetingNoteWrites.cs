@@ -9,6 +9,7 @@ namespace WorkBoard.Api.Features.MeetingNotes;
 public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
 {
     public const string ActionItemLinked = "action_item_linked";
+    public const string IdTaken = "id_taken";
 
     private sealed record NoteHead(Guid Id, Guid? CreatedBy, DateTime UpdatedAt);
 
@@ -20,20 +21,26 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
 
     private static string? Iso(DateOnly? date) => date?.ToString("yyyy-MM-dd");
 
-    public async Task<WriteResult> CreateAsync(TenantSession s, MeetingNoteValues v)
+    // With a client-chosen id, a repeat (even with a newer body) returns the note as stored, 200 instead of 201.
+    public async Task<WriteResult> CreateAsync(TenantSession s, MeetingNoteValues v, Guid? wantedId)
     {
+        if (wantedId is { } wanted && await ExistingAsync(s, wanted) is { } existing)
+            return existing;
         if (!await ReferencesExistAsync(s, v))
             return Invalid();
 
-        var id = await s.QuerySingleOrDefaultAsync<Guid>("""
-            insert into meeting_notes (tenant_id, project_id, title, held_at, body_md, decisions, created_by)
-            values (@tenantId, @projectId, @title, @heldAt, @bodyMd, @decisions, @memberId)
+        var inserted = await s.QuerySingleOrDefaultAsync<Guid?>("""
+            insert into meeting_notes (id, tenant_id, project_id, title, held_at, body_md, decisions, created_by)
+            values (coalesce(@wantedId, gen_random_uuid()), @tenantId, @projectId, @title, @heldAt, @bodyMd, @decisions, @memberId)
+            on conflict (id) do nothing
             returning id
             """, new
         {
-            tenantId = user.Identity.TenantId, projectId = v.ProjectId, title = v.Title, heldAt = v.HeldAt.UtcDateTime,
+            wantedId, tenantId = user.Identity.TenantId, projectId = v.ProjectId, title = v.Title, heldAt = v.HeldAt.UtcDateTime,
             bodyMd = v.BodyMd, decisions = v.Decisions, memberId = user.Identity.Member.Id,
         });
+        if (inserted is not { } id)
+            return await ExistingAsync(s, wantedId!.Value) ?? Error(StatusCodes.Status409Conflict, IdTaken);
         await AddAttendeesAsync(s, id, v.AttendeeIds);
         for (var i = 0; i < v.ActionItems.Length; i++)
             await InsertItemAsync(s, id, v.ActionItems[i], i);
@@ -111,6 +118,18 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
         await s.ExecuteAsync("delete from meeting_notes where id = @id", new { id });
         await audit.WriteAsync(s, "meeting_note.delete", "meeting_note", id, before, null);
         return new WriteResult(StatusCodes.Status204NoContent);
+    }
+
+    // The caller's own note under that id as a 200, a note of someone else as 409 id_taken, null when there is none
+    // visible (another tenant's note with that id is invisible here and makes the insert do nothing).
+    private async Task<WriteResult?> ExistingAsync(TenantSession s, Guid id)
+    {
+        var head = await LockAsync(s, id);
+        if (head is null)
+            return null;
+        if (head.CreatedBy != user.Identity.Member.Id)
+            return Error(StatusCodes.Status409Conflict, IdTaken);
+        return new WriteResult(StatusCodes.Status200OK, (await MeetingNotesEndpoints.GetAsync(s, id))!);
     }
 
     private static Task<NoteHead?> LockAsync(TenantSession s, Guid id) =>

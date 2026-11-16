@@ -33,6 +33,7 @@ public sealed record MeetingNote(
 public sealed record ActionItemInput(Guid? Id, string? Text, Guid? AssigneeId, DateOnly? DueDate);
 
 // POST and PATCH share this body. PATCH replaces the whole note, so every list must be sent.
+// Id is POST only: the id the client chose for the new note, so a resent POST cannot create a second note.
 public sealed record MeetingNoteInput(
     string? Title,
     DateTimeOffset? HeldAt,
@@ -41,7 +42,8 @@ public sealed record MeetingNoteInput(
     string[]? Decisions,
     Guid[]? AttendeeIds,
     ActionItemInput[]? ActionItems,
-    DateTimeOffset? ExpectedUpdatedAt);
+    DateTimeOffset? ExpectedUpdatedAt,
+    Guid? Id = null);
 
 // A validated MeetingNoteInput: trimmed texts, distinct attendees, items in display order.
 public sealed record MeetingNoteValues(

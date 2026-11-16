@@ -105,7 +105,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/milestones` | dev user | `Milestone[]`, open first, then `dueOn` ascending (nulls last) |
 | GET | `/api/meeting-notes` | dev user | `MeetingNoteSummary[]` |
 | GET | `/api/meeting-notes/{id}` | dev user | `MeetingNote` or 404 |
-| POST | `/api/meeting-notes` | dev user | `201 MeetingNote` |
+| POST | `/api/meeting-notes` | dev user | `201 MeetingNote` (`200` for a repeat with the same `id`) |
 | PATCH | `/api/meeting-notes/{id}` | dev user | `MeetingNote` |
 | DELETE | `/api/meeting-notes/{id}` | dev user, author or admin | `204` |
 | GET | `/api/search?q=` | dev user | `SearchResult` |
@@ -312,6 +312,10 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
   `attendeeIds` (member ids, max 100, duplicates ignored), `actionItems` (max 100, in display order; `text` trimmed 1..500,
   `assigneeId` a member id or null, `dueDate` `yyyy-MM-dd` or null; `id` must be absent). The caller becomes `createdBy`.
   Response `201 MeetingNote`.
+  `id` (optional, a uuid the client generates) makes creation safe to repeat: if a note with that id already exists and the
+  caller wrote it, the response is `200` with that note **as stored** (the body of the repeat is not applied; save changes
+  with `PATCH`). A note with that id written by someone else, or in another tenant, is `409 id_taken`. The web always sends
+  an `id`, so a POST whose answer was lost can be resent (even with newer text) without creating a second note.
 - `PATCH /api/meeting-notes/{id}` replaces the whole note: send every field of `MeetingNoteRequest` (`bodyMd`, `decisions`,
   `attendeeIds`, `actionItems` must be present, empty lists allowed) plus `expectedUpdatedAt`, the `updatedAt` of the copy
   you edited. A different value is `409 conflict` (someone saved in between; reload and let the person choose). Any member may edit.
@@ -322,8 +326,11 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
 - `DELETE /api/meeting-notes/{id}` (no body) deletes the note with its attendees and action items (linked issues stay). Only the
   note's author (`createdBy`) or an admin; anyone else gets `403 forbidden`. A note whose author is gone can be deleted by an admin only.
   Response `204`.
+- Order of checks: the body (`400 invalid_request`), then the note (`404`; for POST with `id` the repeat / `409 id_taken`
+  check), then `expectedUpdatedAt` (`409 conflict`), then attendees, assignees, project and action-item ids (`400 invalid_request`),
+  then linked items (`409 action_item_linked`). So a stale PATCH that also names a removed member answers `409 conflict`.
 - Errors: `400 invalid_request` (any rule above, a body that is not JSON, an attendee, assignee or project that is not in the
-  caller's tenant, PATCH without `expectedUpdatedAt`), `404 not_found`, `409 conflict`, `409 action_item_linked`, `403 forbidden`,
+  caller's tenant, PATCH without `expectedUpdatedAt`), `404 not_found`, `409 conflict`, `409 action_item_linked`, `409 id_taken`, `403 forbidden`,
   plus `409 idempotency_key_reused` / `400` for a bad key as with other writes.
 
 `GET /api/search` matches `q` (case-insensitive substring, min 2 chars) against issue titles,
@@ -569,6 +576,7 @@ type MeetingNote = {
 };
 
 type MeetingNoteRequest = {
+  id?: string;                                          // POST only: client-generated, makes a resent POST safe
   title: string; heldAt: string; projectId?: string | null; bodyMd?: string; decisions?: string[];
   attendeeIds?: string[];
   actionItems?: { id?: string; text: string; assigneeId?: string | null; dueDate?: string | null }[];

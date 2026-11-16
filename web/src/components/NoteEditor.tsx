@@ -6,28 +6,38 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet, deleteMeetingNote, newIdempotencyKey, saveMeetingNote, useApi } from "@/lib/api";
 import { showMessage } from "@/lib/boardEdits";
 import { useFormat, useT } from "@/lib/i18n";
+import { setLeaveGuard } from "@/lib/leaveGuard";
 import { useMe } from "@/lib/me";
+import {
+  type DraftOwner,
+  type NoteDraft,
+  clearNoteDraft,
+  latestNewDraft,
+  newUuid,
+  readNoteDraft,
+  writeNoteDraft,
+} from "@/lib/noteDrafts";
 import {
   type Blocked,
   type ItemRow,
   type NoteForm,
-  clearDraft,
+  contentOf,
   emptyForm,
   formOf,
   isBlank,
   localDate,
   onDate,
-  readDraft,
   rebaseOnto,
   requestOf,
   rowKey,
   snapshotOf,
-  writeDraft,
 } from "@/lib/noteForm";
 import type { MeetingNote, Member, Project } from "@/lib/types";
 import { Avatar, Card, PageHeader, StatusBadge } from "./ui";
 
 const SAVE_AFTER_MS = 1200;
+/** Browsers refuse a keepalive request body over 64 KB. */
+const KEEPALIVE_MAX = 60_000;
 
 type Failure = "network" | "invalid_request" | "not_found" | "request_in_progress" | "unknown";
 type Phase = "idle" | "saving" | "failed" | "conflict";
@@ -38,20 +48,21 @@ export function canDelete(note: { createdBy: Member | null }, me: Member | null 
 
 /** Confirms, deletes, and says so in the notice slot. Resolves true when the note is gone. */
 export async function confirmAndDelete(
-  note: MeetingNote | { id: string; title: string; actionItems: MeetingNote["actionItems"] },
+  note: { id: string; title: string; actionItems: { issue: unknown }[] },
   nt: ReturnType<typeof useT>["notes"],
+  owner: DraftOwner | null,
 ): Promise<boolean> {
   const linked = note.actionItems.filter((a) => a.issue).length;
   if (!window.confirm(nt.deleteConfirm(note.title, linked))) return false;
   try {
     await deleteMeetingNote(note.id);
-    clearDraft(note.id);
+    if (owner) clearNoteDraft(owner, note.id);
     showMessage({ title: nt.deleted(note.title) });
     return true;
   } catch (e) {
     const code = e instanceof ApiError ? e.code : null;
     if (code === "not_found") {
-      clearDraft(note.id);
+      if (owner) clearNoteDraft(owner, note.id);
       return true;
     }
     showMessage({
@@ -65,11 +76,21 @@ export async function confirmAndDelete(
 
 /**
  * Writes a meeting note and saves it as the person types: 1.2 s after the last change, when focus leaves a
- * field, and when the tab is hidden. One save runs at a time and sends the `updatedAt` it last saw; a 409 stops
- * saving and shows the newer copy beside the person's own text until they choose. Unsaved text is also kept
- * in localStorage, and leaving the screen with unsaved text asks first.
+ * field, and when the tab is hidden. One save runs at a time. A new note carries an id made here, so resending
+ * its POST after a lost answer can never create a second note. Edits send the `updatedAt` they last saw; a 409
+ * stops saving and shows the newer copy beside the person's own text until they choose (unless the newer copy
+ * is this editor's own save whose answer was lost). Unsaved text is kept in localStorage for this member, and
+ * leaving the screen with unsaved text asks first.
  */
-export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null; onCreated: (note: MeetingNote) => void }) {
+export function NoteEditor({
+  initial,
+  owner,
+  onCreated,
+}: {
+  initial: MeetingNote | null;
+  owner: DraftOwner;
+  onCreated: (note: MeetingNote) => void;
+}) {
   const t = useT();
   const nt = t.notes;
   const e = nt.editor;
@@ -82,8 +103,10 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
 
   const [form, setFormState] = useState<NoteForm>(() => (initial ? formOf(initial) : emptyForm()));
   const formRef = useRef(form);
-  const [noteId, setNoteId] = useState<string | null>(initial?.id ?? null);
+  const [noteId, setNoteId] = useState(() => initial?.id ?? newUuid());
   const noteIdRef = useRef(noteId);
+  const [created, setCreated] = useState(initial !== null);
+  const createdRef = useRef(created);
   /** The `updatedAt` of the copy the form builds on. */
   const base = useRef<string | null>(initial?.updatedAt ?? null);
   const [saved, setSaved] = useState(() => snapshotOf(formRef.current));
@@ -93,25 +116,33 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
   const [phase, setPhaseState] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
   const [failure, setFailure] = useState<Failure | null>(null);
+  const failureRef = useRef<Failure | null>(null);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [restored, setRestored] = useState(false);
   const [latest, setLatest] = useState<MeetingNote | null>(null);
   const [latestFailed, setLatestFailed] = useState(false);
-  const [draft, setDraft] = useState<ReturnType<typeof readDraft>>(null);
+  const [draft, setDraft] = useState<NoteDraft<NoteForm> | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [, tick] = useState(0);
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlight = useRef(false);
   const again = useRef(false);
+  const mounted = useRef(true);
   /** One key per request body; a retry after a dropped connection resends under the same key. */
   const attempt = useRef<{ json: string; key: string } | null>(null);
+  /** An edit whose answer was lost: it may have been saved, so a 409 that holds exactly it is our own save. */
+  const uncertain = useRef<{ content: string; keys: string[] } | null>(null);
   const leaving = useRef<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
   const setPhase = (p: Phase) => {
     phaseRef.current = p;
     setPhaseState(p);
+  };
+  const setFail = (f: Failure | null) => {
+    failureRef.current = f;
+    setFailure(f);
   };
   const markSaved = (snapshot: string) => {
     savedRef.current = snapshot;
@@ -121,10 +152,32 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
     formRef.current = next;
     setFormState(next);
   };
+  const keepDraft = () => {
+    if (snapshotOf(formRef.current) === savedRef.current) clearNoteDraft(owner, noteIdRef.current);
+    else
+      writeNoteDraft(owner, {
+        noteId: noteIdRef.current,
+        form: formRef.current,
+        base: base.current,
+        created: createdRef.current,
+      });
+  };
 
   const unsaved = snapshotOf(form) !== saved || phase === "saving";
+  const unsavedRef = useRef(unsaved);
+  unsavedRef.current = unsaved;
 
-  const flush = useCallback(async (): Promise<void> => {
+  const loadLatest = useCallback(async (id: string) => {
+    setLatest(null);
+    setLatestFailed(false);
+    try {
+      setLatest(await apiGet<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(id)}`));
+    } catch {
+      setLatestFailed(true);
+    }
+  }, []);
+
+  const flush = useCallback(async (opts: { keepalive?: boolean } = {}): Promise<void> => {
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
@@ -143,19 +196,36 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
     setBlocked(null);
     if (JSON.stringify(built.req) === savedRef.current) {
       if (phaseRef.current === "failed") setPhase("idle");
-      setFailure(null);
+      setFail(null);
       return;
     }
     const id = noteIdRef.current;
-    const req = id ? { ...built.req, expectedUpdatedAt: base.current ?? undefined } : built.req;
-    const json = JSON.stringify([id, req]);
+    const isCreated = createdRef.current;
+    const req = isCreated ? { ...built.req, expectedUpdatedAt: base.current ?? undefined } : { ...built.req, id };
+    const json = JSON.stringify([isCreated, req]);
     if (attempt.current?.json !== json) attempt.current = { json, key: newIdempotencyKey() };
     inFlight.current = true;
     setPhase("saving");
     try {
-      const note = await saveMeetingNote(req, attempt.current.key, id);
+      const keepalive = !!opts.keepalive && json.length < KEEPALIVE_MAX;
+      const { note, created: applied } = await saveMeetingNote(req, attempt.current.key, isCreated ? id : null, keepalive);
       attempt.current = null;
+      uncertain.current = null;
       base.current = note.updatedAt;
+      setCreatedBy(note.createdBy);
+      setFail(null);
+      if (!isCreated) {
+        createdRef.current = true;
+        setCreated(true);
+        if (mounted.current) onCreated(note);
+      }
+      if (!applied) {
+        // A repeated POST answers with the note as an earlier attempt stored it; the edit follows as a PATCH.
+        setPhase("idle");
+        again.current = true;
+        keepDraft();
+        return;
+      }
       const savedIds = new Map<string, string>();
       if (note.actionItems.length === built.keys.length) built.keys.forEach((k, i) => savedIds.set(k, note.actionItems[i].id));
       const withIds = (f: NoteForm): NoteForm => ({
@@ -169,24 +239,34 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
       markSaved(snapshotOf(withIds(sent)));
       replaceForm(withIds(formRef.current));
       setSavedAt(new Date().toISOString());
-      setCreatedBy(note.createdBy);
-      setFailure(null);
       setPhase("idle");
-      if (!id) {
-        noteIdRef.current = note.id;
-        setNoteId(note.id);
-        clearDraft(null);
-        onCreated(note);
-      }
-      if (snapshotOf(formRef.current) === savedRef.current) clearDraft(note.id);
-      else writeDraft(note.id, formRef.current, base.current);
+      keepDraft();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
-      if (code === "conflict" && id) {
+      if (code === "conflict" && isCreated) {
         attempt.current = null;
         setPhase("conflict");
-        void loadLatest(id);
-      } else if (code === "action_item_linked" && id) {
+        const lost = uncertain.current;
+        uncertain.current = null;
+        let fresh: MeetingNote | null = null;
+        try {
+          fresh = await apiGet<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(id)}`);
+        } catch {
+          setLatestFailed(true);
+        }
+        const theirs = fresh ? requestOf(formOf(fresh)) : null;
+        if (fresh && lost && theirs && "req" in theirs && contentOf(theirs.req) === lost.content) {
+          const stored = fresh;
+          base.current = stored.updatedAt;
+          const ids = new Map(lost.keys.map((k, i) => [k, stored.actionItems[i]?.id]));
+          replaceForm({ ...formRef.current, items: formRef.current.items.map((r) => (r.id === null && ids.get(r.key) ? { ...r, id: ids.get(r.key)! } : r)) });
+          markSaved(JSON.stringify(theirs.req));
+          setPhase("idle");
+          again.current = true;
+        } else {
+          setLatest(fresh);
+        }
+      } else if (code === "action_item_linked" && isCreated) {
         attempt.current = null;
         try {
           const fresh = await apiGet<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(id)}`);
@@ -195,7 +275,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
           setPhase("idle");
           again.current = true;
         } catch {
-          setFailure("network");
+          setFail("network");
           setPhase("failed");
         }
       } else {
@@ -205,8 +285,9 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
             : !(err instanceof ApiError) || err.status >= 500
               ? "network"
               : "unknown";
+        if (f === "network" && isCreated) uncertain.current = { content: contentOf(req), keys: built.keys };
         if (f !== "network" && f !== "request_in_progress") attempt.current = null;
-        setFailure(f);
+        setFail(f);
         setPhase("failed");
       }
     } finally {
@@ -218,45 +299,35 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
       }
       again.current = false;
     }
-    // loadLatest and onCreated are stable for the life of the editor.
+    // onCreated comes from the screen that owns the editor and only reads stable values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const failureRef = useRef<Failure | null>(null);
-  failureRef.current = failure;
-
-  const loadLatest = async (id: string) => {
-    setLatest(null);
-    setLatestFailed(false);
-    try {
-      setLatest(await apiGet<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(id)}`));
-    } catch {
-      setLatestFailed(true);
-    }
-  };
 
   const change = (patch: Partial<NoteForm> | ((f: NoteForm) => NoteForm)) => {
     const next = typeof patch === "function" ? patch(formRef.current) : { ...formRef.current, ...patch };
     replaceForm(next);
     setRestored(false);
-    if (snapshotOf(next) === savedRef.current) clearDraft(noteIdRef.current);
-    else writeDraft(noteIdRef.current, next, base.current);
+    keepDraft();
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), SAVE_AFTER_MS);
   };
 
   useEffect(() => {
-    const d = readDraft(initial?.id ?? null);
+    mounted.current = true;
+    const d = initial ? readNoteDraft<NoteForm>(owner, initial.id) : latestNewDraft<NoteForm>(owner);
     if (d && !isBlank(d.form) && snapshotOf(d.form) !== savedRef.current) setDraft(d);
     if (!initial) titleRef.current?.focus();
     const every = setInterval(() => tick((n) => n + 1), 30_000);
     const onHide = () => {
-      if (document.visibilityState === "hidden") void flush();
+      if (document.visibilityState === "hidden") void flush({ keepalive: true });
     };
     document.addEventListener("visibilitychange", onHide);
+    setLeaveGuard(() => (unsavedRef.current ? e.leave : null));
     return () => {
+      mounted.current = false;
       clearInterval(every);
       document.removeEventListener("visibilitychange", onHide);
+      setLeaveGuard(null);
       if (timer.current) clearTimeout(timer.current);
     };
     // Runs once: the draft belongs to the note the editor opened with.
@@ -316,20 +387,26 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
     replaceForm(next);
     markSaved(snapshotOf(next));
     setSavedAt(latest.updatedAt);
-    clearDraft(noteIdRef.current);
+    clearNoteDraft(owner, noteIdRef.current);
     setLatest(null);
     setPhase("idle");
   };
 
   const restoreDraft = () => {
     if (!draft) return;
+    if (!createdRef.current && draft.noteId !== noteIdRef.current) {
+      // Continue under the draft's id: if its first POST did reach the server, resending finds that note.
+      clearNoteDraft(owner, noteIdRef.current);
+      noteIdRef.current = draft.noteId;
+      setNoteId(draft.noteId);
+    }
     if (draft.base) base.current = draft.base;
     setDraft(null);
     change(draft.form);
   };
 
   const finish = () => {
-    const to = noteIdRef.current ? `/notes/view?id=${noteIdRef.current}` : "/notes";
+    const to = createdRef.current ? `/notes/view?id=${noteIdRef.current}` : "/notes";
     if (!unsaved) {
       router.push(to);
       return;
@@ -339,16 +416,17 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
   };
 
   const remove = async () => {
-    const id = noteIdRef.current;
-    if (!id) return;
-    const items = formRef.current.items.filter((r) => r.id).map((r) => ({ id: r.id!, issue: r.issue }));
+    if (!createdRef.current) return;
+    const items = formRef.current.items.filter((r) => r.id).map((r) => ({ issue: r.issue }));
     if (timer.current) clearTimeout(timer.current);
     const gone = await confirmAndDelete(
-      { id, title: formRef.current.title.trim() || nt.newNote, actionItems: items as MeetingNote["actionItems"] },
+      { id: noteIdRef.current, title: formRef.current.title.trim() || nt.newNote, actionItems: items },
       nt,
+      owner,
     );
     if (!gone) return;
     markSaved(snapshotOf(formRef.current));
+    unsavedRef.current = false;
     router.push("/notes");
   };
 
@@ -403,7 +481,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
       <span className="border-l-2 border-ink-soft pl-3 text-ink">{blocked === "needTitle" ? e.needTitle : e.emptyItem}</span>
     ) : phase === "conflict" || unsaved ? (
       e.unsaved
-    ) : savedAt && noteId ? (
+    ) : savedAt && created ? (
       e.saved(fmt.relativeTime(savedAt))
     ) : (
       e.notYet
@@ -411,11 +489,11 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
 
   return (
     <article className="flex max-w-[820px] flex-col gap-6">
-      <Link href={noteId ? `/notes/view?id=${noteId}` : "/notes"} className="link self-start text-small text-ink-soft">
+      <Link href={created ? `/notes/view?id=${noteId}` : "/notes"} className="link self-start text-small text-ink-soft">
         {nt.back}
       </Link>
       <PageHeader
-        meta={noteId ? e.metaEdit : e.metaNew}
+        meta={created ? e.metaEdit : e.metaNew}
         title={form.title.trim() || nt.newNote}
       >
         {e.lead}
@@ -431,7 +509,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
             type="button"
             className="btn"
             onClick={() => {
-              clearDraft(noteIdRef.current);
+              if (draft) clearNoteDraft(owner, draft.noteId);
               setDraft(null);
             }}
           >
@@ -453,7 +531,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
           ) : latestFailed ? (
             <p className="text-small text-ink">
               {e.conflict.loadFailed}{" "}
-              <button type="button" className="link cursor-pointer" onClick={() => noteId && void loadLatest(noteId)}>
+              <button type="button" className="link cursor-pointer" onClick={() => void loadLatest(noteIdRef.current)}>
                 {e.retry}
               </button>
             </p>
@@ -473,7 +551,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
 
       <form
         noValidate
-        aria-label={noteId ? e.metaEdit : e.metaNew}
+        aria-label={created ? e.metaEdit : e.metaNew}
         onSubmit={(ev) => {
           ev.preventDefault();
           void flush();
@@ -687,7 +765,7 @@ export function NoteEditor({ initial, onCreated }: { initial: MeetingNote | null
           </fieldset>
         </Card>
 
-        {noteId && canDelete({ createdBy }, me) && (
+        {created && canDelete({ createdBy }, me) && (
           <div>
             <button type="button" className="btn" onClick={() => void remove()}>
               {nt.delete}

@@ -47,7 +47,7 @@ public static class MeetingNotesEndpoints
 
         api.MapPost("/meeting-notes", (HttpContext http, ICurrentUser user, TenantDb db, MeetingNoteWrites writes, CancellationToken ct) =>
             RunAsync(http, user, db, ct, body: true, r =>
-                Validate(r, requireAll: false) is { } values ? s => writes.CreateAsync(s, values) : null));
+                Validate(r, requireAll: false) is { } values ? s => writes.CreateAsync(s, values, r.Id) : null));
 
         api.MapPatch("/meeting-notes/{id:guid}", (Guid id, HttpContext http, ICurrentUser user, TenantDb db, MeetingNoteWrites writes, CancellationToken ct) =>
             RunAsync(http, user, db, ct, body: true, r =>

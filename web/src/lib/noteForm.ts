@@ -74,6 +74,20 @@ export function isBlank(f: NoteForm): boolean {
   return !f.title.trim() && !f.bodyMd.trim() && f.decisions.every((d) => !d.text.trim()) && f.items.every((r) => !r.text.trim());
 }
 
+/**
+ * What a request says, ignoring action-item ids and how the date is spelled: equal for a request and the note
+ * the server stored from it.
+ */
+export function contentOf(req: MeetingNoteRequest): string {
+  return JSON.stringify({
+    ...req,
+    id: undefined,
+    expectedUpdatedAt: undefined,
+    heldAt: Date.parse(req.heldAt),
+    actionItems: req.actionItems.map((a) => ({ text: a.text, assigneeId: a.assigneeId, dueDate: a.dueDate })),
+  });
+}
+
 /** Comparable form of what a form would save; equal strings mean nothing new to save. */
 export function snapshotOf(f: NoteForm): string {
   const r = requestOf(f);
@@ -110,34 +124,4 @@ export function onDate(iso: string, date: string): string {
   const at = new Date(iso);
   at.setFullYear(y, m - 1, d);
   return at.toISOString();
-}
-
-type Draft = { form: NoteForm; base: string | null; at: string };
-
-const draftKey = (id: string | null) => `workboard.noteDraft.${id ?? "new"}`;
-
-/** Text that was not saved yet, kept on this device so a failed save or a closed tab loses nothing. */
-export function readDraft(id: string | null): Draft | null {
-  try {
-    const raw = window.localStorage.getItem(draftKey(id));
-    return raw ? (JSON.parse(raw) as Draft) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeDraft(id: string | null, form: NoteForm, base: string | null) {
-  try {
-    window.localStorage.setItem(draftKey(id), JSON.stringify({ form, base, at: new Date().toISOString() } satisfies Draft));
-  } catch {
-    // Storage can be full or unavailable; the leave warning still protects the text.
-  }
-}
-
-export function clearDraft(id: string | null) {
-  try {
-    window.localStorage.removeItem(draftKey(id));
-  } catch {
-    // Nothing to clear.
-  }
 }
