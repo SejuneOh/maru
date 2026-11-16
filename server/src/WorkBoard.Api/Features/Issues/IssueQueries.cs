@@ -96,13 +96,29 @@ public static class IssueQueries
                    (select count(*) from comments c where c.issue_id = i.id)::int as comment_count,
                    i.parent_issue_id, bf.sprint_id, sp.name as sprint_name, bf.size, bf.priority,
                    i.github_updated_at as updated_at, bf.updated_at as board_updated_at, i.closed_at, i.html_url,
-                   i.milestone_id, ms.title as milestone_title, ms.due_on as milestone_due_on
+                   i.milestone_id, ms.title as milestone_title, ms.due_on as milestone_due_on,
+                   cf.from_sprint_id as carried_from_id, cf.from_sprint_name as carried_from_name
               from issues i
               join repositories r on r.id = i.repository_id
               join issue_status st on st.issue_id = i.id
               left join board_fields bf on bf.issue_id = i.id
               left join sprints sp on sp.id = bf.sprint_id
               left join milestones ms on ms.id = i.milestone_id
+              left join lateral (
+                    -- The latest carry-over, not undone, that brought the issue into the sprint it is in now,
+                    -- with no sprint move by hand since (moving away and back again clears it).
+                    select co.from_sprint_id, fs.name as from_sprint_name
+                      from sprint_carry_over_issues ci
+                      join sprint_carry_overs co on co.id = ci.carry_over_id
+                      join sprints fs on fs.id = co.from_sprint_id
+                     where ci.tenant_id = i.tenant_id and ci.issue_id = i.id
+                       and co.to_sprint_id = bf.sprint_id and co.undone_at is null
+                       and not exists (
+                             select 1 from issue_events e
+                              where e.tenant_id = i.tenant_id and e.issue_id = i.id
+                                and e.kind in ('sprint_added', 'sprint_removed') and e.at > co.created_at)
+                     order by co.created_at desc
+                     limit 1) cf on true
              where {where}
              order by i.github_updated_at desc, i.id
              {tail}
@@ -158,7 +174,8 @@ public static class IssueQueries
             r.ClosedAt,
             r.HtmlUrl,
             labels[r.Id].Select(l => new LabelDto(l.Id, l.Name, l.Color)).ToList(),
-            r.MilestoneId is { } milestoneId ? new MilestoneRef(milestoneId, r.MilestoneTitle ?? "", r.MilestoneDueOn) : null)).ToList();
+            r.MilestoneId is { } milestoneId ? new MilestoneRef(milestoneId, r.MilestoneTitle ?? "", r.MilestoneDueOn) : null,
+            r.CarriedFromId is { } carriedFromId ? new SprintRef(carriedFromId, r.CarriedFromName ?? "") : null)).ToList();
     }
 
     private sealed class IssueRow
@@ -186,6 +203,8 @@ public static class IssueQueries
         public Guid? MilestoneId { get; set; }
         public string? MilestoneTitle { get; set; }
         public DateTime? MilestoneDueOn { get; set; }
+        public Guid? CarriedFromId { get; set; }
+        public string? CarriedFromName { get; set; }
     }
 
     private sealed class LabelRow

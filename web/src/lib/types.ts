@@ -104,6 +104,8 @@ export type BoardIssue = {
   htmlUrl: string | null;
   labels: IssueLabel[];
   milestone: { id: string; title: string; dueOn: string | null } | null;
+  /** The sprint a carry-over (not undone) moved this issue from into its current sprint. */
+  carriedFrom: { id: string; name: string } | null;
 };
 
 export type IssueDetail = BoardIssue & {
@@ -364,3 +366,37 @@ export type SyncStatus = {
 
 /** `POST /api/sync/run` errors (`error` field). */
 export type RunSyncError = "sync_running" | "admin_only" | "not_connected" | "github_app_not_configured";
+
+/** `GET /api/sprints`. Dates are yyyy-MM-dd; counts leave out cancelled issues. */
+export type Sprint = {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  state: "planned" | "active" | "closed";
+  issueCount: number;
+  doneCount: number;
+  unfinishedCount: number;
+  createdBy: string | null;
+  createdAt: string;
+  /** Send back in `PATCH /api/sprints/{id}`. */
+  updatedAt: string;
+};
+
+export type SprintList = { current: Sprint[]; upcoming: Sprint[]; past: Sprint[] };
+
+export type SprintIssuesResult = { sprint: Sprint; added: number; moved: number; removed: number; unchanged: number };
+
+export type BacklogPage = { items: BoardIssue[]; total: number; page: number; pageSize: number };
+
+export type SprintForm = { name: string; startDate: string; endDate: string };
+
+/** Sprint write errors (`error` field). */
+export type SprintWriteError =
+  | "sprint_ended"
+  | "sprints_disabled"
+  | "name_taken"
+  | "invalid_dates"
+  | "invalid_request"
+  | "conflict"
+  | "not_found";

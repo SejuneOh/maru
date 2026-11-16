@@ -13,6 +13,9 @@ import type {
   PendingIssue,
   PostedComment,
   SetAssigneesRequest,
+  Sprint,
+  SprintForm,
+  SprintIssuesResult,
   SyncStatus,
 } from "./types";
 
@@ -188,9 +191,43 @@ export function addComment(id: string, req: AddCommentRequest, idempotencyKey: s
   });
 }
 
-/** Issue lists and the overview are what a new issue changes. */
+/** `POST` / `DELETE /api/sprints/{id}/issues`, all ids in one request. Rejects with an `ApiError` whose `code` is a `SprintWriteError`. */
+export function changeSprintIssues(
+  sprintId: string,
+  method: "POST" | "DELETE",
+  issueIds: string[],
+  idempotencyKey: string,
+): Promise<SprintIssuesResult> {
+  return request<SprintIssuesResult>(`/api/sprints/${encodeURIComponent(sprintId)}/issues`, {
+    method,
+    body: { issueIds },
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `POST /api/sprints`, or `PATCH /api/sprints/{id}` with the `updatedAt` the form was opened with. */
+export function saveSprint(
+  form: SprintForm,
+  idempotencyKey: string,
+  existing?: { id: string; updatedAt: string },
+): Promise<Sprint> {
+  return existing
+    ? request<Sprint>(`/api/sprints/${encodeURIComponent(existing.id)}`, {
+        method: "PATCH",
+        body: { ...form, updatedAt: existing.updatedAt },
+        headers: { "Idempotency-Key": idempotencyKey },
+      })
+    : request<Sprint>("/api/sprints", { method: "POST", body: form, headers: { "Idempotency-Key": idempotencyKey } });
+}
+
+/** Issue lists, sprint counts and the overview are what an issue write changes. */
 function showsIssues(path: string): boolean {
-  return (path.startsWith("/api/issues") && path !== NEW_ISSUE_OPTIONS_PATH) || path.startsWith("/api/overview") || path.startsWith("/api/backlog");
+  return (
+    (path.startsWith("/api/issues") && path !== NEW_ISSUE_OPTIONS_PATH) ||
+    path.startsWith("/api/overview") ||
+    path.startsWith("/api/backlog") ||
+    path.startsWith("/api/sprints")
+  );
 }
 
 export type Loadable<T> = { data: T | null; error: ApiError | Error | null; loading: boolean; reload: () => void };

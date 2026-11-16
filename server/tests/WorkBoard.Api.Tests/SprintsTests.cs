@@ -154,14 +154,55 @@ public class SprintsTests(WebApplicationFactory<Program> factory) : IClassFixtur
         var member = await t.ScalarAsync<Guid>("select member_id from sprint_carry_overs where id = @carryId", new { carryId });
         Assert.Equal(await t.ScalarAsync<Guid>("select id from members where tenant_id = @tid limit 1", new { tid = t.Id }), member);
 
+        var (_, inTwo) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s2}&scope=all");
+        var flagged = inTwo.EnumerateArray().ToDictionary(x => Id(x, "id"), x => x.GetProperty("carriedFrom"));
+        Assert.True(flagged.Keys.ToHashSet().SetEquals([todo, doing]));
+        Assert.Equal("One", flagged[todo].GetProperty("name").GetString());
+        Assert.Equal(s1, Id(flagged[doing], "id"));
+        var (_, inOne) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s1}&scope=all");
+        Assert.All(inOne.EnumerateArray(), x => Assert.Equal(JsonValueKind.Null, x.GetProperty("carriedFrom").ValueKind));
+
         var undo = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carryId}/undo");
         Assert.Equal(HttpStatusCode.OK, undo.Status);
         Assert.Equal(s1, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @todo", new { todo }));
         Assert.Equal(["carried_over:One>Two", "carried_over:Two>One"], await EventsAsync(t, todo));
+        var (_, backInOne) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s1}&scope=all");
+        Assert.All(backInOne.EnumerateArray(), x => Assert.Equal(JsonValueKind.Null, x.GetProperty("carriedFrom").ValueKind));
         Assert.Equal("already_undone", (await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carryId}/undo")).Body.GetProperty("error").GetString());
         Assert.Equal(2, await t.ScalarAsync<int>("select count(*)::int from audit_log where tenant_id = @tid and action like 'sprint.carry_over%'", new { tid = t.Id }));
 
         Assert.Equal(HttpStatusCode.BadRequest, (await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over", new { toSprintId = s1 })).Status);
+    }
+
+    [DbFact]
+    public async Task Carried_from_clears_once_the_issue_is_moved_by_hand()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await t.AddRepoAsync("r");
+        var a = await t.AddIssueAsync(repo);
+        var b = await t.AddIssueAsync(repo);
+        var s1 = await t.AddSprintAsync("One");
+        var s2 = await t.AddSprintAsync("Two");
+        var s3 = await t.AddSprintAsync("Three");
+        await t.BoardAsync(a, sprint: s1);
+        await t.BoardAsync(b, sprint: s1);
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over", new { toSprintId = s2 });
+
+        async Task<JsonValueKind> CarriedAsync(Guid sprint, Guid issue)
+        {
+            var (_, list) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={sprint}&scope=all");
+            return list.EnumerateArray().Single(x => Id(x, "id") == issue).GetProperty("carriedFrom").ValueKind;
+        }
+
+        Assert.Equal(JsonValueKind.Object, await CarriedAsync(s2, a));
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s3}/issues", new { issueIds = new[] { a } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s3, a));
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s2}/issues", new { issueIds = new[] { a } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s2, a));
+
+        await SendAsync(t, HttpMethod.Delete, $"/api/sprints/{s2}/issues", new { issueIds = new[] { b } });
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s2}/issues", new { issueIds = new[] { b } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s2, b));
     }
 
     [DbFact]

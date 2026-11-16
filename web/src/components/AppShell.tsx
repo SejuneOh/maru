@@ -46,6 +46,12 @@ const ICONS: Record<keyof Dict["nav"], React.ReactNode> = {
       <rect x="10.5" y="2.5" width="3.5" height="9" rx="1" />
     </>
   ),
+  sprints: (
+    <>
+      <rect x="2" y="3" width="12" height="11" rx="1.5" />
+      <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3M5 9.5h3M5 11.5h5" />
+    </>
+  ),
   notes: (
     <>
       <path d="M4 2h6l3 3v9H4z" />
@@ -67,6 +73,7 @@ const NAV: { href: string; label: keyof Dict["nav"]; key: string }[] = [
   { href: "/me", label: "me", key: "m" },
   { href: "/people", label: "people", key: "p" },
   { href: "/projects", label: "projects", key: "b" },
+  { href: "/sprints", label: "sprints", key: "c" },
   { href: "/notes", label: "notes", key: "n" },
   { href: "/settings", label: "settings", key: "s" },
 ];
@@ -169,7 +176,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [q, setQ] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const org = useMe().data?.tenant.name ?? "";
+  const me = useMe();
+  const org = me.data?.tenant.name ?? "";
+  const sprintsOn = me.data?.settings.sprintsEnabled ?? false;
+  const nav = NAV.filter((n) => n.href !== "/sprints" || sprintsOn);
   const t = useT();
 
   /** On phones the field is hidden until opened, so it is shown first and focused after the next paint. */
@@ -197,7 +207,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <nav aria-label={t.nav.screens}>
             <ul className="flex flex-col gap-0.5">
-              {NAV.map((item) => {
+              {nav.map((item) => {
                 const active = isActive(pathname, item.href);
                 return (
                   <li key={item.href}>
@@ -324,7 +334,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <nav ref={tabsRef} aria-label={t.nav.screens} className="tabs -mx-4 flex gap-5 overflow-x-auto px-4 min-[640px]:-mx-6 min-[640px]:px-6 min-[1024px]:hidden">
-            {NAV.map((item) => {
+            {nav.map((item) => {
               const active = isActive(pathname, item.href);
               return (
                 <Link
