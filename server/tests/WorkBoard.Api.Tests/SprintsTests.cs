@@ -175,6 +175,37 @@ public class SprintsTests(WebApplicationFactory<Program> factory) : IClassFixtur
     }
 
     [DbFact]
+    public async Task Carried_from_clears_once_the_issue_is_moved_by_hand()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await t.AddRepoAsync("r");
+        var a = await t.AddIssueAsync(repo);
+        var b = await t.AddIssueAsync(repo);
+        var s1 = await t.AddSprintAsync("One");
+        var s2 = await t.AddSprintAsync("Two");
+        var s3 = await t.AddSprintAsync("Three");
+        await t.BoardAsync(a, sprint: s1);
+        await t.BoardAsync(b, sprint: s1);
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over", new { toSprintId = s2 });
+
+        async Task<JsonValueKind> CarriedAsync(Guid sprint, Guid issue)
+        {
+            var (_, list) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={sprint}&scope=all");
+            return list.EnumerateArray().Single(x => Id(x, "id") == issue).GetProperty("carriedFrom").ValueKind;
+        }
+
+        Assert.Equal(JsonValueKind.Object, await CarriedAsync(s2, a));
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s3}/issues", new { issueIds = new[] { a } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s3, a));
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s2}/issues", new { issueIds = new[] { a } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s2, a));
+
+        await SendAsync(t, HttpMethod.Delete, $"/api/sprints/{s2}/issues", new { issueIds = new[] { b } });
+        await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s2}/issues", new { issueIds = new[] { b } });
+        Assert.Equal(JsonValueKind.Null, await CarriedAsync(s2, b));
+    }
+
+    [DbFact]
     public async Task Undo_is_refused_when_an_issue_moved_since()
     {
         await using var t = await TestTenant.CreateAsync(factory);

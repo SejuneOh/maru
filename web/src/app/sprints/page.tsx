@@ -13,7 +13,7 @@ import { showMessage, useEditedIssues } from "@/lib/boardEdits";
 import { type Dict, useFormat, useT } from "@/lib/i18n";
 import { useMe, useSettings } from "@/lib/me";
 import { SIZES, addDays, dateOnly, daysBetween, daysLeft, seoulToday, sprintTotals } from "@/lib/sprints";
-import type { BacklogPage, BoardIssue, Sprint, SprintList, Status } from "@/lib/types";
+import type { BacklogPage, BoardIssue, Me, Sprint, SprintList, Status } from "@/lib/types";
 
 /** Where an issue is shown while its move is on its way (`saving`) or until the lists have reloaded (`saved`). */
 type Move = { to: string | null; phase: "saving" | "saved"; seen?: Lists };
@@ -30,9 +30,9 @@ const G_WINDOW_MS = 1200;
 const byStatus = (a: BoardIssue, b: BoardIssue) => RANK[a.status] - RANK[b.status] || Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
 const sprintPath = (s: Sprint | null) => (s ? `/api/issues?sprint=${encodeURIComponent(s.id)}&scope=all` : null);
 
-/** The backlog row that takes keyboard focus when `id` leaves the list. */
+/** The row of the same list that takes keyboard focus when `id` leaves it. */
 function rowNear(id: string): string | null {
-  const li = document.querySelector<HTMLElement>(`[data-plan="backlog"][data-plan-id="${CSS.escape(id)}"]`);
+  const li = document.querySelector<HTMLElement>(`[data-plan][data-plan-id="${CSS.escape(id)}"]`);
   const sibling = (li?.nextElementSibling ?? li?.previousElementSibling) as HTMLElement | null;
   return sibling?.dataset.planId ?? null;
 }
@@ -46,16 +46,15 @@ function moveFailure(e: unknown): MoveFailure {
     case "invalid_request":
       return e.code;
   }
-  return "unknown";
+  return e.status >= 500 ? "unknown" : "refused";
 }
 
 export default function SprintPlanningPage() {
   const t = useT();
   const p = t.plan;
   const me = useMe();
-  const settings = useSettings();
-  const [disabled, setDisabled] = useState(false);
-  const on = settings.sprintsEnabled && !disabled;
+  /** The `/api/me` answer a write found stale (409 `sprints_disabled`); a newer answer decides again. */
+  const [offFor, setOffFor] = useState<Me | null>(null);
 
   const header = (fact: React.ReactNode) => (
     <PageHeader meta={p.meta} title={p.title}>
@@ -63,7 +62,15 @@ export default function SprintPlanningPage() {
     </PageHeader>
   );
 
-  if (!on)
+  if (!me.data)
+    return (
+      <div className="flex flex-col gap-4">
+        {header(null)}
+        {me.error ? <ErrorBox error={me.error} /> : <Loading />}
+      </div>
+    );
+  const meData = me.data;
+  if (!meData.settings.sprintsEnabled || offFor === meData)
     return (
       <div className="flex flex-col gap-4">
         {header(null)}
@@ -80,7 +87,7 @@ export default function SprintPlanningPage() {
     <Planner
       header={header}
       onDisabled={() => {
-        setDisabled(true);
+        setOffFor(meData);
         me.reload();
       }}
     />
@@ -95,7 +102,9 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
 
   const sprints = useApi<SprintList>("/api/sprints");
   const [nextId, setNextId] = useState<string | null>(null);
-  const current = sprints.data?.current[0] ?? null;
+  const [curId, setCurId] = useState<string | null>(null);
+  const currents = sprints.data?.current ?? [];
+  const current = currents.find((s) => s.id === curId) ?? currents[0] ?? null;
   const upcoming = sprints.data?.upcoming ?? [];
   const next = upcoming.find((s) => s.id === nextId) ?? upcoming[0] ?? null;
 
@@ -168,7 +177,7 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
             onDisabled();
             return;
           }
-          // Sprint writes store only successes under the key, so a resend under the same key is safe.
+          // Only no answer or a 5xx may be retried; sprint writes store only successes under the key, so the same key is safe.
           const retry = failure === "network" || failure === "unknown" ? () => send(ids, to, from, key) : null;
           showMessage({ title: p.failedAdd(ids.length), detail: p.errors[failure], failed: true, retry });
           if (failure !== "invalid_request") window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
@@ -201,6 +210,7 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
   });
 
   const target = current ?? next;
+  const closeFormRef = useRef<() => void>(() => {});
   const keys = useRef({ picked, target, formOpen: form !== null });
   keys.current = { picked, target, formOpen: form !== null };
 
@@ -235,7 +245,10 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
         }
         if (focused && ids.includes(focused)) focusAfter.current = rowNear(focused);
         moveIssues(ids, k.target, null);
-      } else if (e.key === "Escape" && k.picked.length && !k.formOpen) {
+      } else if (e.key === "Escape" && k.formOpen) {
+        e.preventDefault();
+        closeFormRef.current();
+      } else if (e.key === "Escape" && k.picked.length) {
         setSelected([]);
       }
     };
@@ -253,6 +266,7 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
     // The opener can be gone (an empty column's create button once its sprint exists).
     requestAnimationFrame(() => (formOpener.current?.isConnected ? formOpener.current : newButton.current)?.focus());
   };
+  closeFormRef.current = () => closeForm(null);
   const newStart = () => {
     const ends = [current, ...upcoming].filter((s): s is Sprint => s !== null).map((s) => s.endDate);
     const today = seoulToday();
@@ -326,7 +340,7 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
   else if (next) fact = p.nextOnly(next.name, Math.max(0, daysBetween(today, next.startDate)), backlogCount);
   else fact = p.noSprints;
 
-  const editing = form?.mode === "edit" ? ([current, ...upcoming].find((s) => s?.id === form.id) ?? null) : null;
+  const editing = form?.mode === "edit" ? ([...currents, ...upcoming].find((s) => s.id === form.id) ?? null) : null;
   const backlogDrop = dropZone(BACKLOG_ZONE, drag !== null && drag.from !== null, (d) => moveIssues(d.ids, null, d.from));
   const sprintDrop = (s: Sprint | null) =>
     dropZone(s?.id ?? "none", drag !== null && s !== null && s.state !== "closed" && drag.from !== s.id, (d) => s && moveIssues(d.ids, s, d.from));
@@ -352,6 +366,7 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
       {form && (
         <SprintForm
           key={form.mode === "edit" ? form.id : "new"}
+          editId={form.mode === "edit" ? form.id : null}
           editing={editing}
           initial={
             form.mode === "edit" && editing
@@ -421,12 +436,17 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
               drop={sprintDrop(current)}
               lifted={drag?.ids ?? []}
               rowDrag={rowDrag}
-              onRemove={(i) => current && moveIssues([i.id], null, current.id)}
+              onRemove={(i) => {
+                if (!current) return;
+                focusAfter.current = rowNear(i.id) ?? i.id;
+                moveIssues([i.id], null, current.id);
+              }}
               onEdit={(s) => openForm({ mode: "edit", id: s.id })}
               onCreate={() => openForm({ mode: "new", start: today })}
               emptyText={p.noCurrent}
               createText={p.makeCurrent}
               sizes={settings.sizeEnabled}
+              choices={currents.length > 1 ? { list: currents, pick: setCurId, label: p.pickCurrent } : undefined}
             />
             <SprintColumn
               label={p.nextCol}
@@ -437,13 +457,17 @@ function Planner({ header, onDisabled }: { header: (fact: React.ReactNode) => Re
               drop={sprintDrop(next)}
               lifted={drag?.ids ?? []}
               rowDrag={rowDrag}
-              onRemove={(i) => next && moveIssues([i.id], null, next.id)}
+              onRemove={(i) => {
+                if (!next) return;
+                focusAfter.current = rowNear(i.id) ?? i.id;
+                moveIssues([i.id], null, next.id);
+              }}
               onEdit={(s) => openForm({ mode: "edit", id: s.id })}
               onCreate={() => openForm({ mode: "new", start: newStart() })}
               emptyText={p.noNext}
               createText={p.makeNext}
               sizes={settings.sizeEnabled}
-              choices={upcoming.length > 1 ? { list: upcoming, pick: setNextId } : undefined}
+              choices={upcoming.length > 1 ? { list: upcoming, pick: setNextId, label: p.pickNext } : undefined}
             />
           </div>
         </div>
@@ -541,7 +565,7 @@ function SprintColumn({
   emptyText: string;
   createText: string;
   sizes: boolean;
-  choices?: { list: Sprint[]; pick: (id: string) => void };
+  choices?: { list: Sprint[]; pick: (id: string) => void; label: string };
 }) {
   const t = useT();
   const p = t.plan;
@@ -571,7 +595,7 @@ function SprintColumn({
         <div className="flex min-h-7 items-center gap-2">
           {choices ? (
             <select
-              aria-label={p.pickNext}
+              aria-label={choices.label}
               value={sprint.id}
               onChange={(e) => choices.pick(e.target.value)}
               className="-ml-1 h-7 min-w-0 cursor-pointer rounded-control bg-transparent px-1 text-small text-muted hover:bg-hover"

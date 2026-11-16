@@ -105,12 +105,18 @@ public static class IssueQueries
               left join sprints sp on sp.id = bf.sprint_id
               left join milestones ms on ms.id = i.milestone_id
               left join lateral (
-                    -- The latest carry-over, not undone, that brought the issue into the sprint it is in now.
+                    -- The latest carry-over, not undone, that brought the issue into the sprint it is in now,
+                    -- with no sprint move by hand since (moving away and back again clears it).
                     select co.from_sprint_id, fs.name as from_sprint_name
                       from sprint_carry_over_issues ci
                       join sprint_carry_overs co on co.id = ci.carry_over_id
                       join sprints fs on fs.id = co.from_sprint_id
-                     where ci.issue_id = i.id and co.to_sprint_id = bf.sprint_id and co.undone_at is null
+                     where ci.tenant_id = i.tenant_id and ci.issue_id = i.id
+                       and co.to_sprint_id = bf.sprint_id and co.undone_at is null
+                       and not exists (
+                             select 1 from issue_events e
+                              where e.tenant_id = i.tenant_id and e.issue_id = i.id
+                                and e.kind in ('sprint_added', 'sprint_removed') and e.at > co.created_at)
                      order by co.created_at desc
                      limit 1) cf on true
              where {where}

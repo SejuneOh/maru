@@ -267,8 +267,8 @@ Names are unique per tenant, case-insensitive.
   `person` (alias `assignee`), `status` (comma list of `todo`, `in_progress`, `in_review`, else `400 invalid_status`),
   `page` (1..10000) and `pageSize` (1..200, default 50), else `400 invalid_request`. Sort like the issue list.
 - `carriedFrom` on every `BoardIssue` (read only): the source sprint of the latest carry-over, not undone, that moved the
-  issue into the sprint it is in now; `null` otherwise (no sprint, added by hand, or carried into a sprint it has since left).
-  An undo clears it. The planning screen shows it as the "넘어온 일" flag.
+  issue into the sprint it is in now, as long as no `sprint_added` / `sprint_removed` event for the issue is newer than that
+  carry-over. Otherwise `null`: no sprint, added by hand, or moved by hand since (also when it was moved away and back). An undo clears it. The planning screen shows it as the "넘어온 일" flag.
 
 `GET /api/milestones` counts exclude `cancelled` issues in `issueCount`; `doneCount` counts status `done`.
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.
