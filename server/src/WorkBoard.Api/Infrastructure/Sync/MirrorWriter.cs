@@ -50,7 +50,11 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         await UpsertUsersAsync(db, SnapshotUsers(snapshot));
         var milestones = await UpsertMilestonesAsync(db, repoId, snapshot.Milestones);
         var labels = await UpsertLabelsAsync(db, repoId, snapshot.Labels);
+        var before = await db.Query<StoredState>(
+            "select github_issue_id as GithubId, state as State, state_reason as StateReason from issues where tenant_id = @tenantId and github_issue_id = any(@ids)",
+            new { ids = snapshot.Issues.Select(i => i.DatabaseId).ToArray() });
         var issues = await UpsertIssuesAsync(db, repoId, snapshot.Issues, milestones);
+        await RecordStateChangesAsync(db, issues, before.ToDictionary(b => b.GithubId));
         await ReplaceIssueChildrenAsync(db, repoId, issues, labels);
         await ResolveParentsAsync(db, issues);
         var pullRequests = await UpsertPullRequestsAsync(db, repoId, snapshot.PullRequests);
@@ -129,6 +133,30 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     }
 
     private sealed record PreviousState(string State, string? StateReason);
+
+    private sealed record StoredState(long GithubId, string State, string? StateReason);
+
+    // A sync run records the closed / reopened transitions it applies to issues it already stored, with no member.
+    // An issue first seen by a sync has no earlier state, so it gets no event.
+    private static async Task RecordStateChangesAsync(
+        Db db, List<(SourceIssue Issue, Guid Id)> applied, Dictionary<long, StoredState> before)
+    {
+        foreach (var (issue, id) in applied)
+        {
+            if (!before.TryGetValue(issue.DatabaseId, out var old) || old.State == issue.State)
+                continue;
+            await db.Exec("""
+                insert into issue_events (tenant_id, issue_id, kind, from_value, to_value)
+                values (@tenantId, @issueId, @kind, @fromValue, @toValue)
+                """, new
+            {
+                issueId = id,
+                kind = issue.State == "closed" ? "closed" : "reopened",
+                fromValue = old.StateReason,
+                toValue = issue.StateReason,
+            });
+        }
+    }
 
     private sealed class Db(NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, CancellationToken ct)
     {
