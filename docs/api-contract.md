@@ -219,9 +219,9 @@ Assignees and comments (any member, GitHub write through the App, same `Idempote
   `409 repository_archived`, `422 assignee_not_collaborator` (GitHub refused an assignee), and the GitHub write errors above. Nothing local changes on an error.
 - `POST /api/issues/{id}/comments` requires `Idempotency-Key` (missing is `400 invalid_request`). Body `{"body": string}`, trimmed, 1..60000
   characters, else `400 invalid_request`. GitHub shows the App bot as the author; the body gets the footer naming the caller and an invisible marker
-  `<!-- work-board:comment:<id> -->` (`<id>` hashed from tenant, key and request, like issue creation). An audit row is written
-  even when mirroring fails. Then the comment is mirrored into `comments`
-  and an `issue.comment` `audit_log` row is written. Response `201 PostedComment`: `author` is the caller and `body` the text sent (no footer).
+  `<!-- work-board:comment:<id> -->` (`<id>` hashed from tenant, key and request, like issue creation). Then the comment is mirrored
+  into `comments`, and an `issue.comment` `audit_log` row is written even when mirroring fails (a takeover that finds an earlier
+  attempt's comment can write a second audit row if that attempt died after its audit row). Response `201 PostedComment`: `author` is the caller and `body` the text sent (no footer).
   If GitHub posted but saving locally failed, the response is still `201` with `id: null` and `mirrorPending: true`; the next sync brings the comment.
   Errors: `404 not_found`, `409 repository_archived`, and the GitHub write errors above.
   No duplicate on retry: a comment is not safe to repeat, so a retry that takes over a stale pending reservation first lists that issue's comments
