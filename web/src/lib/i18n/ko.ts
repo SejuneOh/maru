@@ -4,6 +4,13 @@ import type { Clause } from "../overview";
  * Every UI string lives here. `en.ts` is typed against this object, so a key missing from or added
  * to only one language fails `tsc`. Functions take the figures and return the finished phrase.
  */
+/** "완료로", "진행 중으로": 받침이 없거나 ㄹ이면 로, 아니면 으로. */
+function ro(word: string): string {
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  const jong = code >= 0 && code < 11172 ? code % 28 : 0;
+  return `${word}${jong === 0 || jong === 8 ? "로" : "으로"}`;
+}
+
 export const ko = {
   langName: "한국어",
 
@@ -30,6 +37,7 @@ export const ko = {
     hintMove: "이동",
     hintOpen: "열기",
     hintClose: "닫기",
+    hintStatus: "상태",
     hintNew: "새 이슈",
     newIssue: "새 이슈",
   },
@@ -241,6 +249,36 @@ export const ko = {
     labels: "라벨",
     milestone: "마일스톤",
     openPr: (n: number) => `PR #${n} GitHub에서 보기, 새 탭`,
+  },
+
+  edit: {
+    saving: "저장 중",
+    closing: "GitHub에서 닫는 중",
+    reopening: "GitHub에서 다시 여는 중",
+    change: (field: string, value: string) => `${field} 바꾸기, 지금 ${value}`,
+    unset: "정하지 않음",
+    byBoard: (name: string, when: string) => `보드에서 바꿈 · ${name} · ${when}`,
+    statusHint: "상태 바꾸기",
+    busy: "앞 변경을 저장하는 중입니다. 끝난 뒤에 다시 바꿔 주세요.",
+    movedTo: (ref: string, status: string) => `${ref} ${ro(status)} 옮김`,
+    closedNote: "GitHub에서 닫았습니다.",
+    undo: "되돌리기",
+    undone: (ref: string, status: string) => `${ref} ${ro(status)} 되돌림`,
+    retry: "다시 시도",
+    dismiss: "알림 닫기",
+    failed: (ref: string) => `${ref} 값을 바꾸지 못했습니다`,
+    errors: {
+      conflict: "그사이 다른 사람이 이 카드를 바꿨습니다. 최신 값을 불러왔으니 다시 바꿔 주세요.",
+      field_disabled: "이 항목은 설정에서 꺼져 있습니다. 관리자가 설정에서 켜야 바꿀 수 있습니다.",
+      repository_archived: "보관된 저장소의 이슈는 닫거나 다시 열 수 없습니다. GitHub에서 보관을 풀어야 합니다.",
+      github_write_not_granted: "GitHub App에 이슈를 쓸 권한이 없습니다. 관리자가 GitHub에서 Issues 쓰기 권한을 승인해야 합니다.",
+      not_found: "이슈를 찾을 수 없거나 저장소의 GitHub 연결이 끊겼습니다. 설정에서 연결을 확인하세요.",
+      github_unavailable: "GitHub에 잠시 연결할 수 없어 바꾸지 못했습니다. GitHub에서 이미 바뀌었는지 확인한 뒤 다시 시도하세요.",
+      timeout: "GitHub이 제때 답하지 않았습니다. 이미 바뀌었을 수 있어 최신 값을 다시 불러왔습니다.",
+      request_in_progress: "같은 요청을 아직 처리하는 중입니다. 잠시 뒤 다시 시도하세요.",
+      network: "서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.",
+      unknown: "저장하지 못해 카드는 바꾸기 전 값 그대로입니다. 잠시 뒤 다시 시도하세요.",
+    },
   },
 
   newIssue: {

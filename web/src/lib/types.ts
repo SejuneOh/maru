@@ -98,6 +98,8 @@ export type BoardIssue = {
   size: Size | null;
   priority: Priority | null;
   updatedAt: string;
+  /** `board_fields.updated_at`; send it back as `expectedUpdatedAt` when changing the card. */
+  boardUpdatedAt: string | null;
   closedAt: string | null;
   htmlUrl: string | null;
   labels: IssueLabel[];
@@ -124,7 +126,28 @@ export type IssueDetail = BoardIssue & {
     createdAt: string;
   }[];
   meetingNotes: { id: string; title: string; heldAt: string }[];
+  /** The newest status, priority or size change someone made on the board; null when nobody has. */
+  lastBoardChange: { at: string; by: { githubLogin: string | null; displayName: string | null } } | null;
 };
+
+/** `PATCH /api/issues/{id}/board` body. A present `null` clears the field. */
+export type BoardChangeRequest = {
+  status?: Status | null;
+  priority?: Priority | null;
+  size?: Size | null;
+  expectedUpdatedAt?: string | null;
+};
+
+export type BoardChangeError =
+  | "invalid_request"
+  | "not_found"
+  | "conflict"
+  | "field_disabled"
+  | "repository_archived"
+  | "github_write_not_granted"
+  | "github_unavailable"
+  | "request_in_progress"
+  | "idempotency_key_reused";
 
 /** `GET /api/issues/new-options`: repositories the caller can create in (archived last, no labels), and every member. */
 export type NewIssueOptions = {

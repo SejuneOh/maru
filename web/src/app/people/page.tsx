@@ -4,9 +4,10 @@ import { useSearchParams } from "next/navigation";
 import { ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
 import { IssueCard } from "@/components/IssueCard";
-import { AddToColumn, CanceledGroup, boardCols } from "@/components/StatusColumns";
+import { AddToColumn, CanceledGroup, DropColumn, boardCols } from "@/components/StatusColumns";
 import { Avatar, Dot, Flag, PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
+import { useEditedIssues } from "@/lib/boardEdits";
 import { applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useFormat, useT } from "@/lib/i18n";
 import { STATUS_DOT, STATUS_ORDER, groupByStatus, isCrowded } from "@/lib/labels";
@@ -23,9 +24,10 @@ export default function PeopleBoardPage() {
   const fmt = useFormat();
   const members = useApi<Member[]>("/api/members");
   const issues = useApi<BoardIssue[]>(issuesQuery(filters));
+  const edited = useEditedIssues(issues.data);
 
   const error = members.error ?? issues.error;
-  const filtered = issues.data ? applyFilters(issues.data, filters) : null;
+  const filtered = edited ? applyFilters(edited, filters) : null;
   const memberName = (login: string) => {
     const m = members.data?.find((x) => x.githubLogin === login);
     return m ? fmt.person(m) : login;
@@ -119,7 +121,7 @@ export default function PeopleBoardPage() {
                 )}
                 <div className={`grid grid-cols-1 items-start gap-x-4 gap-y-5 ${boardCols(statuses.length)}`}>
                   {statuses.map((s) => (
-                    <div key={s} className={`flex min-w-0 flex-col gap-2 ${filled(s) ? "" : "@max-[34rem]:hidden"}`}>
+                    <DropColumn key={s} scope={`people:${row.key}`} status={s} className={filled(s) ? "" : "@max-[34rem]:hidden"}>
                       <h3 className="flex min-h-7 items-center gap-2 px-1 text-small font-semibold text-ink-soft">
                         <Dot className={STATUS_DOT[s]} />
                         {t.status[s]}
@@ -131,10 +133,10 @@ export default function PeopleBoardPage() {
                       </h3>
                       {!filled(s) && <p className="px-1 py-2 text-small text-muted">{t.common.none}</p>}
                       {groups[s].map((i) => (
-                        <IssueCard key={i.id} issue={i} showAssignee={false} />
+                        <IssueCard key={i.id} issue={i} showAssignee={false} dragScope={`people:${row.key}`} />
                       ))}
-                      {s === "done" && <CanceledGroup issues={canceled} showAssignee={false} />}
-                    </div>
+                      {s === "done" && <CanceledGroup issues={canceled} showAssignee={false} dragScope={`people:${row.key}`} />}
+                    </DropColumn>
                   ))}
                 </div>
               </section>

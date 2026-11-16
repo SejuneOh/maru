@@ -49,6 +49,17 @@ public static class IssueDetailQueries
              order by n.held_at desc
             """, new { id });
 
+        // Sync records closed/reopened without a member, so a member marks a change made on the board.
+        var boardChange = await s.QuerySingleOrDefaultAsync<BoardChangeRow>("""
+            select e.at, m.github_login, m.display_name
+              from issue_events e
+              join members m on m.id = e.member_id
+             where e.issue_id = @id
+               and e.kind in ('status_set', 'status_cleared', 'priority_set', 'size_set', 'closed', 'reopened')
+             order by e.at desc, e.id
+             limit 1
+            """, new { id });
+
         return new IssueDetail(issue)
         {
             Body = body,
@@ -61,6 +72,9 @@ public static class IssueDetailQueries
                 .Select(c => new CommentDto(c.Id, new CommentAuthor(c.GithubLogin, c.DisplayName), c.Body, c.CreatedAt))
                 .ToList(),
             MeetingNotes = meetingNotes.Select(n => new LinkedMeetingNote(n.Id, n.Title, n.HeldAt)).ToList(),
+            LastBoardChange = boardChange is null
+                ? null
+                : new BoardChange(boardChange.At, new BoardChangeBy(boardChange.GithubLogin, boardChange.DisplayName)),
         };
     }
 
@@ -98,6 +112,13 @@ public static class IssueDetailQueries
         public string? DisplayName { get; set; }
         public string Body { get; set; } = "";
         public DateTime CreatedAt { get; set; }
+    }
+
+    private sealed class BoardChangeRow
+    {
+        public DateTime At { get; set; }
+        public string? GithubLogin { get; set; }
+        public string? DisplayName { get; set; }
     }
 
     private sealed class NoteRow

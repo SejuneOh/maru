@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
-import type { CreateIssueRequest, CreatedIssue, Milestone, PendingIssue, SyncStatus } from "./types";
+import type { BoardChangeRequest, BoardIssue, CreateIssueRequest, CreatedIssue, Milestone, PendingIssue, SyncStatus } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 const DEV_USER_KEY = "workboard.devUser";
@@ -147,6 +147,15 @@ export async function createIssue(req: CreateIssueRequest, idempotencyKey: strin
     headers: { "Idempotency-Key": idempotencyKey },
   });
   return res.status === 202 ? { kind: "pending", issue: res.data as PendingIssue } : { kind: "created", issue: res.data as CreatedIssue };
+}
+
+/** `PATCH /api/issues/{id}/board`. Rejects with an `ApiError` whose `code` is a `BoardChangeError`, or a `TypeError` when offline. */
+export function changeBoard(id: string, req: BoardChangeRequest, idempotencyKey: string): Promise<BoardIssue> {
+  return request<BoardIssue>(`/api/issues/${encodeURIComponent(id)}/board`, {
+    method: "PATCH",
+    body: req,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
 }
 
 /** Issue lists and the overview are what a new issue changes. */

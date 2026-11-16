@@ -46,6 +46,10 @@ public sealed record CommentDto(Guid Id, CommentAuthor Author, string Body, Date
 
 public sealed record LinkedMeetingNote(Guid Id, string Title, DateTime HeldAt);
 
+public sealed record BoardChangeBy(string? GithubLogin, string? DisplayName);
+
+public sealed record BoardChange(DateTime At, BoardChangeBy By);
+
 public record IssueDetail : BoardIssue
 {
     public IssueDetail(BoardIssue issue) : base(issue)
@@ -58,4 +62,5 @@ public record IssueDetail : BoardIssue
     public IReadOnlyList<PullRequestDto> PullRequests { get; init; } = [];
     public IReadOnlyList<CommentDto> Comments { get; init; } = [];
     public IReadOnlyList<LinkedMeetingNote> MeetingNotes { get; init; } = [];
+    public BoardChange? LastBoardChange { get; init; }
 }

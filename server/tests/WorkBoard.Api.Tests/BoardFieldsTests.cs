@@ -125,6 +125,24 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Detail_names_who_last_changed_the_board_and_ignores_sync_events()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        Assert.Equal(JsonValueKind.Null, (await t.GetAsync($"/api/issues/{c.Issue}")).GetProperty("lastBoardChange").ValueKind);
+
+        await PatchAsync(c, new { status = "in_progress" });
+        await t.ExecAsync(
+            "insert into issue_events (tenant_id, issue_id, kind, at) values (@tid, @issue, 'closed', now() + interval '1 minute')",
+            new { tid = t.Id, issue = c.Issue });
+
+        var change = (await t.GetAsync($"/api/issues/{c.Issue}")).GetProperty("lastBoardChange");
+        Assert.Equal(t.ViewerLogin, change.GetProperty("by").GetProperty("githubLogin").GetString());
+        var at = change.GetProperty("at").GetDateTime();
+        Assert.True(at <= DateTime.UtcNow.AddSeconds(5));
+    }
+
+    [DbFact]
     public async Task Done_and_cancelled_close_on_github_once_and_double_close_is_a_noop()
     {
         await using var t = await TestTenant.CreateAsync(factory);
