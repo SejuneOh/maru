@@ -41,7 +41,7 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false, drag
 
   // The GitHub link sits beside the card button, not inside it, so the card stays one click target.
   return (
-    <div className={`relative ${lifted ? "card-lifted" : ""}`} {...drag} title={drag.draggable ? t.edit.dragHint : undefined}>
+    <div className={`relative ${lifted ? "card-lifted" : ""}`} {...drag}>
     <button
       type="button"
       {...{ [ROW_ATTR]: "", [ISSUE_ATTR]: issue.id }}

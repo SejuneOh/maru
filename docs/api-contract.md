@@ -434,7 +434,8 @@ type IssueDetail = BoardIssue & {
   comments: { id: string; author: { githubLogin: string | null; displayName: string | null };
               body: string; createdAt: string }[];   // oldest first
   meetingNotes: { id: string; title: string; heldAt: string }[];  // notes with an action item linked to this issue
-  // newest status/priority/size/closed/reopened event a member made on the board (sync events have no member); null if none
+  // newest status/priority/size/closed/reopened event with a member (sync events have none); null if none.
+  // Board fields set by POST /api/issues count too, so a new issue created with a status names its creator.
   lastBoardChange: { at: string; by: { githubLogin: string | null; displayName: string | null } } | null;
 };
 

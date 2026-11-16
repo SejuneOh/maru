@@ -7,6 +7,7 @@ import { FilterChips } from "@/components/FilterChips";
 import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader, ProgressBar, SectionHead, progressLine } from "@/components/ui";
 import { useApi } from "@/lib/api";
+import { useEditedIssues } from "@/lib/boardEdits";
 import { NO_FILTERS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useFormat, useT } from "@/lib/i18n";
 import { STATUS_ORDER, isCanceled, percent } from "@/lib/labels";
@@ -35,6 +36,7 @@ export default function ProjectsBoardPage() {
   const projects = useApi<Project[]>("/api/projects");
   // Progress counts every issue of a project, not only the last 7 days of done work.
   const all = useApi<BoardIssue[]>(issuesQuery(NO_FILTERS, { scope: "all" }));
+  const allIssues = useEditedIssues(all.data);
   const board = useApi<BoardIssue[]>(
     selectedId || hasFilters(filters) ? issuesQuery(filters, selectedId ? { projectId: selectedId } : {}) : null,
   );
@@ -54,7 +56,7 @@ export default function ProjectsBoardPage() {
         <ErrorBox error={error} />
       </div>
     );
-  if (!projects.data || !all.data || !notes.data)
+  if (!projects.data || !allIssues || !notes.data)
     return (
       <div className="flex flex-col gap-4">
         {header}
@@ -71,14 +73,14 @@ export default function ProjectsBoardPage() {
     const qs = next.toString();
     router.push(qs ? `/projects?${qs}` : "/projects", { scroll: false });
   };
-  const sprintName = (id: string) => all.data!.find((i) => i.sprint?.id === id)?.sprint?.name;
+  const sprintName = (id: string) => allIssues.find((i) => i.sprint?.id === id)?.sprint?.name;
   const memberName = (login: string) => {
     const m = members.data?.find((x) => x.githubLogin === login);
     return m ? fmt.person(m) : login;
   };
 
   const stats = projects.data.map((p) => {
-    const counts = countByStatus(all.data!.filter((i) => i.projectIds.includes(p.id)));
+    const counts = countByStatus(allIssues.filter((i) => i.projectIds.includes(p.id)));
     const total = counts.todo + counts.inProgress + counts.inReview + counts.done;
     return { project: p, counts, total, pct: percent(counts.done, total) };
   });

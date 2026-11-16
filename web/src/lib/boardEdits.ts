@@ -29,8 +29,11 @@ export type EditFailure =
   | "network"
   | "unknown";
 
+/** `busy`: a change for this card is still on its way, so nothing was sent. */
+export type EditResult = "sent" | "same" | "busy";
+
 export type Notice =
-  | { id: number; kind: "moved"; ref: string; to: Status; undo: (() => void) | null; until: number }
+  | { id: number; kind: "moved"; ref: string; to: Status; undo: (() => EditResult) | null; until: number }
   | { id: number; kind: "undone"; ref: string; to: Status }
   | { id: number; kind: "failed"; ref: string; failure: EditFailure; retry: (() => void) | null };
 
@@ -70,10 +73,16 @@ function categoryOf(s: Status): BoardIssue["category"] {
   return s === "todo" ? "todo" : s === "in_progress" || s === "in_review" ? "in_progress" : "done";
 }
 
+/**
+ * Our write answer wins only over an older server copy (a refetch that left before the write). A copy at
+ * least as new already holds the write, plus anything that does not move the timestamps (sprint, linked
+ * PRs, the PR-driven status), so it replaces the answer for good.
+ */
 function merge<T extends BoardIssue>(issue: T): T {
   const mine = confirmed.get(issue.id);
   let out: T = issue;
-  if (mine && freshness(mine) >= freshness(issue)) out = { ...issue, ...mine };
+  if (mine && freshness(mine) > freshness(issue)) out = { ...issue, ...mine };
+  else if (mine) confirmed.delete(issue.id);
   const p = pending.get(issue.id);
   if (p?.phase === "saving") {
     out = { ...out, ...p.change };
@@ -163,18 +172,16 @@ export function isEditing(id: string): boolean {
 
 type Options = { undoOf?: Status };
 
-/**
- * Sends one change for `issue` (the copy on screen, so `boardUpdatedAt` is what the person saw).
- * Returns false when nothing was sent: no change, or a change for this card is still on its way.
- */
-export function editIssue(issue: BoardIssue, change: BoardChange, opts: Options = {}): boolean {
-  if (pending.has(issue.id) || sameValue(issue, change)) return false;
+/** Sends one change for `issue` (the copy on screen, so `boardUpdatedAt` is what the person saw). */
+export function editIssue(issue: BoardIssue, change: BoardChange, opts: Options = {}): EditResult {
+  if (pending.has(issue.id)) return "busy";
+  if (sameValue(issue, change)) return "same";
   const status = change.status;
   const phase: EditPhase =
     status && isClosedStatus(status) ? "closing" : status && issue.state === "closed" ? "reopening" : "saving";
   const req: BoardChangeRequest = { ...change, expectedUpdatedAt: issue.boardUpdatedAt };
   send(issue, change, req, newIdempotencyKey(), phase, opts);
-  return true;
+  return "sent";
 }
 
 function send(issue: BoardIssue, change: BoardChange, req: BoardChangeRequest, key: string, phase: EditPhase, opts: Options) {

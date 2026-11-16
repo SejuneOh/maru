@@ -32,6 +32,7 @@ function NoticeCard({ notice }: { notice: Notice }) {
   const t = useT();
   const e = t.edit;
   const [paused, setPaused] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (paused) return;
@@ -88,7 +89,7 @@ function NoticeCard({ notice }: { notice: Notice }) {
               {notice.kind === "moved" ? e.movedTo(notice.ref, t.status[notice.to]) : e.undone(notice.ref, t.status[notice.to])}
             </span>
           </p>
-          {notice.kind === "moved" && <p className="pl-4 text-small text-muted">{e.closedNote}</p>}
+          {notice.kind === "moved" && <p className={`pl-4 text-small ${busy ? "text-ink" : "text-muted"}`}>{busy ? e.busy : e.closedNote}</p>}
         </div>
       )}
       {notice.kind === "moved" && notice.undo && (
@@ -96,8 +97,8 @@ function NoticeCard({ notice }: { notice: Notice }) {
           type="button"
           className="btn relative h-8 shrink-0 self-center px-3 text-small"
           onClick={() => {
-            dismissNotice(notice.id);
-            notice.undo?.();
+            if (notice.undo?.() === "busy") setBusy(true);
+            else dismissNotice(notice.id);
           }}
         >
           {e.undo}
@@ -124,11 +125,13 @@ export function StatusKeys() {
   const t = useT();
   const { issueId } = useIssuePanel();
   const [armed, setArmed] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let target: string | null = null;
     let lastG = 0;
+    let busyTimer: ReturnType<typeof setTimeout> | undefined;
     const disarm = () => {
       target = null;
       clearTimeout(timer);
@@ -140,11 +143,15 @@ export function StatusKeys() {
         const n = /^Digit([1-5])$/.exec(e.code) ?? /^Numpad([1-5])$/.exec(e.code);
         const id = target;
         disarm();
-        if (!n) return;
+        if (!n || e.shiftKey) return;
         e.preventDefault();
         e.stopPropagation();
         const issue = knownIssue(id);
-        if (issue) editIssue(issue, { status: STATUS_KEYS[Number(n[1]) - 1] });
+        if (issue && editIssue(issue, { status: STATUS_KEYS[Number(n[1]) - 1] }) === "busy") {
+          clearTimeout(busyTimer);
+          setBusy(true);
+          busyTimer = setTimeout(() => setBusy(false), KEY_TIMEOUT_MS);
+        }
         return;
       }
       if (e.code === "KeyG") lastG = e.timeStamp;
@@ -165,9 +172,16 @@ export function StatusKeys() {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("pointerdown", disarm);
       clearTimeout(timer);
+      clearTimeout(busyTimer);
     };
   }, [issueId]);
 
+  if (busy && !armed)
+    return (
+      <div role="status" className="pointer-events-none fixed inset-x-0 top-[72px] z-50 flex justify-center px-4">
+        <p className="notice rounded-item bg-surface px-4 py-2.5 text-small text-ink-soft shadow-elev-2">{t.edit.busy}</p>
+      </div>
+    );
   if (!armed) return null;
   return (
     <div role="status" className="pointer-events-none fixed inset-x-0 top-[72px] z-50 flex justify-center px-4">
