@@ -12,6 +12,7 @@ export const GO_KEYS: Record<string, string> = {
   KeyM: "/me",
   KeyP: "/people",
   KeyB: "/projects",
+  KeyC: "/sprints",
   KeyN: "/notes",
   KeyS: "/settings",
 };

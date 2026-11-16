@@ -32,7 +32,8 @@ public record BoardIssue(
     DateTime? ClosedAt,
     string? HtmlUrl,
     IReadOnlyList<LabelDto> Labels,
-    MilestoneRef? Milestone);
+    MilestoneRef? Milestone,
+    SprintRef? CarriedFrom);
 
 public sealed record ParentRef(Guid Id, int Number, string Title);
 

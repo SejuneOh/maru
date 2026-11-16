@@ -36,7 +36,8 @@ function NoticeCard({ notice }: { notice: Notice }) {
 
   useEffect(() => {
     if (paused) return;
-    const ms = notice.kind === "moved" ? Math.max(0, notice.until - Date.now()) : notice.kind === "failed" ? FAILURE_MS : UNDONE_MS;
+    const failed = notice.kind === "failed" || (notice.kind === "message" && notice.failed);
+    const ms = notice.kind === "moved" ? Math.max(0, notice.until - Date.now()) : failed ? FAILURE_MS : UNDONE_MS;
     const timer = setTimeout(() => dismissNotice(notice.id), ms);
     return () => clearTimeout(timer);
   }, [notice, paused]);
@@ -54,6 +55,36 @@ function NoticeCard({ notice }: { notice: Notice }) {
       </svg>
     </button>
   );
+
+  if (notice.kind === "message")
+    return (
+      <div
+        role={notice.failed ? "alert" : "status"}
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        className={`notice pointer-events-auto flex w-full max-w-[420px] items-start gap-3 rounded-item bg-surface py-2.5 pl-4 pr-2 shadow-elev-2 ${
+          notice.failed ? "border-l-2 border-ink-soft" : ""
+        }`}
+      >
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+          <p className="text-ui text-ink">{notice.title}</p>
+          {notice.detail && <p className="text-small text-ink-soft">{notice.detail}</p>}
+          {notice.retry && (
+            <button
+              type="button"
+              className="link mt-1 cursor-pointer self-start text-small font-medium"
+              onClick={() => {
+                dismissNotice(notice.id);
+                notice.retry?.();
+              }}
+            >
+              {e.retry}
+            </button>
+          )}
+        </div>
+        {close}
+      </div>
+    );
 
   return (
     <div

@@ -196,12 +196,7 @@ export function AssigneeMenu({
                     onPointerEnter={() => setActive(i)}
                     onClick={() => toggle(i)}
                   >
-                    <span
-                      aria-hidden
-                      className={`grid h-4 w-4 shrink-0 place-items-center rounded-mark ${
-                        on ? "bg-ink text-on-ink" : "shadow-[inset_0_0_0_1.5px_var(--wb-rule-strong)]"
-                      }`}
-                    >
+                    <span aria-hidden data-on={on || undefined} className="pick-box">
                       {on && (
                         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <path d="m3.5 8.5 3 3 6-7" strokeLinecap="round" strokeLinejoin="round" />

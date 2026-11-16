@@ -35,7 +35,8 @@ export type EditResult = "sent" | "same" | "busy";
 export type Notice =
   | { id: number; kind: "moved"; ref: string; to: Status; undo: (() => EditResult) | null; until: number }
   | { id: number; kind: "undone"; ref: string; to: Status }
-  | { id: number; kind: "failed"; ref: string; failure: EditFailure; retry: (() => void) | null };
+  | { id: number; kind: "failed"; ref: string; failure: EditFailure; retry: (() => void) | null }
+  | { id: number; kind: "message"; title: string; detail: string | null; failed: boolean; retry: (() => void) | null };
 
 export const UNDO_MS = 10_000;
 
@@ -138,6 +139,11 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 function show(n: DistributiveOmit<Notice, "id">) {
   notice = { ...n, id: ++noticeSeq };
   bump();
+}
+
+/** A result told in words (sprint planning), in the same single notice slot as card changes. */
+export function showMessage(m: { title: string; detail?: string | null; failed?: boolean; retry?: (() => void) | null }) {
+  show({ kind: "message", title: m.title, detail: m.detail ?? null, failed: m.failed ?? false, retry: m.retry ?? null });
 }
 
 type FailureInfo = {

@@ -471,6 +471,22 @@ html[data-lang-pending] body {
     border-top: 1px solid var(--wb-rule);
   }
 
+  /* Tick box for picking several items (assignees, backlog rows). Picked: ink fill and a check, never colour alone. */
+  .pick-box {
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1.5px var(--wb-rule-strong);
+  }
+  .pick-box[data-on] {
+    background: var(--wb-ink);
+    color: var(--wb-on-ink);
+    box-shadow: none;
+  }
+
   /* Waiting for the server or GitHub. Next to the words "저장 중", never alone. */
   .busy-dot {
     display: inline-block;

@@ -154,10 +154,20 @@ public class SprintsTests(WebApplicationFactory<Program> factory) : IClassFixtur
         var member = await t.ScalarAsync<Guid>("select member_id from sprint_carry_overs where id = @carryId", new { carryId });
         Assert.Equal(await t.ScalarAsync<Guid>("select id from members where tenant_id = @tid limit 1", new { tid = t.Id }), member);
 
+        var (_, inTwo) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s2}&scope=all");
+        var flagged = inTwo.EnumerateArray().ToDictionary(x => Id(x, "id"), x => x.GetProperty("carriedFrom"));
+        Assert.True(flagged.Keys.ToHashSet().SetEquals([todo, doing]));
+        Assert.Equal("One", flagged[todo].GetProperty("name").GetString());
+        Assert.Equal(s1, Id(flagged[doing], "id"));
+        var (_, inOne) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s1}&scope=all");
+        Assert.All(inOne.EnumerateArray(), x => Assert.Equal(JsonValueKind.Null, x.GetProperty("carriedFrom").ValueKind));
+
         var undo = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carryId}/undo");
         Assert.Equal(HttpStatusCode.OK, undo.Status);
         Assert.Equal(s1, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @todo", new { todo }));
         Assert.Equal(["carried_over:One>Two", "carried_over:Two>One"], await EventsAsync(t, todo));
+        var (_, backInOne) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s1}&scope=all");
+        Assert.All(backInOne.EnumerateArray(), x => Assert.Equal(JsonValueKind.Null, x.GetProperty("carriedFrom").ValueKind));
         Assert.Equal("already_undone", (await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carryId}/undo")).Body.GetProperty("error").GetString());
         Assert.Equal(2, await t.ScalarAsync<int>("select count(*)::int from audit_log where tenant_id = @tid and action like 'sprint.carry_over%'", new { tid = t.Id }));
 
