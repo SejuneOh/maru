@@ -160,7 +160,7 @@ export default function ProjectsBoardPage() {
           ) : boardIssues.length === 0 ? (
             <Empty>{t.board.noMatch}</Empty>
           ) : (
-            <StatusColumns issues={boardIssues} statuses={filters.statuses.length ? filters.statuses : STATUS_ORDER} />
+            <StatusColumns scope="projects" issues={boardIssues} statuses={filters.statuses.length ? filters.statuses : STATUS_ORDER} />
           )}
         </section>
       )}

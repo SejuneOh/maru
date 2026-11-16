@@ -1,11 +1,13 @@
 "use client";
 
+import { useEditPhase } from "@/lib/boardEdits";
 import { useFormat, useT } from "@/lib/i18n";
 import { STALE_DAYS, daysSince, isCanceled, isStale, safeHttpUrl } from "@/lib/labels";
 import { useSettings } from "@/lib/me";
 import type { BoardIssue } from "@/lib/types";
 import { Flag, GitHubLink, LabelChips, MilestoneTag, StatusBadge } from "./ui";
-import { ROW_ATTR } from "./useShortcuts";
+import { cardDragProps, useCanDrag, useDragging } from "./useBoardDrag";
+import { ISSUE_ATTR, ROW_ATTR } from "./useShortcuts";
 import { useIssuePanel } from "./useIssuePanel";
 
 type Props = {
@@ -13,9 +15,11 @@ type Props = {
   showAssignee?: boolean;
   /** Board columns already name the status, so the status line is off unless asked for. */
   showStatus?: boolean;
+  /** Set on board columns: the card can be dragged to another column of the same scope. */
+  dragScope?: string;
 };
 
-export function IssueCard({ issue, showAssignee = true, showStatus = false }: Props) {
+export function IssueCard({ issue, showAssignee = true, showStatus = false, dragScope }: Props) {
   const { open } = useIssuePanel();
   const settings = useSettings();
   const t = useT();
@@ -30,13 +34,18 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false }: Pr
   const ref = `${issue.repository.name} #${issue.number}`;
   const githubUrl = safeHttpUrl(issue.htmlUrl);
   const hasMeta = issue.labels.length > 0 || issue.milestone !== null;
+  const phase = useEditPhase(issue.id);
+  const canDrag = useCanDrag() && dragScope !== undefined;
+  const lifted = useDragging()?.id === issue.id;
+  const drag = cardDragProps(issue.id, dragScope ?? "", issue.status, canDrag);
 
   // The GitHub link sits beside the card button, not inside it, so the card stays one click target.
   return (
-    <div className="relative">
+    <div className={`relative ${lifted ? "card-lifted" : ""}`} {...drag} title={drag.draggable ? t.edit.dragHint : undefined}>
     <button
       type="button"
-      {...{ [ROW_ATTR]: "" }}
+      {...{ [ROW_ATTR]: "", [ISSUE_ATTR]: issue.id }}
+      aria-busy={phase ? true : undefined}
       onClick={() => open(issue.id)}
       className={`group block w-full cursor-pointer overflow-hidden rounded-item px-4 py-3.5 text-left transition-shadow duration-[120ms] ease-tool hover:shadow-[0_0_0_1px_var(--wb-rule-strong),0_4px_12px_-6px_rgb(16_19_23/0.16)] ${
         done ? "shadow-[0_0_0_1px_var(--wb-ring)]" : "bg-surface shadow-elev-1"
@@ -81,13 +90,18 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false }: Pr
             ))}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {issue.openPullRequestCount > 0 && (
+          {!phase && issue.openPullRequestCount > 0 && (
             <span className={fade} title={t.common.openPrTitle}>
               PR {issue.openPullRequestCount}
             </span>
           )}
-          {issue.commentCount > 0 && <span className={fade}>{t.common.comments(issue.commentCount)}</span>}
-          {stale ? (
+          {!phase && issue.commentCount > 0 && <span className={fade}>{t.common.comments(issue.commentCount)}</span>}
+          {phase ? (
+            <span role="status" className="inline-flex items-center gap-1.5 text-ink-soft">
+              <span aria-hidden className="busy-dot" />
+              {t.edit[phase]}…
+            </span>
+          ) : stale ? (
             <Flag>{t.common.stalledFor(daysSince(issue.updatedAt))}</Flag>
           ) : (
             <span title={t.common.staleHint(STALE_DAYS)}>{fmt.relativeDays(issue.updatedAt)}</span>

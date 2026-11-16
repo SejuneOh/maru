@@ -7,6 +7,7 @@ import { authEnabled } from "@/lib/auth";
 import { type Dict, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import { AccountMenu } from "./Auth";
+import { BoardNotice, StatusKeys } from "./BoardNotice";
 import { IssuePanel } from "./IssuePanel";
 import { LangToggle } from "./LangToggle";
 import { SyncStatus } from "./SyncStatus";
@@ -243,6 +244,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Kbd>c</Kbd> {t.shell.hintNew}
               </span>
               <span className="inline-flex items-center gap-1">
+                <Kbd>s</Kbd> {t.shell.hintStatus}
+              </span>
+              <span className="inline-flex items-center gap-1">
                 <Kbd>j</Kbd>
                 <Kbd>k</Kbd> {t.shell.hintMove}
               </span>
@@ -349,6 +353,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <IssuePanel />
+      <BoardNotice />
+      <StatusKeys />
     </div>
   );
 }

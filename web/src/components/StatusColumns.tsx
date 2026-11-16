@@ -1,10 +1,12 @@
 "use client";
 
+import { useEditedIssues } from "@/lib/boardEdits";
 import { useT } from "@/lib/i18n";
 import { STATUS_DOT, STATUS_ORDER, groupByStatus } from "@/lib/labels";
 import type { BoardIssue, NewIssueStatus, Status } from "@/lib/types";
 import { IssueCard } from "./IssueCard";
 import { Count, Dot } from "./ui";
+import { useDropTarget } from "./useBoardDrag";
 import { useIssuePanel } from "./useIssuePanel";
 
 const ADDABLE: Status[] = ["todo", "in_progress", "in_review"];
@@ -36,7 +38,35 @@ type Props = {
   statuses?: Status[];
   /** Whose board this is: a new issue started from a column is assigned to them. */
   owner?: { githubUserId: number; name: string };
+  /** Names this board for dragging; cards move only between its own columns. */
+  scope: string;
 };
+
+/** A board column that takes dropped cards. `data-drop` drives the outline: `can` while a card may land, `over` under it. */
+export function DropColumn({
+  scope,
+  status,
+  className = "",
+  children,
+}: {
+  scope: string;
+  status: Status;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const t = useT();
+  const { state, props } = useDropTarget(scope, status);
+  return (
+    <section
+      aria-label={t.status[status]}
+      data-drop={state ?? undefined}
+      className={`drop-col flex min-w-0 flex-col gap-2 ${className}`}
+      {...props}
+    >
+      {children}
+    </section>
+  );
+}
 
 /**
  * Column count for a board grid inside an `@container`, from the width the board actually has:
@@ -49,8 +79,9 @@ export function boardCols(count: number): string {
   return "";
 }
 
-export function StatusColumns({ issues, showAssignee = true, statuses = STATUS_ORDER, owner }: Props) {
+export function StatusColumns({ issues: raw, showAssignee = true, statuses = STATUS_ORDER, owner, scope }: Props) {
   const t = useT();
+  const issues = useEditedIssues(raw) ?? raw;
   const groups = groupByStatus(issues);
   const foldCancelled = !statuses.includes("cancelled");
 
@@ -58,7 +89,7 @@ export function StatusColumns({ issues, showAssignee = true, statuses = STATUS_O
     <div className="@container">
     <div className={`grid grid-cols-1 items-start gap-x-4 gap-y-6 ${boardCols(statuses.length)}`}>
       {statuses.map((status) => (
-        <section key={status} className="flex min-w-0 flex-col gap-2">
+        <DropColumn key={status} scope={scope} status={status}>
           <h3 className="flex min-h-7 items-center gap-2 px-1 pb-1 text-ui font-semibold text-ink">
             <Dot className={STATUS_DOT[status]} />
             {t.status[status]}
@@ -70,11 +101,13 @@ export function StatusColumns({ issues, showAssignee = true, statuses = STATUS_O
               <p className="px-1 py-2 text-small text-muted">{t.common.none}</p>
             )}
             {groups[status].map((issue) => (
-              <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} />
+              <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} dragScope={scope} />
             ))}
-            {status === "done" && foldCancelled && <CanceledGroup issues={groups.cancelled} showAssignee={showAssignee} />}
+            {status === "done" && foldCancelled && (
+              <CanceledGroup issues={groups.cancelled} showAssignee={showAssignee} dragScope={scope} />
+            )}
           </div>
-        </section>
+        </DropColumn>
       ))}
     </div>
     </div>
@@ -82,7 +115,15 @@ export function StatusColumns({ issues, showAssignee = true, statuses = STATUS_O
 }
 
 /** Cancelled work folds under done, closed by default, instead of taking a fifth column; hidden when there is none. */
-export function CanceledGroup({ issues, showAssignee = true }: { issues: BoardIssue[]; showAssignee?: boolean }) {
+export function CanceledGroup({
+  issues,
+  showAssignee = true,
+  dragScope,
+}: {
+  issues: BoardIssue[];
+  showAssignee?: boolean;
+  dragScope?: string;
+}) {
   const t = useT();
   if (issues.length === 0) return null;
   return (
@@ -98,7 +139,7 @@ export function CanceledGroup({ issues, showAssignee = true }: { issues: BoardIs
       </summary>
       <div className="mt-2 flex flex-col gap-2">
         {issues.map((issue) => (
-          <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} />
+          <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} dragScope={dragScope} />
         ))}
       </div>
     </details>

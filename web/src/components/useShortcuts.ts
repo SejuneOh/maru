@@ -19,9 +19,12 @@ export const GO_KEYS: Record<string, string> = {
 /** Lists mark each focusable row with this attribute so j/k can walk them. */
 export const ROW_ATTR = "data-row";
 
+/** Issue cards carry their id here so `s` can change the focused card's status. */
+export const ISSUE_ATTR = "data-issue-id";
+
 const GO_TIMEOUT_MS = 1200;
 
-function isTyping(el: EventTarget | null) {
+export function isTyping(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
   return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable;
 }

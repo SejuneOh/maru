@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/api";
+import { editIssue, useEditPhase, useEditedIssue } from "@/lib/boardEdits";
 import { useFormat, useT } from "@/lib/i18n";
 import { daysSince, isStale, safeHttpUrl } from "@/lib/labels";
 import { useSettings } from "@/lib/me";
-import type { CreatedIssue, IssueDetail } from "@/lib/types";
+import type { CreatedIssue, IssueDetail, Priority, Size } from "@/lib/types";
+import { STATUS_KEYS } from "./BoardNotice";
 import { ErrorBox, Loading } from "./Feedback";
-import { Avatar, Count, ExternalIcon, Flag, GitHubLink, Kbd, LabelChips, MilestoneIcon, StatusBadge } from "./ui";
+import { PropertyMenu } from "./PropertyMenu";
+import { Avatar, Count, Dot, ExternalIcon, Flag, GitHubLink, Kbd, LabelChips, MilestoneIcon, StatusBadge } from "./ui";
+import { STATUS_DOT } from "@/lib/labels";
 import { NewIssueForm } from "./NewIssueForm";
 import { NEW_ISSUE, useIssuePanel } from "./useIssuePanel";
 
@@ -31,6 +35,9 @@ export function IssuePanel() {
   const fmt = useFormat();
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  const loaded = data && data.id === issueId ? data : created && created.issue.id === issueId ? created.issue : null;
+  const shown = useEditedIssue<IssueDetail>(loaded);
+  const phase = useEditPhase(issueId ?? "");
   const isOpen = issueId !== null;
   useEffect(() => {
     if (!isOpen) return;
@@ -52,9 +59,8 @@ export function IssuePanel() {
   }, [isOpen, close]);
 
   if (!issueId) return null;
-  const shown = data && data.id === issueId ? data : created && created.issue.id === issueId ? created.issue : null;
-  const justCreated = created && shown && created.issue.id === shown.id ? created : null;
   const urgent = shown && settings.priorityEnabled && shown.priority === "urgent" && shown.category !== "done";
+  const justCreated = created && shown && created.issue.id === shown.id ? created : null;
 
   return (
     <>
@@ -106,12 +112,36 @@ export function IssuePanel() {
                   </button>
                 )}
                 <h2 className="text-title font-semibold">{shown.title}</h2>
-                <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] overflow-hidden rounded-item text-ui shadow-elev-1 [&>dd]:flex [&>dd]:min-h-10 [&>dd]:items-center [&>dd]:border-t [&>dd]:border-rule [&>dd]:px-3 [&>dd]:py-1.5 [&>dt]:flex [&>dt]:items-center [&>dt]:border-t [&>dt]:border-rule [&>dt]:px-3 [&>dt]:py-1.5 [&>dt]:text-small [&>dt:first-of-type]:border-t-0 [&>dd:first-of-type]:border-t-0">
+                <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] rounded-item text-ui shadow-elev-1 [&>dd]:flex [&>dd]:min-h-10 [&>dd]:items-center [&>dd]:border-t [&>dd]:border-rule [&>dd]:px-3 [&>dd]:py-1.5 [&>dt]:flex [&>dt]:items-center [&>dt]:border-t [&>dt]:border-rule [&>dt]:px-3 [&>dt]:py-1.5 [&>dt]:text-small [&>dt:first-of-type]:border-t-0 [&>dd:first-of-type]:border-t-0">
                   <dt className="text-muted">{p.status}</dt>
                   <dd className="flex flex-wrap items-center gap-2">
-                    <StatusBadge status={shown.status} />
-                    {shown.status === "cancelled" && <span className="text-small text-muted">{t.cancelledHint}</span>}
-                    {urgent && <Flag fill>{t.priority.urgent}</Flag>}
+                    <PropertyMenu
+                      label={p.status}
+                      valueText={t.status[shown.status]}
+                      value={shown.status}
+                      disabled={phase !== null}
+                      options={STATUS_KEYS.map((s, i) => ({
+                        value: s,
+                        node: (
+                          <>
+                            <Dot className={STATUS_DOT[s]} />
+                            {t.status[s]}
+                          </>
+                        ),
+                        hint: String(i + 1),
+                      }))}
+                      onPick={(s) => editIssue(shown, { status: s })}
+                    >
+                      <StatusBadge status={shown.status} />
+                    </PropertyMenu>
+                    {phase && phase !== "saving" ? (
+                      <span role="status" className="inline-flex items-center gap-1.5 text-small text-ink-soft">
+                        <span aria-hidden className="busy-dot" />
+                        {t.edit[phase]}…
+                      </span>
+                    ) : (
+                      shown.status === "cancelled" && <span className="text-small text-muted">{t.cancelledHint}</span>
+                    )}
                     {isStale(shown) && <Flag>{t.common.stalledFor(daysSince(shown.updatedAt))}</Flag>}
                   </dd>
                   <dt className="text-muted">{p.assignees}</dt>
@@ -161,21 +191,54 @@ export function IssuePanel() {
                       <dd>{shown.sprint.name}</dd>
                     </>
                   )}
-                  {settings.priorityEnabled && shown.priority && shown.priority !== "urgent" && (
+                  {settings.priorityEnabled && (
                     <>
                       <dt className="text-muted">{p.priority}</dt>
-                      <dd>{t.priority[shown.priority]}</dd>
+                      <dd>
+                        <PropertyMenu<Priority | null>
+                          label={p.priority}
+                          valueText={shown.priority ? t.priority[shown.priority] : t.edit.unset}
+                          value={shown.priority}
+                          disabled={phase !== null}
+                          options={[null, ...PRIORITIES].map((v) => ({ value: v, node: v ? t.priority[v] : t.edit.unset }))}
+                          onPick={(v) => editIssue(shown, { priority: v })}
+                        >
+                          {urgent ? (
+                            <Flag fill>{t.priority.urgent}</Flag>
+                          ) : shown.priority ? (
+                            t.priority[shown.priority]
+                          ) : (
+                            <span className="text-muted">{t.edit.unset}</span>
+                          )}
+                        </PropertyMenu>
+                      </dd>
                     </>
                   )}
-                  {settings.sizeEnabled && shown.size && (
+                  {settings.sizeEnabled && (
                     <>
                       <dt className="text-muted">{p.size}</dt>
-                      <dd>{t.size[shown.size]}</dd>
+                      <dd>
+                        <PropertyMenu<Size | null>
+                          label={p.size}
+                          valueText={shown.size ? t.size[shown.size] : t.edit.unset}
+                          value={shown.size}
+                          disabled={phase !== null}
+                          options={[null, ...SIZES].map((v) => ({ value: v, node: v ? t.size[v] : t.edit.unset }))}
+                          onPick={(v) => editIssue(shown, { size: v })}
+                        >
+                          {shown.size ? t.size[shown.size] : <span className="text-muted">{t.edit.unset}</span>}
+                        </PropertyMenu>
+                      </dd>
                     </>
                   )}
                   <dt className="text-muted">{p.lastActivity}</dt>
                   <dd className="text-small">{fmt.relativeDays(shown.updatedAt)}</dd>
                 </dl>
+                {shown.lastBoardChange && (
+                  <p className="mt-2 px-1 text-small text-muted">
+                    {t.edit.byBoard(fmt.person(shown.lastBoardChange.by), fmt.relativeTime(shown.lastBoardChange.at))}
+                  </p>
+                )}
               </header>
 
               {shown.body && <p className="whitespace-pre-wrap text-body text-ink-soft">{shown.body}</p>}
@@ -263,6 +326,9 @@ export function IssuePanel() {
     </>
   );
 }
+
+const PRIORITIES: Priority[] = ["urgent", "high", "normal", "low"];
+const SIZES: Size[] = ["S", "M", "L"];
 
 /** Confirms the create in place; the card is already on the board, at the top of its column. */
 function CreatedNote({ issue, dropped }: { issue: CreatedIssue; dropped: string[] }) {
