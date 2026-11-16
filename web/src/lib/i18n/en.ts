@@ -281,6 +281,11 @@ export const en: Dict = {
     another: "Create another",
     retry: "Try again",
     retrySame: "It resends the same request, so GitHub will not get a second issue.",
+    retrySameButton: "Resend the same request",
+    lockedNote: "GitHub may already have this issue, so the form is locked. Resending the same request will not create a second one.",
+    lockedHelp: "Canceling unlocks the form and the next send is a new request. Check GitHub for the issue before you cancel.",
+    checkOnGitHub: "Check on GitHub",
+    unlock: "Cancel and edit",
     errors: {
       github_write_not_granted: [
         "The GitHub App is not allowed to write issues.",

@@ -284,6 +284,11 @@ export const ko = {
     another: "새 이슈 하나 더",
     retry: "다시 시도",
     retrySame: "같은 요청으로 다시 보내므로 이슈가 두 번 생기지 않습니다.",
+    retrySameButton: "같은 요청으로 다시 시도",
+    lockedNote: "GitHub에 이미 만들어졌을 수 있어 내용을 고칠 수 없게 잠갔습니다. 같은 요청으로 다시 보내면 이슈가 두 번 생기지 않습니다.",
+    lockedHelp: "취소하면 잠금이 풀리고 다음에는 새 요청으로 보냅니다. 취소하기 전에 GitHub에 이 이슈가 이미 있는지 확인하세요.",
+    checkOnGitHub: "GitHub에서 확인",
+    unlock: "취소하고 고치기",
     errors: {
       github_write_not_granted: [
         "GitHub App에 이슈를 쓸 권한이 없습니다.",

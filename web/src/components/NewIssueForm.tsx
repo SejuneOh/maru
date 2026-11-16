@@ -13,7 +13,7 @@ import {
 } from "@/lib/api";
 import { type Dict, useFormat, useT } from "@/lib/i18n";
 import { STATUS_DOT, labelStyle } from "@/lib/labels";
-import { useSettings } from "@/lib/me";
+import { useMe, useSettings } from "@/lib/me";
 import type {
   CreateIssueRequest,
   CreatedIssue,
@@ -48,10 +48,16 @@ type Draft = {
 
 const EMPTY: Draft = { repositoryId: "", title: "", body: "", labels: [], assignees: [], status: "todo", priority: null, size: null };
 
-/** Survives closing the panel, so Esc never throws away what was typed. Cleared once the issue exists. */
-let keptDraft: Draft | null = null;
+/** `locked`: GitHub may already have the issue, so only the same request may be sent again. */
+type Failure = { lines: readonly string[]; locked: boolean };
+type Attempt = { key: string; payload: string; req: CreateIssueRequest };
 
-type Failure = { lines: readonly string[]; retry: boolean };
+/**
+ * Survives closing the panel, so Esc never throws away what was typed or unlocks a request GitHub may have
+ * taken. Kept per tenant and member, and cleared once the issue exists. A column's prefilled assignee is
+ * only kept while locked; otherwise the next `+` brings its own.
+ */
+let kept: { scope: string; draft: Draft; prefilled: number | undefined; attempt: Attempt | null; failure: Failure | null } | null = null;
 type Pending = { issue: PendingIssue; unsaved: string[] };
 
 function readLastRepo(): string | null {
@@ -70,11 +76,15 @@ function writeLastRepo(id: string) {
   }
 }
 
+/**
+ * No response, a 5xx (502 may be stored when GitHub could have acted) or a request still running: GitHub may
+ * have the issue. 4xx answers are refusals before anything was created.
+ */
 function failureOf(e: unknown, t: Dict["newIssue"]): Failure {
-  if (!(e instanceof ApiError)) return { lines: t.errors.network, retry: true };
+  if (!(e instanceof ApiError)) return { lines: t.errors.network, locked: true };
   const code = e.code;
-  if (code === "github_unavailable") return { lines: e.status === 504 ? t.errors.timeout : t.errors.github_unavailable, retry: true };
-  if (code === "request_in_progress") return { lines: t.errors.request_in_progress, retry: true };
+  if (code === "github_unavailable") return { lines: e.status === 504 ? t.errors.timeout : t.errors.github_unavailable, locked: true };
+  if (code === "request_in_progress") return { lines: t.errors.request_in_progress, locked: true };
   if (
     code === "invalid_request" ||
     code === "repository_archived" ||
@@ -83,8 +93,8 @@ function failureOf(e: unknown, t: Dict["newIssue"]): Failure {
     code === "assignee_not_collaborator" ||
     code === "idempotency_key_reused"
   )
-    return { lines: t.errors[code], retry: false };
-  return { lines: t.errors.unknown, retry: e.status >= 500 };
+    return { lines: t.errors[code], locked: false };
+  return { lines: t.errors.unknown, locked: e.status >= 500 };
 }
 
 function unknownLabelsOf(e: unknown): string[] {
@@ -104,6 +114,8 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
   const n = t.newIssue;
   const fmt = useFormat();
   const settings = useSettings();
+  const me = useMe().data;
+  const scope = me ? `${me.tenant.id}:${me.member.id}` : "";
   const pathname = usePathname();
   const params = useSearchParams();
   const options = useApi<NewIssueOptions>(NEW_ISSUE_OPTIONS_PATH);
@@ -112,35 +124,40 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
   const ids = useId();
   const titleRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
+  const finished = useRef(false);
   const failureRef = useRef<HTMLDivElement>(null);
-  const attempt = useRef<{ key: string; payload: string } | null>(null);
+  const submitRef = useRef<HTMLButtonElement>(null);
+  const [saved] = useState(() => (kept?.scope === scope ? kept : null));
+  const savedLocked = saved?.failure?.locked ? saved : null;
+  const attempt = useRef<Attempt | null>(saved?.attempt ?? null);
 
-  const [draft, setDraftState] = useState<Draft>(() => {
-    const base = keptDraft ?? EMPTY;
-    const assignees =
-      prefill.assignee && !base.assignees.includes(prefill.assignee) ? [...base.assignees, prefill.assignee] : base.assignees;
-    return { ...base, status: prefill.status ?? base.status, assignees };
-  });
+  const [draft, setDraftState] = useState<Draft>(() =>
+    savedLocked ? savedLocked.draft : { ...(saved?.draft ?? EMPTY), status: prefill.status ?? saved?.draft.status ?? "todo" },
+  );
+  const [prefilled, setPrefilled] = useState<number | undefined>(() => (savedLocked ? savedLocked.prefilled : prefill.assignee));
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(savedLocked?.failure ?? null);
+  const locked = failure?.locked === true;
   const [titleMissing, setTitleMissing] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [labelQuery, setLabelQuery] = useState("");
   const [mac, setMac] = useState(false);
 
-  const setDraft = (patch: Partial<Draft>) =>
-    setDraftState((d) => {
-      const next = { ...d, ...patch };
-      keptDraft = next;
-      return next;
-    });
+  const setDraft = (patch: Partial<Draft>) => setDraftState((d) => ({ ...d, ...patch }));
+
+  useEffect(() => {
+    if (finished.current || !scope) return;
+    kept = { scope, draft, prefilled, attempt: attempt.current, failure };
+  }, [scope, draft, prefilled, failure]);
 
   useEffect(() => {
     if (failure) failureRef.current?.scrollIntoView({ block: "nearest" });
   }, [failure]);
 
   useEffect(() => {
-    titleRef.current?.focus();
+    // A locked form (reopened after an uncertain failure) starts on its resend button instead.
+    if (titleRef.current?.matches(":disabled")) submitRef.current?.focus();
+    else titleRef.current?.focus();
     setMac(/Mac|iPhone|iPad/.test(navigator.platform));
   }, []);
 
@@ -169,6 +186,14 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
     setLabelQuery("");
   };
 
+  const assignees = prefilled && !draft.assignees.includes(prefilled) ? [...draft.assignees, prefilled] : draft.assignees;
+  const toggleAssignee = (id: number) => {
+    if (id === prefilled) {
+      setPrefilled(undefined);
+      setDraft({ assignees: draft.assignees.filter((x) => x !== id) });
+    } else setDraft({ assignees: toggle(draft.assignees, id) });
+  };
+
   const pickedLabels = draft.labels.filter((l) => repoLabels.some((x) => x.name.toLowerCase() === l.toLowerCase()));
 
   const request = (repositoryId: string): CreateIssueRequest => ({
@@ -176,7 +201,7 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
     title: draft.title.trim(),
     ...(draft.body.trim() ? { body: draft.body } : {}),
     ...(pickedLabels.length ? { labels: pickedLabels } : {}),
-    ...(draft.assignees.length ? { assigneeGithubUserIds: draft.assignees } : {}),
+    ...(assignees.length ? { assigneeGithubUserIds: assignees } : {}),
     // Todo is the default; setting it would pin the status so a linked PR could no longer move it.
     ...(draft.status !== "todo" ? { status: draft.status } : {}),
     ...(settings.priorityEnabled && draft.priority ? { priority: draft.priority } : {}),
@@ -184,23 +209,33 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
   });
 
   const submit = async () => {
-    if (busyRef.current || !repo) return;
-    if (!draft.title.trim()) {
-      setTitleMissing(true);
-      titleRef.current?.focus();
-      return;
+    if (busyRef.current) return;
+    let req: CreateIssueRequest;
+    let key: string;
+    if (locked && attempt.current) {
+      // Exactly the request GitHub may already have, under the same key.
+      ({ req, key } = attempt.current);
+    } else {
+      if (!repo) return;
+      if (!draft.title.trim()) {
+        setTitleMissing(true);
+        titleRef.current?.focus();
+        return;
+      }
+      req = request(repo.id);
+      const payload = JSON.stringify(req);
+      key = attempt.current?.payload === payload ? attempt.current.key : newIdempotencyKey();
+      attempt.current = { key, payload, req };
     }
-    const req = request(repo.id);
-    const payload = JSON.stringify(req);
-    const key = attempt.current?.payload === payload ? attempt.current.key : newIdempotencyKey();
-    attempt.current = { key, payload };
     busyRef.current = true;
     setBusy(true);
     setFailure(null);
     try {
       const result = await createIssue(req, key);
+      // Stays busy: the panel is about to switch, and nothing may be sent again under a new key.
+      finished.current = true;
       attempt.current = null;
-      keptDraft = null;
+      kept = null;
       writeLastRepo(req.repositoryId);
       if (result.kind === "created") {
         const people = options.data?.assignees ?? [];
@@ -217,21 +252,29 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
           ...(req.size ? [t.panel.size] : []),
         ];
         setDraftState({ ...EMPTY, repositoryId: req.repositoryId });
+        setPrefilled(undefined);
+        setFailure(null);
         setPending({ issue: result.issue, unsaved });
       }
     } catch (e) {
+      busyRef.current = false;
+      setBusy(false);
       const unknown = unknownLabelsOf(e);
       if (unknown.length) {
         const drop = new Set(unknown.map((l) => l.toLowerCase()));
         setDraft({ labels: draft.labels.filter((l) => !drop.has(l.toLowerCase())) });
-        setFailure({ lines: n.errors.unknownLabels(unknown.join(", ")), retry: false });
+        setFailure({ lines: n.errors.unknownLabels(unknown.join(", ")), locked: false });
+        options.reload();
       } else {
         setFailure(failureOf(e, n));
       }
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
     }
+  };
+
+  const unlock = () => {
+    attempt.current = null;
+    setFailure(null);
+    requestAnimationFrame(() => titleRef.current?.focus());
   };
 
   if (pending) {
@@ -252,6 +295,9 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
             type="button"
             className="btn"
             onClick={() => {
+              finished.current = false;
+              busyRef.current = false;
+              setBusy(false);
               setPending(null);
               requestAnimationFrame(() => titleRef.current?.focus());
             }}
@@ -264,6 +310,7 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
   }
 
   const field = "w-full rounded-control bg-surface px-3 text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] placeholder:text-muted focus:shadow-[inset_0_0_0_2px_var(--wb-focus)] focus:outline-none";
+  const lockedRepo = locked ? repos.find((r) => r.id === attempt.current?.req.repositoryId) : undefined;
   const noRepos = options.data !== null && !repos.some((r) => !r.archived);
 
   return (
@@ -291,6 +338,7 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
           <p className="text-small text-muted">{n.lead}</p>
         </header>
 
+        <fieldset disabled={locked} className="contents [&_.seg>button:disabled]:cursor-default [&_.seg>button:disabled]:opacity-50">
         <div className="flex flex-col gap-2">
           <label htmlFor={`${ids}-repo`} className="text-small font-semibold">
             {n.repository}
@@ -401,12 +449,12 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
               labelledBy={`${ids}-assignees`}
               items={(options.data?.assignees ?? []).map((p) => ({
                 key: String(p.githubUserId),
-                on: draft.assignees.includes(p.githubUserId),
+                on: assignees.includes(p.githubUserId),
                 lead: <Avatar person={p} size="sm" />,
                 text: fmt.person(p),
-                pick: () => setDraft({ assignees: toggle(draft.assignees, p.githubUserId) }),
+                pick: () => toggleAssignee(p.githubUserId),
               }))}
-              full={draft.assignees.length >= MAX_ASSIGNEES}
+              full={assignees.length >= MAX_ASSIGNEES}
               fullHint={n.assigneeLimit}
               empty={options.data ? t.common.none : `${t.common.loading}…`}
             />
@@ -486,35 +534,51 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
             </>
           )}
         </dl>
+        </fieldset>
 
         {failure && (
           <div ref={failureRef} role="alert" className="flex scroll-mb-20 flex-col gap-1 rounded-control border-l-2 border-ink-soft bg-surface px-4 py-3 shadow-elev-1">
             <p className="text-ui text-ink">{failure.lines[0]}</p>
             <p className="text-small text-ink-soft">{failure.lines[1]}</p>
-            {failure.retry && (
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <button type="button" className="btn h-8 px-3 text-small" disabled={busy} onClick={() => void submit()}>
-                  {n.retry}
-                </button>
-                <span className="text-small text-muted">{n.retrySame}</span>
-              </div>
+            {locked && (
+              <>
+                <p className="mt-2 flex items-start gap-1.5 text-small font-medium text-ink">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="mt-[3px] shrink-0">
+                    <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+                  </svg>
+                  {n.lockedNote}
+                </p>
+                <p className="text-small text-ink-soft">{n.lockedHelp}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {lockedRepo && (
+                    <GitHubLink href={`https://github.com/${lockedRepo.fullName}/issues`} label={n.checkOnGitHub} className="btn h-8 gap-1.5 px-3 text-small">
+                      {n.checkOnGitHub}
+                    </GitHubLink>
+                  )}
+                  <button type="button" className="btn h-8 px-3 text-small" disabled={busy} onClick={unlock}>
+                    {n.unlock}
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}
       </div>
 
       <div className="sticky bottom-0 mt-auto flex items-center justify-end gap-3 border-t border-rule bg-surface px-6 py-3 max-[639px]:px-4">
-        <span className="hidden items-center gap-1 text-meta text-muted min-[640px]:inline-flex" aria-hidden>
+        <span className={`hidden items-center gap-1 text-meta text-muted ${locked ? "" : "min-[640px]:inline-flex"}`} aria-hidden>
           <Kbd>{mac ? "⌘" : "Ctrl"}</Kbd>
           <Kbd>Enter</Kbd> {n.submitHint}
         </span>
         <button
+          ref={submitRef}
           type="submit"
           className="btn btn-primary"
-          disabled={busy || !repo}
+          disabled={busy || (!locked && !repo)}
           aria-keyshortcuts={mac ? "Meta+Enter" : "Control+Enter"}
         >
-          {busy ? `${n.submitting}…` : n.submit}
+          {busy ? `${n.submitting}…` : locked ? n.retrySameButton : n.submit}
         </button>
       </div>
     </form>
