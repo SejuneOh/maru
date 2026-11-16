@@ -21,6 +21,7 @@ public static class DataServiceCollectionExtensions
         services.AddScoped<IIssueEvents, IssueEvents>();
         services.AddScoped<IGitHubWriteTargets, GitHubWriteTargets>();
         services.AddScoped<Features.Sprints.SprintWrites>();
+        services.AddScoped<Features.MeetingNotes.MeetingNoteWrites>();
         services.AddScoped<Features.Issues.IssueCreation>();
         services.AddScoped<Features.Issues.BoardFieldWrites>();
         services.AddScoped<Features.Issues.AssigneeWrites>();
