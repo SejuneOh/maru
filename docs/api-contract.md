@@ -40,6 +40,8 @@ Write endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) use these standard codes, alw
 | 502 | `github_unavailable` | GitHub returned a 5xx or hit its rate limit, or the App token could not be obtained |
 | 504 | `github_unavailable` | the GitHub call got no answer: network error, the client's own 30 second timeout, or the 60 second call limit |
 | 403 | `github_write_not_granted` | the GitHub App lacks the permission the write needs (GitHub answered 403 with a permission message; a rate-limit or other 403 is `github_unavailable`) |
+| 409 | `field_disabled` | priority or size is switched off for the tenant |
+| 409 | `repository_archived` | the write would call GitHub on an archived repository |
 | 422 | `assignee_not_collaborator` | GitHub rejected an assignee who cannot be assigned in that repository |
 | 422 | `invalid_request` | GitHub rejected the request as invalid (a write that calls GitHub only; 400 is for the board's own validation) |
 
@@ -89,6 +91,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/issues/{id}` | dev user | `IssueDetail` or 404 |
 | GET | `/api/issues/new-options` | dev user | `NewIssueOptions` |
 | POST | `/api/issues` | dev user | `201 CreatedIssue` or `202 PendingIssue`, see below |
+| PATCH | `/api/issues/{id}/board` | dev user | `BoardIssue` |
 | GET | `/api/sprints` | dev user | `SprintList` |
 | POST | `/api/sprints` | dev user | `201 Sprint` |
 | PATCH | `/api/sprints/{id}` | dev user | `Sprint` |
@@ -152,6 +155,27 @@ Derived status, first matching rule wins (view `issue_status`):
 
 `cancelled` has category `done` but is excluded from every progress count (overview projects, sprint, people,
 `doneThisWeek`, urgent attention and action-item lists) and from milestone counts.
+
+`PATCH /api/issues/{id}/board` (any member) changes card fields. Body `{status?, priority?, size?, expectedUpdatedAt?}`;
+at least one of `status`, `priority`, `size` must be present, and a present `null` clears it. Response is the updated `BoardIssue`.
+
+- `status`: `todo`, `in_progress`, `in_review` set (null clears) `board_fields.status_override`. `done` closes the GitHub
+  issue as `completed`, `cancelled` as `not_planned`; both clear the override (`status_cleared` event). On an issue that is
+  already closed, GitHub is called again only to switch between the two board statuses (`done` on a `not_planned` issue,
+  `cancelled` on any other closed issue) and a new `closed` event is recorded; otherwise nothing is called or recorded (a `duplicate` or
+  reason-less closed issue already counts as `done`). Moving a closed issue to `todo`, `in_progress` or `in_review` reopens
+  it on GitHub and sets the override. Clearing the override never changes GitHub.
+- `priority` (`urgent`, `high`, `normal`, `low`) and `size` (`S`, `M`, `L`) need the tenant's `priorityEnabled` / `sizeEnabled`,
+  else `409 field_disabled` (also when clearing). Any other value, wrong type, or an empty body is `400 invalid_request`.
+- GitHub is written first (with `Idempotency-Key` handling of GitHub writes); only after it succeeds are the mirror and
+  `board_fields` changed, so a GitHub failure changes nothing and returns the GitHub error codes above. A repository that is archived
+  is `409 repository_archived` before any GitHub call (only when GitHub would be called). A repository without an active
+  installation, or an issue of another tenant, is `404 not_found`.
+- `expectedUpdatedAt`: send the `boardUpdatedAt` of the `BoardIssue` you edited (`null` = it had no board row yet; omit the
+  field to skip the check). A different value is `409 conflict`. The check runs before GitHub is called, or under the lock when
+  GitHub is not called. Once GitHub has been written the change is always applied, so a change that already happened is never answered with an error.
+- Records `status_set`/`status_cleared` (values are override values), `priority_set`, `size_set` events (only for real changes),
+  the `closed`/`reopened` event, and an `issue.board_update` audit row. Board-field writes take the same per-tenant lock as sprint writes.
 
 Creating issues (any member, GitHub write through the App):
 
@@ -387,6 +411,7 @@ type BoardIssue = {
   size: "S" | "M" | "L" | null;
   priority: "urgent" | "high" | "normal" | "low" | null;
   updatedAt: string;         // github_updated_at
+  boardUpdatedAt: string | null; // board_fields.updated_at, null without a row; send as expectedUpdatedAt
   closedAt: string | null;
   htmlUrl: string | null;
   labels: { id: string; name: string; color: string | null }[];   // sorted by name

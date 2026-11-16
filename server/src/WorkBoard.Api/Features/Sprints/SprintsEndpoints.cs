@@ -10,7 +10,7 @@ public static class SprintsEndpoints
 {
     public const int NameMaxLength = 80;
     public const int MaxIssuesPerRequest = 200;
-    private const int MaxBodyBytes = 64 * 1024;
+    internal const int MaxBodyBytes = 64 * 1024;
 
     public static void MapSprints(this RouteGroupBuilder api)
     {

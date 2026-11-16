@@ -28,6 +28,7 @@ public record BoardIssue(
     string? Size,
     string? Priority,
     DateTime UpdatedAt,
+    DateTime? BoardUpdatedAt,
     DateTime? ClosedAt,
     string? HtmlUrl,
     IReadOnlyList<LabelDto> Labels,

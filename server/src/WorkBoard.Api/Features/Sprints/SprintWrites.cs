@@ -31,11 +31,12 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
 
     private static string Iso(DateOnly date) => date.ToString("yyyy-MM-dd");
 
-    // Every writer of board_fields.sprint_id must take this lock first: assignment writes of a tenant run one at a
-    // time, so the sprint an issue is read in is the one it is changed from.
-    private Task LockAssignmentsAsync(TenantSession s) =>
-        s.ExecuteAsync("select pg_advisory_xact_lock(hashtextextended(@scope, 0))",
-            new { scope = $"sprint-assign:{user.Identity.TenantId:N}" });
+    // Every writer of board_fields must take this lock first: board writes of a tenant run one at a time, so the
+    // row an issue is read in is the one it is changed from.
+    public static Task LockAssignmentsAsync(TenantSession s, Guid tenantId) =>
+        s.ExecuteAsync("select pg_advisory_xact_lock(hashtextextended(@scope, 0))", new { scope = $"sprint-assign:{tenantId:N}" });
+
+    private Task LockAssignmentsAsync(TenantSession s) => LockAssignmentsAsync(s, user.Identity.TenantId);
 
     private Task LockNamesAsync(TenantSession s) =>
         s.ExecuteAsync("select pg_advisory_xact_lock(hashtextextended(@scope, 0))",
