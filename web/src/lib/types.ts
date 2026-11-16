@@ -244,20 +244,54 @@ export type MeetingNoteSummary = {
   linkedActionItemCount: number;
 };
 
+export type MeetingActionItem = {
+  id: string;
+  text: string;
+  assignee: Member | null;
+  /** `yyyy-MM-dd`. */
+  dueDate: string | null;
+  issue: { id: string; number: number; repositoryName: string; status: Status } | null;
+};
+
 export type MeetingNote = {
   id: string;
   title: string;
   heldAt: string;
   bodyMd: string;
   project: { id: string; name: string } | null;
+  /** 결정한 것, in order. */
+  decisions: string[];
   attendees: Member[];
-  actionItems: {
-    id: string;
-    text: string;
-    assignee: Member | null;
-    issue: { id: string; number: number; repositoryName: string; status: Status } | null;
-  }[];
+  /** In display order. */
+  actionItems: MeetingActionItem[];
+  /** Null for seeded notes or when the author left. */
+  createdBy: Member | null;
+  createdAt: string;
+  /** Sent back as `expectedUpdatedAt` on the next save. */
+  updatedAt: string;
 };
+
+/** `POST /api/meeting-notes`, and `PATCH /api/meeting-notes/{id}` (every field, plus `expectedUpdatedAt`). */
+export type MeetingNoteRequest = {
+  title: string;
+  heldAt: string;
+  projectId: string | null;
+  bodyMd: string;
+  decisions: string[];
+  attendeeIds: string[];
+  /** An existing item keeps its `id`; a new one has none. Leaving out an item linked to an issue is refused. */
+  actionItems: { id?: string; text: string; assigneeId: string | null; dueDate: string | null }[];
+  expectedUpdatedAt?: string;
+};
+
+/** Meeting note write errors (`error` field). `action_item_linked` carries `actionItemIds: string[]`. */
+export type MeetingNoteWriteError =
+  | "invalid_request"
+  | "not_found"
+  | "forbidden"
+  | "conflict"
+  | "action_item_linked"
+  | "idempotency_key_reused";
 
 export type OverviewIssueRef = {
   id: string;

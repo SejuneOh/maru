@@ -9,6 +9,8 @@ import type {
   BoardIssue,
   CreateIssueRequest,
   CreatedIssue,
+  MeetingNote,
+  MeetingNoteRequest,
   Milestone,
   PendingIssue,
   PostedComment,
@@ -116,7 +118,7 @@ async function send<T>(path: string, init: ReqInit = {}): Promise<{ status: numb
     if (refused && path !== "/api/me") setTimeout(() => window.dispatchEvent(new Event(GATE_EVENT)), 0);
     throw new ApiError(res.status, `${res.status} ${res.statusText}`, code, body);
   }
-  return { status: res.status, data: (await res.json()) as T };
+  return { status: res.status, data: (res.status === 204 ? null : await res.json()) as T };
 }
 
 export function apiGet<T>(path: string): Promise<T> {
@@ -218,6 +220,25 @@ export function saveSprint(
         headers: { "Idempotency-Key": idempotencyKey },
       })
     : request<Sprint>("/api/sprints", { method: "POST", body: form, headers: { "Idempotency-Key": idempotencyKey } });
+}
+
+/**
+ * `POST /api/meeting-notes` without `existing`, else `PATCH` with `expectedUpdatedAt`. Rejects with an `ApiError`
+ * whose `code` is a `MeetingNoteWriteError`, or a `TypeError` when offline.
+ */
+export function saveMeetingNote(req: MeetingNoteRequest, idempotencyKey: string, existingId: string | null): Promise<MeetingNote> {
+  return existingId
+    ? request<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(existingId)}`, {
+        method: "PATCH",
+        body: req,
+        headers: { "Idempotency-Key": idempotencyKey },
+      })
+    : request<MeetingNote>("/api/meeting-notes", { method: "POST", body: req, headers: { "Idempotency-Key": idempotencyKey } });
+}
+
+/** `DELETE /api/meeting-notes/{id}`: the author or an admin, else `403 forbidden`. */
+export async function deleteMeetingNote(id: string): Promise<void> {
+  await request<null>(`/api/meeting-notes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** Issue lists, sprint counts and the overview are what an issue write changes. */
