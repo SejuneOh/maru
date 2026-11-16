@@ -6,9 +6,10 @@ using WorkBoard.Api.Infrastructure.Identity;
 
 namespace WorkBoard.Api.Infrastructure.Sync;
 
-// Syncs every connected tenant each Sync:IntervalMinutes.
+// Syncs every connected tenant each Sync:IntervalMinutes, then records today's sprint_daily rows.
 public sealed class SyncWorker(
     SyncRunner runner,
+    SprintDailyRecorder sprintDaily,
     IOptions<SyncOptions> options,
     IOptions<GitHubAppOptions> app,
     [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync,
@@ -32,6 +33,7 @@ public sealed class SyncWorker(
             {
                 if (app.Value.CanReadInstallations)
                     await RunAllAsync(ct);
+                await sprintDaily.RecordTodayAsync(ct);
                 var interval = options.Value.Interval;
                 runner.NextRunAt = time.GetUtcNow() + interval;
                 await Task.Delay(interval, time, ct);

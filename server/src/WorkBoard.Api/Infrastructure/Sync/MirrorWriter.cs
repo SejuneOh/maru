@@ -50,7 +50,11 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         await UpsertUsersAsync(db, SnapshotUsers(snapshot));
         var milestones = await UpsertMilestonesAsync(db, repoId, snapshot.Milestones);
         var labels = await UpsertLabelsAsync(db, repoId, snapshot.Labels);
+        var before = await db.Query<StoredState>(
+            "select github_issue_id as GithubId, state as State, state_reason as StateReason from issues where tenant_id = @tenantId and github_issue_id = any(@ids)",
+            new { ids = snapshot.Issues.Select(i => i.DatabaseId).ToArray() });
         var issues = await UpsertIssuesAsync(db, repoId, snapshot.Issues, milestones);
+        await RecordStateChangesAsync(db, issues, before.ToDictionary(b => b.GithubId));
         await ReplaceIssueChildrenAsync(db, repoId, issues, labels);
         await ResolveParentsAsync(db, issues);
         var pullRequests = await UpsertPullRequestsAsync(db, repoId, snapshot.PullRequests);
@@ -65,7 +69,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     // one issue. A REST response does not carry the parent issue, so the stored parent link is left alone.
     // change is set only by the close and reopen calls: exactly that closed or reopened issue_events row is written
     // in the same transaction, attributed to memberId, whatever the stored state or the response age. Other writes
-    // never record one.
+    // record a member-less one only when the applied response changes the stored state or close reason.
     public virtual async Task<MirroredIssue?> ApplyWrittenIssueAsync(
         Guid tenantId, Guid repositoryId, SourceIssue issue, Guid? memberId, IssueStateChange? change, CancellationToken ct)
     {
@@ -109,6 +113,8 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                 toValue = issue.StateReason,
                 memberId,
             });
+        else if (applied.Count > 0 && previous is not null)
+            await RecordExternalChangeAsync(db, issueId, previous.State, previous.StateReason, issue);
         await tx.CommitAsync(ct);
         return new MirroredIssue(issueId, applied.Count > 0);
     }
@@ -129,6 +135,39 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     }
 
     private sealed record PreviousState(string State, string? StateReason);
+
+    private sealed record StoredState(long GithubId, string State, string? StateReason);
+
+    // A sync run records the closed / reopened transitions, and close-reason changes, it applies to issues it already
+    // stored, with no member.
+    // An issue first seen by a sync has no earlier state, so it gets no event.
+    private static async Task RecordStateChangesAsync(
+        Db db, List<(SourceIssue Issue, Guid Id)> applied, Dictionary<long, StoredState> before)
+    {
+        foreach (var (issue, id) in applied)
+        {
+            if (before.TryGetValue(issue.DatabaseId, out var old))
+                await RecordExternalChangeAsync(db, id, old.State, old.StateReason, issue);
+        }
+    }
+
+    // A state change nobody on the board made: closed or reopened, or a closed issue whose reason changed. No member.
+    private static async Task RecordExternalChangeAsync(
+        Db db, Guid issueId, string oldState, string? oldReason, SourceIssue issue)
+    {
+        if (oldState == issue.State && (issue.State != "closed" || oldReason == issue.StateReason))
+            return;
+        await db.Exec("""
+            insert into issue_events (tenant_id, issue_id, kind, from_value, to_value)
+            values (@tenantId, @issueId, @kind, @fromValue, @toValue)
+            """, new
+        {
+            issueId,
+            kind = issue.State == "closed" ? "closed" : "reopened",
+            fromValue = oldReason,
+            toValue = issue.StateReason,
+        });
+    }
 
     private sealed class Db(NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, CancellationToken ct)
     {

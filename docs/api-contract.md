@@ -260,7 +260,7 @@ Names are unique per tenant, case-insensitive.
   `cancelled` to the target in one transaction (`carried_over` event per issue) and stores who did it. `toSprintId` equal to the
   source is `400 invalid_request`. A target that has ended is `409 sprint_ended`. With nothing unfinished it returns `carryOverId: null` and records nothing.
 - `POST /api/sprints/{id}/carry-over/{carryOverId}/undo` moves the same issues back, only if every one is still in the target
-  sprint, none has an `issue_events` row newer than the carry-over, none is now `done`/`cancelled`, and none was deleted:
+  sprint, none has an `issue_events` row newer than the carry-over (`closed` / `reopened` rows with no member, recorded by a sync or when a board write mirrors an outside change, do not count), none is now `done`/`cancelled`, and none was deleted:
   otherwise `409 conflict` with `issueIds` listing the blocking issues, and a second undo is `409 already_undone`. Strict rule: an older carry-over cannot be undone once a later carry-over
   or undo touched the same issues. Records `carried_over` events in reverse.
 - `GET /api/backlog`: open issues whose status is not `done`/`cancelled` and that are in no sprint. Optional `projectId`,
@@ -269,6 +269,19 @@ Names are unique per tenant, case-insensitive.
 - `carriedFrom` on every `BoardIssue` (read only): the source sprint of the latest carry-over, not undone, that moved the
   issue into the sprint it is in now, as long as no `sprint_added` / `sprint_removed` event for the issue is newer than that
   carry-over. Otherwise `null`: no sprint, added by hand, or moved by hand since (also when it was moved away and back). An undo clears it. The planning screen shows it as the "넘어온 일" flag.
+
+Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining-work chart reads it later):
+
+- The sync loop writes one row per sprint and day after every cycle, for tenants with `sprintsEnabled` and sprints whose
+  dates contain the day and that are not stored as `closed`. The day is Asia/Seoul. Repeated cycles on one day overwrite that
+  day's row (primary key `(tenant_id, sprint_id, day)`); earlier days are never rewritten, and days the job missed stay empty (no backfill).
+- Columns: `scope_count`, `scope_weight` (issues in the sprint, `cancelled` excluded), `done_count`, `done_weight` (status `done`).
+  Weight is size S=1, M=2, L=3; an issue without a size weighs 1. The loop runs even when the GitHub App is not configured.
+- Rebuilding a day from `issue_events`: membership from the latest `sprint_added` / `carried_over` / `sprint_removed` event of each issue,
+  size from `size_set`, done / cancelled from `closed` (`to_value` `not_planned` = cancelled) / `reopened`. A sync run records `closed` and `reopened`
+  for issues it already stored whose state changed, or that stayed closed with a different reason (`closed`, `from_value`/`to_value` the
+  reasons); `member_id` is null. Board writes that only mirror a response (assignees and similar) record the same member-less event when
+  the applied response differs from the stored state or reason. An issue first seen already closed gets no event.
 
 `GET /api/milestones` counts exclude `cancelled` issues in `issueCount`; `doneCount` counts status `done`.
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.

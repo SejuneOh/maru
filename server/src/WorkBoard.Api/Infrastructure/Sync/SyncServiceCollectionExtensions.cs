@@ -7,6 +7,7 @@ public static class SyncServiceCollectionExtensions
         services.Configure<SyncOptions>(config.GetSection(SyncOptions.Section));
         services.AddSingleton<MirrorWriter>();
         services.AddSingleton<SyncRunner>();
+        services.AddSingleton<SprintDailyRecorder>();
         services.AddHostedService<SyncWorker>();
         return services;
     }
