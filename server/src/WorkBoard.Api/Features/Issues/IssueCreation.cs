@@ -36,8 +36,6 @@ public sealed class IssueCreation(
 
     private sealed record LabelName(string Name);
 
-    private sealed record AssigneeRow(long GithubUserId, string GithubLogin);
-
     // Window before the reservation in which an earlier attempt's issue may have been created (clock skew).
     public static readonly TimeSpan LookupMargin = TimeSpan.FromMinutes(5);
 
@@ -157,12 +155,5 @@ public sealed class IssueCreation(
 
     // Null when any id is not a member of the caller's tenant.
     public Task<List<(long UserId, string Login)>?> ResolveAssigneesAsync(long[] ids, CancellationToken ct) =>
-        db.ReadAsync<List<(long, string)>?>(async s =>
-        {
-            if (ids.Length == 0)
-                return [];
-            var rows = await s.QueryAsync<AssigneeRow>(
-                "select github_user_id, github_login from members where github_user_id = any(@ids)", new { ids });
-            return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
-        }, ct);
+        TenantAssignees.ResolveAsync(db, ids, ct);
 }

@@ -58,7 +58,7 @@ side effect. A key longer than 200 characters is
 `400 invalid_request`. Without the header the write just runs.
 
 Every write also records who did it in `audit_log` and, for board-field changes, structured rows in
-`issue_events`, in the same transaction as the change.
+`issue_events`, in the same transaction as the change. Writes that call GitHub write these rows after GitHub answered.
 
 Development only, when there is no `Authorization` header: `X-Dev-User: <githubLogin>` and optional
 `X-Dev-Tenant: <tenantId>` still work (same tenant rules, unknown login or no membership is
@@ -92,6 +92,8 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/issues/new-options` | dev user | `NewIssueOptions` |
 | POST | `/api/issues` | dev user | `201 CreatedIssue` or `202 PendingIssue`, see below |
 | PATCH | `/api/issues/{id}/board` | dev user | `BoardIssue` |
+| PATCH | `/api/issues/{id}` | dev user | `AssignedIssue`, see below |
+| POST | `/api/issues/{id}/comments` | dev user | `201 PostedComment`, see below |
 | GET | `/api/sprints` | dev user | `SprintList` |
 | POST | `/api/sprints` | dev user | `201 Sprint` |
 | PATCH | `/api/sprints/{id}` | dev user | `Sprint` |
@@ -204,6 +206,31 @@ Creating issues (any member, GitHub write through the App):
   Remaining limits: the guarantee is lost if the marker is removed by editing the issue; a pending key older than 24 hours is treated as absent, so a resend after that
   creates normally without a lookup; and if the database fails while the key is being completed after GitHub answered (the retry then
   looks for the marker and normally finds the issue, but the earlier answer is not replayed).
+
+Assignees and comments (any member, GitHub write through the App, same `Idempotency-Key` handling as other GitHub writes):
+
+- `PATCH /api/issues/{id}` body `{"assigneeGithubUserIds": number[]}` replaces the issue's assignees (an empty list clears them).
+  Max 10, duplicates ignored; every id must be a member of the caller's tenant, else `400 invalid_request` (also for a missing field,
+  a body that is not JSON, or more than 10). `Idempotency-Key` is optional (replacing twice is harmless). There is no concurrency check:
+  the list sent wins, including over assignees changed on GitHub since the panel loaded. Order: GitHub `PATCH` of the issue, then the
+  mirror (from GitHub's answer) and an `issue.assignees_update` `audit_log` row (`before`/`after` logins, `after.requested`). No `issue_events`
+  row: assignees are not a board field, and an event would block undoing a carry-over. Response `200 AssignedIssue`;
+  `droppedAssignees` lists requested ids GitHub did not apply. Errors: `404 not_found` (issue not in the tenant or repository not connected),
+  `409 repository_archived`, `422 assignee_not_collaborator` (GitHub refused an assignee), and the GitHub write errors above. Nothing local changes on an error.
+- `POST /api/issues/{id}/comments` requires `Idempotency-Key` (missing is `400 invalid_request`). Body `{"body": string}`, trimmed, 1..60000
+  characters, else `400 invalid_request`. GitHub shows the App bot as the author; the body gets the footer naming the caller and an invisible marker
+  `<!-- work-board:comment:<id> -->` (`<id>` hashed from tenant, key and request, like issue creation). Then the comment is mirrored into `comments`
+  and an `issue.comment` `audit_log` row is written. Response `201 PostedComment`: `author` is the caller and `body` the text sent (no footer).
+  If GitHub posted but saving locally failed, the response is still `201` with `id: null` and `mirrorPending: true`; the next sync brings the comment.
+  Errors: `404 not_found`, `409 repository_archived`, and the GitHub write errors above.
+  No duplicate on retry: a comment is not safe to repeat, so a retry that takes over a stale pending reservation first lists that issue's comments
+  updated since the first attempt minus 5 minutes (oldest first, 5 pages of 100) and returns the one whose author login ends in `[bot]` and whose
+  body carries the marker, without posting. If the list cannot be read or is longer than the bound, nothing is posted: `504 github_unavailable`
+  and the key stays pending. Same remaining limits as issue creation (marker removed by editing, keys older than 24 hours). The client must resend
+  only the same body under the same key after a `504`, a network error or `409 request_in_progress`.
+- `IssueDetail.comments`: a comment whose GitHub author login ends in `[bot]` and whose body ends with the board footer is shown as the member the
+  footer names (login, and display name when that login is a member) with the footer and marker removed. The same rule removes the footer from
+  `IssueDetail.body` of issues created on the board. A footer typed by a person is left as text.
 
 Sprints (UI word: 주기) and the backlog (대기 목록) exist only when the tenant has `sprintsEnabled`. When it is off,
 `GET /api/sprints` and `GET /api/backlog` return empty results and every sprint write is `409 sprints_disabled`.
@@ -452,6 +479,16 @@ type CreateIssueRequest = {
 
 type CreatedIssue = IssueDetail & { droppedAssignees: number[] };   // GitHub user ids GitHub did not assign
 type PendingIssue = { repository: string; number: number; htmlUrl: string; mirrorPending: true };  // 202, not on the board yet
+
+type SetAssigneesRequest = { assigneeGithubUserIds: number[] };
+type AssignedIssue = IssueDetail & { droppedAssignees: number[] };   // GitHub user ids GitHub did not assign
+
+type AddCommentRequest = { body: string };
+type PostedComment = {
+  id: string | null;                 // null with mirrorPending: on GitHub, in the panel after the next sync
+  author: { githubLogin: string | null; displayName: string | null };
+  body: string; createdAt: string; htmlUrl: string | null; mirrorPending: boolean;
+};
 
 type MeetingNoteSummary = {
   id: string; title: string; heldAt: string;

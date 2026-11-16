@@ -19,6 +19,8 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
 
     public static string CreateMarker(string id) => $"<!-- work-board:create:{id} -->";
 
+    public static string CommentMarker(string id) => $"<!-- work-board:comment:{id} -->";
+
     public const int LookupPageSize = 100;
     public const int LookupMaxPages = 5;
 
@@ -58,9 +60,29 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
         ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Patch, IssueUrl(repo, number), new { assignees }, ct));
 
     public async Task<SourceComment> AddCommentAsync(
-        GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct) =>
+        GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct, string? marker = null) =>
         ToComment(await SendAsync<RestComment>(repo, HttpMethod.Post, IssueUrl(repo, number) + "/comments",
-            new { body = WithFooter(body, actorLogin) }, ct), number);
+            new { body = WithFooter(body, actorLogin, marker) }, ct), number);
+
+    // GitHub lists an issue's comments oldest first and filters `since` on updated_at, so every page is read.
+    public async Task<SourceComment?> FindCreatedCommentAsync(
+        GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct)
+    {
+        var from = Uri.EscapeDataString(since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
+        for (var page = 1; page <= LookupMaxPages; page++)
+        {
+            var comments = await SendAsync<List<RestComment>>(repo, HttpMethod.Get,
+                $"{IssueUrl(repo, number)}/comments?since={from}&per_page={LookupPageSize}&page={page}", null, ct);
+            foreach (var c in comments)
+                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true
+                    && c.User?.Login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) == true)
+                    return ToComment(c, number);
+            if (comments.Count < LookupPageSize)
+                return null;
+        }
+        throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+            "The comment list is longer than the lookup window, so absence cannot be shown.");
+    }
 
     public async Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct) =>
         ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Patch, IssueUrl(repo, number),

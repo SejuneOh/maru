@@ -67,5 +67,38 @@ public static class IssuesEndpoints
                 user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
             return await writes.ChangeAsync(id, patch, key, hash, ct);
         });
+
+        api.MapPatch("/issues/{id:guid}", async (
+            Guid id, HttpContext http, ICurrentUser user, AssigneeWrites writes, TenantDb db, CancellationToken ct) =>
+        {
+            var bytes = await RequestBodies.ReadAsync(http, SprintsEndpoints.MaxBodyBytes, ct);
+            if (bytes is null || !http.Request.HasJsonContentType()
+                || TenantAssignees.ParseIds(bytes, NewIssueEndpoints.MaxAssignees) is not { } ids)
+                return ApiErrors.BadRequest();
+            if (await TenantAssignees.ResolveAsync(db, ids, ct) is not { } assignees)
+                return ApiErrors.BadRequest();
+
+            var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+            var hash = Idempotency.HashRequest(
+                user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+            return await writes.SetAsync(id, assignees, key, hash, ct);
+        });
+
+        api.MapPost("/issues/{id:guid}/comments", async (
+            Guid id, HttpContext http, ICurrentUser user, CommentWrites writes, CancellationToken ct) =>
+        {
+            var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+            if (string.IsNullOrWhiteSpace(key))
+                return ApiErrors.BadRequest();
+            var bytes = await RequestBodies.ReadAsync(http, CommentMaxBodyBytes, ct);
+            if (bytes is null || !http.Request.HasJsonContentType() || CommentWrites.Parse(bytes) is not { } body)
+                return ApiErrors.BadRequest();
+
+            var hash = Idempotency.HashRequest(
+                user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+            return await writes.AddAsync(id, body, key, hash, ct);
+        });
     }
+
+    private const int CommentMaxBodyBytes = 256 * 1024;
 }

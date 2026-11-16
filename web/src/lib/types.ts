@@ -193,6 +193,46 @@ export type CreateIssueError =
   | "request_in_progress"
   | "idempotency_key_reused";
 
+/** `PATCH /api/issues/{id}` body: the whole assignee list (members only, max 10). */
+export type SetAssigneesRequest = { assigneeGithubUserIds: number[] };
+
+/** `PATCH /api/issues/{id}` answer. `droppedAssignees` are GitHub user ids GitHub did not assign. */
+export type AssignedIssue = IssueDetail & { droppedAssignees: number[] };
+
+/** `PATCH /api/issues/{id}` error codes (`error` field). */
+export type SetAssigneesError =
+  | "invalid_request"
+  | "not_found"
+  | "repository_archived"
+  | "github_write_not_granted"
+  | "assignee_not_collaborator"
+  | "github_unavailable"
+  | "request_in_progress"
+  | "idempotency_key_reused";
+
+/** `POST /api/issues/{id}/comments` body; the request also needs an `Idempotency-Key` header. */
+export type AddCommentRequest = { body: string };
+
+/** 201. `id` is null with `mirrorPending`: on GitHub, in the panel after the next sync. */
+export type PostedComment = {
+  id: string | null;
+  author: { githubLogin: string | null; displayName: string | null };
+  body: string;
+  createdAt: string;
+  htmlUrl: string | null;
+  mirrorPending: boolean;
+};
+
+/** `POST /api/issues/{id}/comments` error codes (`error` field). */
+export type AddCommentError =
+  | "invalid_request"
+  | "not_found"
+  | "repository_archived"
+  | "github_write_not_granted"
+  | "github_unavailable"
+  | "request_in_progress"
+  | "idempotency_key_reused";
+
 export type MeetingNoteSummary = {
   id: string;
   title: string;

@@ -50,7 +50,14 @@ public interface IGitHubWriter
     // Replaces the assignee list.
     Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct);
 
-    Task<SourceComment> AddCommentAsync(GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct);
+    // marker works as for CreateIssueAsync, found again by FindCreatedCommentAsync.
+    Task<SourceComment> AddCommentAsync(
+        GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct, string? marker = null);
+
+    // The comment (or null) on the issue whose body contains marker, updated at or after since and written by a bot.
+    // Reads a bounded number of pages; throws GitHubWriteException when they cannot be read or do not cover since.
+    Task<SourceComment?> FindCreatedCommentAsync(
+        GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct);
 
     Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct);
 
