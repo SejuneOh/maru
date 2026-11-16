@@ -117,8 +117,9 @@ public sealed class BoardFieldWrites(
             return Fail(StatusCodes.Status409Conflict, ApiErrors.Conflict);
 
         IssueStateChange? change = null;
-        var closeReason = patch.Status switch { "done" => "completed", "cancelled" => "not_planned", _ => null };
-        if (closeReason is not null && (current.State == "open" || current.StateReason != closeReason))
+        var closedAsCancelled = current.State == "closed" && current.StateReason == "not_planned";
+        if (patch.Status is "done" or "cancelled"
+            && (current.State == "open" || closedAsCancelled != (patch.Status == "cancelled")))
             change = IssueStateChange.Closed;
         else if (patch.Status is "todo" or "in_progress" or "in_review" && current.State == "closed")
             change = IssueStateChange.Reopened;

@@ -24,9 +24,12 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
         public int Number { get; set; }
         public Func<Task>? OnCall { get; set; }
 
+        private int _tick;
+
+        // Strictly increasing, so the mirror never treats a later response as older than the stored copy.
         private SourceIssue Issue(string state, string? reason) =>
             new(GithubId, "n", Number, "t", null, null, state, reason, null, DateTimeOffset.UtcNow.AddDays(-1),
-                state == "closed" ? DateTimeOffset.UtcNow : null, DateTimeOffset.UtcNow, "https://x/1", null, [], [], null, null);
+                state == "closed" ? DateTimeOffset.UtcNow : null, DateTimeOffset.UtcNow.AddSeconds(++_tick), "https://x/1", null, [], [], null, null);
 
         public async Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct)
         {
@@ -256,6 +259,34 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
 
         var (_, reopened) = await PatchAsync(c, new { status = "todo" });
         Assert.Equal("todo", reopened.GetProperty("status").GetString());
+    }
+
+    [DbTheory]
+    [InlineData("duplicate", "done")]
+    [InlineData(null, "done")]
+    [InlineData("completed", "done")]
+    [InlineData("not_planned", "cancelled")]
+    public async Task Close_with_the_status_the_board_already_shows_calls_nothing(string? reason, string status)
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t, closed: true, reason: reason);
+
+        var (code, _) = await PatchAsync(c, new { status });
+        Assert.Equal(HttpStatusCode.OK, code);
+        Assert.Empty(c.Writer.Calls);
+        Assert.Empty(await EventsAsync(t, c.Issue));
+    }
+
+    [DbFact]
+    public async Task Completed_issue_moved_to_cancelled_switches_the_reason()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t, closed: true, reason: "completed");
+
+        var (_, body) = await PatchAsync(c, new { status = "cancelled" });
+        Assert.Equal("cancelled", body.GetProperty("status").GetString());
+        Assert.Equal(["close:NotPlanned"], c.Writer.Calls);
+        Assert.Equal(["closed:completed>not_planned"], await EventsAsync(t, c.Issue));
     }
 
     [DbFact]

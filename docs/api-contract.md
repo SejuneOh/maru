@@ -159,8 +159,9 @@ at least one of `status`, `priority`, `size` must be present, and a present `nul
 
 - `status`: `todo`, `in_progress`, `in_review` set (null clears) `board_fields.status_override`. `done` closes the GitHub
   issue as `completed`, `cancelled` as `not_planned`; both clear the override (`status_cleared` event). On an issue that is
-  already closed with the other reason, GitHub is called again to change the reason and a new `closed` event is recorded;
-  with the same reason nothing is called or recorded. Moving a closed issue to `todo`, `in_progress` or `in_review` reopens
+  already closed, GitHub is called again only to switch between the two board statuses (`done` on a `not_planned` issue,
+  `cancelled` on any other closed issue) and a new `closed` event is recorded; otherwise nothing is called or recorded (a `duplicate` or
+  reason-less closed issue already counts as `done`). Moving a closed issue to `todo`, `in_progress` or `in_review` reopens
   it on GitHub and sets the override. Clearing the override never changes GitHub.
 - `priority` (`urgent`, `high`, `normal`, `low`) and `size` (`S`, `M`, `L`) need the tenant's `priorityEnabled` / `sizeEnabled`,
   else `409 field_disabled` (also when clearing). Any other value, wrong type, or an empty body is `400 invalid_request`.
