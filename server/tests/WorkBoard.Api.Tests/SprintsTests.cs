@@ -32,7 +32,7 @@ public class SprintsTests(WebApplicationFactory<Program> factory) : IClassFixtur
         Guid.Parse(path.Aggregate(e, (x, p) => x.GetProperty(p)).GetString()!);
 
     private static async Task<List<string>> EventsAsync(TestTenant t, Guid issue) =>
-        (await t.QueryAsync("select kind, from_value, to_value from issue_events where issue_id = @issue order by at, kind desc", new { issue }))
+        (await t.QueryAsync("select kind, from_value, to_value from issue_events where issue_id = @issue order by seq", new { issue }))
             .Select(r => $"{r.kind}:{r.from_value}>{r.to_value}").ToList();
 
     [DbFact]
@@ -225,6 +225,115 @@ public class SprintsTests(WebApplicationFactory<Program> factory) : IClassFixtur
         Assert.Equal(HttpStatusCode.Conflict, undo.Status);
         Assert.Equal(s2, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @a", new { a }));
         Assert.Equal(s3, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @b", new { b }));
+    }
+
+    private static Task LockAssignmentsAsync(Npgsql.NpgsqlConnection conn, Npgsql.NpgsqlTransaction tx, Guid tenant) =>
+        Dapper.SqlMapper.ExecuteAsync(conn, "select pg_advisory_xact_lock(hashtextextended(@scope, 0))",
+            new { scope = $"sprint-assign:{tenant:N}" }, tx);
+
+    // A write whose transaction began before the carry-over committed but that took the lock after it.
+    private async Task<(Guid Carry, Guid S1, Guid S2, Guid Issue)> CarryThenLateWriteAsync(TestTenant t, string lateKind)
+    {
+        var a = await t.AddIssueAsync(await t.AddRepoAsync("r"));
+        var s1 = await t.AddSprintAsync("One");
+        var s2 = await t.AddSprintAsync("Two");
+        await t.BoardAsync(a, sprint: s1);
+
+        await using var late = await t.OpenSyncAsync();
+        await using var tx = await late.BeginTransactionAsync();
+        await Dapper.SqlMapper.ExecuteScalarAsync(late, "select now()", transaction: tx);
+
+        var (_, carried) = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over", new { toSprintId = s2 });
+        var carry = Id(carried, "carryOverId");
+
+        await LockAssignmentsAsync(late, tx, t.Id);
+        await Dapper.SqlMapper.ExecuteAsync(late,
+            "insert into issue_events (tenant_id, issue_id, kind, sprint_id, member_id) values (@tid, @a, @lateKind, @s2, null)",
+            new { tid = t.Id, a, lateKind, s2 }, tx);
+        await tx.CommitAsync();
+
+        Assert.True(await t.ScalarAsync<bool>(
+            "select (select at from issue_events where issue_id = @a and kind = @lateKind) < (select created_at from sprint_carry_overs where id = @carry)",
+            new { a, lateKind, carry }));
+        return (carry, s1, s2, a);
+    }
+
+    [DbFact]
+    public async Task A_write_that_took_the_lock_after_the_carry_over_blocks_its_undo_despite_an_earlier_time()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var (carry, s1, s2, a) = await CarryThenLateWriteAsync(t, "priority_set");
+
+        var undo = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carry}/undo");
+
+        Assert.Equal(HttpStatusCode.Conflict, undo.Status);
+        Assert.Equal(s2, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @a", new { a }));
+    }
+
+    [DbFact]
+    public async Task A_sprint_move_that_took_the_lock_after_the_carry_over_clears_carried_from_despite_an_earlier_time()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var (_, _, s2, a) = await CarryThenLateWriteAsync(t, "sprint_removed");
+
+        var (_, list) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s2}&scope=all");
+
+        Assert.Equal(JsonValueKind.Null, list.EnumerateArray().Single(x => Id(x, "id") == a).GetProperty("carriedFrom").ValueKind);
+    }
+
+    [DbFact]
+    public async Task Carry_overs_without_an_event_seq_still_compare_by_time()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await t.AddRepoAsync("r");
+        var a = await t.AddIssueAsync(repo);
+        var b = await t.AddIssueAsync(repo);
+        var s1 = await t.AddSprintAsync("One");
+        var s2 = await t.AddSprintAsync("Two");
+        await t.BoardAsync(a, sprint: s1);
+        await t.BoardAsync(b, sprint: s1);
+        var (_, carried) = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over", new { toSprintId = s2 });
+        var carry = Id(carried, "carryOverId");
+        Assert.NotNull(await t.ScalarAsync<long?>("select event_seq from sprint_carry_overs where id = @carry", new { carry }));
+        await t.ExecAsync("update sprint_carry_overs set event_seq = null, created_at = now() - interval '1 minute' where id = @carry", new { carry });
+        await t.ExecAsync("update issue_events set at = now() - interval '2 minutes' where issue_id in (@a, @b)", new { a, b });
+
+        var (_, list) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s2}&scope=all");
+        Assert.All(list.EnumerateArray(), x => Assert.Equal(JsonValueKind.Object, x.GetProperty("carriedFrom").ValueKind));
+
+        await t.ExecAsync(
+            "insert into issue_events (tenant_id, issue_id, kind, sprint_id) values (@tid, @a, 'sprint_added', @s2)", new { tid = t.Id, a, s2 });
+        var (_, afterList) = await SendAsync(t, HttpMethod.Get, $"/api/issues?sprint={s2}&scope=all");
+        Assert.Equal(JsonValueKind.Null, afterList.EnumerateArray().Single(x => Id(x, "id") == a).GetProperty("carriedFrom").ValueKind);
+        Assert.Equal(JsonValueKind.Object, afterList.EnumerateArray().Single(x => Id(x, "id") == b).GetProperty("carriedFrom").ValueKind);
+
+        var blocked = await SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/carry-over/{carry}/undo");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.Status);
+        Assert.Equal([a], blocked.Body.GetProperty("issueIds").EnumerateArray().Select(x => Guid.Parse(x.GetString()!)));
+    }
+
+    [DbFact]
+    public async Task A_board_write_waiting_for_the_lock_gets_a_higher_seq_than_the_holder()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var a = await t.AddIssueAsync(await t.AddRepoAsync("r"));
+        var s1 = await t.AddSprintAsync("One");
+
+        await using var holder = await t.OpenSyncAsync();
+        await using var tx = await holder.BeginTransactionAsync();
+        await LockAssignmentsAsync(holder, tx, t.Id);
+
+        var waiting = SendAsync(t, HttpMethod.Post, $"/api/sprints/{s1}/issues", new { issueIds = new[] { a } });
+        await Task.Delay(500);
+        Assert.False(waiting.IsCompleted);
+
+        await Dapper.SqlMapper.ExecuteAsync(holder,
+            "insert into issue_events (tenant_id, issue_id, kind) values (@tid, @a, 'priority_set')", new { tid = t.Id, a }, tx);
+        await tx.CommitAsync();
+        Assert.Equal(HttpStatusCode.OK, (await waiting).Status);
+
+        var kinds = (await t.QueryAsync("select kind from issue_events where issue_id = @a order by seq", new { a })).Select(r => (string)r.kind);
+        Assert.Equal(["priority_set", "sprint_added"], kinds);
     }
 
     [DbFact]

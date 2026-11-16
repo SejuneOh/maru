@@ -46,6 +46,8 @@ public sealed class TestTenant : IAsyncDisposable
         return t;
     }
 
+    public async Task<NpgsqlConnection> OpenSyncAsync() => await _sync.OpenConnectionAsync();
+
     public async Task<int> ExecAsync(string sql, object? param = null)
     {
         await using var conn = await _sync.OpenConnectionAsync();
