@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,25 +10,32 @@ using WorkBoard.Api.Tests.Fakes;
 
 namespace WorkBoard.Api.Tests;
 
-public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFixture<WebApplicationFactory<Program>>
+public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
+    private readonly List<WebApplicationFactory<Program>> _hosts = [];
+
+    public void Dispose() => _hosts.ForEach(h => h.Dispose());
+
     private sealed class FakeWriter : IGitHubWriter
     {
         public List<string> Calls { get; } = [];
         public Exception? Failure { get; set; }
         public long GithubId { get; set; }
         public int Number { get; set; }
+        public Func<Task>? OnCall { get; set; }
 
         private SourceIssue Issue(string state, string? reason) =>
             new(GithubId, "n", Number, "t", null, null, state, reason, null, DateTimeOffset.UtcNow.AddDays(-1),
                 state == "closed" ? DateTimeOffset.UtcNow : null, DateTimeOffset.UtcNow, "https://x/1", null, [], [], null, null);
 
-        public Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct)
+        public async Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct)
         {
             Calls.Add("close:" + reason);
+            if (OnCall is not null)
+                await OnCall();
             return Failure is null
-                ? Task.FromResult(Issue("closed", reason == IssueCloseReason.NotPlanned ? "not_planned" : "completed"))
-                : Task.FromException<SourceIssue>(Failure);
+                ? Issue("closed", reason == IssueCloseReason.NotPlanned ? "not_planned" : "completed")
+                : throw Failure;
         }
 
         public Task<SourceIssue> ReopenIssueAsync(GitHubRepoRef repo, int number, CancellationToken ct)
@@ -46,7 +54,7 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
             throw new NotSupportedException();
     }
 
-    private sealed record Card(TestTenant Tenant, Guid Issue, FakeWriter Writer);
+    private sealed record Card(TestTenant Tenant, Guid Issue, FakeWriter Writer, HttpClient Client);
 
     private async Task<Card> CardAsync(TestTenant t, bool closed = false, string? reason = null, bool archived = false)
     {
@@ -60,23 +68,25 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
             await t.ExecAsync("update issues set state_reason = @reason where id = @issue", new { reason, issue });
         var githubId = await t.ScalarAsync<long>("select github_issue_id from issues where id = @issue", new { issue });
         var number = await t.ScalarAsync<int>("select number from issues where id = @issue", new { issue });
-        return new Card(t, issue, new FakeWriter { GithubId = githubId, Number = number });
+        var writer = new FakeWriter { GithubId = githubId, Number = number };
+        var host = factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IGitHubWriter>();
+            s.AddSingleton<IGitHubWriter>(writer);
+        }));
+        _hosts.Add(host);
+        return new Card(t, issue, writer, host.CreateClient());
     }
 
     private async Task<(HttpStatusCode Status, JsonElement Body)> PatchAsync(
         Card c, object? body, string? key = null, Guid? issue = null, string? raw = null)
     {
-        using var client = factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
-        {
-            s.RemoveAll<IGitHubWriter>();
-            s.AddSingleton<IGitHubWriter>(c.Writer);
-        })).CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/issues/{issue ?? c.Issue}/board");
         request.Headers.Add("X-Dev-User", c.Tenant.ViewerLogin);
         if (key is not null)
             request.Headers.Add("Idempotency-Key", key);
         request.Content = new StringContent(raw ?? JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var response = await client.SendAsync(request);
+        using var response = await c.Client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();
         return (response.StatusCode, text.Length == 0 ? default : JsonSerializer.Deserialize<JsonElement>(text));
     }
@@ -186,20 +196,87 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
-    public async Task Expected_updated_at_must_match_the_board_row()
+    public async Task Expected_updated_at_is_the_board_updated_at_from_the_response()
     {
         await using var t = await TestTenant.CreateAsync(factory);
         var c = await CardAsync(t);
-        await PatchAsync(c, new { priority = "low" });
-        var at = DateTime.SpecifyKind(
-            await t.ScalarAsync<DateTime>("select updated_at from board_fields where issue_id = @i", new { i = c.Issue }), DateTimeKind.Utc);
 
-        var stale = await PatchAsync(c, new { priority = "high", expectedUpdatedAt = at.AddSeconds(-5).ToString("O") });
+        var (firstStatus, fresh) = await PatchAsync(c, new { priority = "low", expectedUpdatedAt = (string?)null });
+        Assert.Equal(HttpStatusCode.OK, firstStatus);
+        var token = fresh.GetProperty("boardUpdatedAt").GetString();
+        Assert.NotNull(token);
+
+        var stale = await PatchAsync(c, new { priority = "high", expectedUpdatedAt = DateTime.UtcNow.AddMinutes(-5).ToString("O") });
         Assert.Equal(HttpStatusCode.Conflict, stale.Status);
         Assert.Equal("conflict", Err(stale.Body));
-        var ok = await PatchAsync(c, new { priority = "high", expectedUpdatedAt = at.ToString("O") });
+        var none = await PatchAsync(c, new { priority = "high", expectedUpdatedAt = (string?)null });
+        Assert.Equal("conflict", Err(none.Body));
+        var ok = await PatchAsync(c, new { priority = "high", expectedUpdatedAt = token });
         Assert.Equal(HttpStatusCode.OK, ok.Status);
-        Assert.Equal("high", await t.ScalarAsync<string>("select priority from board_fields where issue_id = @i", new { i = c.Issue }));
+        Assert.NotEqual(token, ok.Body.GetProperty("boardUpdatedAt").GetString());
+        Assert.Equal("conflict", Err((await PatchAsync(c, new { priority = "normal", expectedUpdatedAt = token })).Body));
+    }
+
+    [DbFact]
+    public async Task Change_after_the_github_call_is_applied_even_when_the_board_row_moved_meanwhile()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        var (_, first) = await PatchAsync(c, new { priority = "low" });
+        var token = first.GetProperty("boardUpdatedAt").GetString();
+        c.Writer.OnCall = () => t.ExecAsync(
+            "update board_fields set priority = 'urgent', updated_at = now() where issue_id = @i", new { i = c.Issue });
+
+        var (status, body) = await PatchAsync(c, new { status = "done", priority = "high", expectedUpdatedAt = token });
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal("done", body.GetProperty("status").GetString());
+        Assert.Equal("high", body.GetProperty("priority").GetString());
+        Assert.Equal(["close:Completed"], c.Writer.Calls);
+        Assert.Equal(1, await t.ScalarAsync<int>(
+            "select count(*)::int from audit_log where target_id = @i and (after->>'github') = 'closed'", new { i = c.Issue }));
+    }
+
+    [DbFact]
+    public async Task Done_and_cancelled_switch_the_close_reason_and_clear_the_override()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t, closed: true, reason: "not_planned");
+        await t.BoardAsync(c.Issue, statusOverride: "in_progress");
+
+        var (status, body) = await PatchAsync(c, new { status = "done" });
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal("done", body.GetProperty("status").GetString());
+        Assert.Equal(["close:Completed"], c.Writer.Calls);
+        Assert.Equal(["closed:not_planned>completed", "status_cleared:in_progress>"], await EventsAsync(t, c.Issue));
+        Assert.Null(await t.ScalarAsync<string?>("select status_override from board_fields where issue_id = @i", new { i = c.Issue }));
+
+        var (_, back) = await PatchAsync(c, new { status = "cancelled" });
+        Assert.Equal("cancelled", back.GetProperty("status").GetString());
+        Assert.Equal(["close:Completed", "close:NotPlanned"], c.Writer.Calls);
+
+        var (_, reopened) = await PatchAsync(c, new { status = "todo" });
+        Assert.Equal("todo", reopened.GetProperty("status").GetString());
+    }
+
+    [DbFact]
+    public async Task Board_events_block_undoing_a_sprint_carry_over()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        var s1 = await t.AddSprintAsync("One");
+        var s2 = await t.AddSprintAsync("Two");
+        await t.BoardAsync(c.Issue, sprint: s1);
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Dev-User", t.ViewerLogin);
+        using var carried = await client.PostAsJsonAsync($"/api/sprints/{s1}/carry-over", new { toSprintId = s2 });
+        var carryId = (await carried.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("carryOverId").GetString();
+
+        Assert.Equal(HttpStatusCode.OK, (await PatchAsync(c, new { priority = "high" })).Status);
+
+        using var undo = await client.PostAsync($"/api/sprints/{s1}/carry-over/{carryId}/undo", null);
+        Assert.Equal(HttpStatusCode.Conflict, undo.StatusCode);
+        Assert.Equal(s2, await t.ScalarAsync<Guid>("select sprint_id from board_fields where issue_id = @i", new { i = c.Issue }));
     }
 
     [DbFact]
@@ -212,6 +289,8 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
 
         var cross = await PatchAsync(mine, new { status = "done" }, issue: theirs.Issue);
         Assert.Equal(HttpStatusCode.NotFound, cross.Status);
+        Assert.Empty(mine.Writer.Calls);
+        Assert.Empty(theirs.Writer.Calls);
         Assert.Equal("open", await other.ScalarAsync<string>("select state from issues where id = @i", new { i = theirs.Issue }));
 
         var archived = await PatchAsync(mine, new { status = "done" });

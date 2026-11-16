@@ -158,17 +158,19 @@ Derived status, first matching rule wins (view `issue_status`):
 at least one of `status`, `priority`, `size` must be present, and a present `null` clears it. Response is the updated `BoardIssue`.
 
 - `status`: `todo`, `in_progress`, `in_review` set (null clears) `board_fields.status_override`. `done` closes the GitHub
-  issue as `completed`, `cancelled` as `not_planned`. Moving a closed issue to `todo`, `in_progress` or `in_review` reopens
-  it on GitHub and sets the override. Closing a closed issue or reopening an open one does not call GitHub and records no
-  `closed`/`reopened` event. `done` and `cancelled` leave the override untouched; clearing the override never changes GitHub.
+  issue as `completed`, `cancelled` as `not_planned`; both clear the override (`status_cleared` event). On an issue that is
+  already closed with the other reason, GitHub is called again to change the reason and a new `closed` event is recorded;
+  with the same reason nothing is called or recorded. Moving a closed issue to `todo`, `in_progress` or `in_review` reopens
+  it on GitHub and sets the override. Clearing the override never changes GitHub.
 - `priority` (`urgent`, `high`, `normal`, `low`) and `size` (`S`, `M`, `L`) need the tenant's `priorityEnabled` / `sizeEnabled`,
   else `409 field_disabled` (also when clearing). Any other value, wrong type, or an empty body is `400 invalid_request`.
 - GitHub is written first (with `Idempotency-Key` handling of GitHub writes); only after it succeeds are the mirror and
   `board_fields` changed, so a GitHub failure changes nothing and returns the GitHub error codes above. A repository that is archived
   is `409 repository_archived` before any GitHub call (only when GitHub would be called). A repository without an active
   installation, or an issue of another tenant, is `404 not_found`.
-- `expectedUpdatedAt`: when given it must equal `board_fields.updated_at` of the issue (checked before GitHub and again under the
-  lock), else `409 conflict`; an issue without a `board_fields` row has no value to match, so any given value conflicts.
+- `expectedUpdatedAt`: send the `boardUpdatedAt` of the `BoardIssue` you edited (`null` = it had no board row yet; omit the
+  field to skip the check). A different value is `409 conflict`. The check runs before GitHub is called, or under the lock when
+  GitHub is not called. Once GitHub has been written the change is always applied, so a change that already happened is never answered with an error.
 - Records `status_set`/`status_cleared` (values are override values), `priority_set`, `size_set` events (only for real changes),
   the `closed`/`reopened` event, and an `issue.board_update` audit row. Board-field writes take the same per-tenant lock as sprint writes.
 
@@ -378,6 +380,7 @@ type BoardIssue = {
   size: "S" | "M" | "L" | null;
   priority: "urgent" | "high" | "normal" | "low" | null;
   updatedAt: string;         // github_updated_at
+  boardUpdatedAt: string | null; // board_fields.updated_at, null without a row; send as expectedUpdatedAt
   closedAt: string | null;
   htmlUrl: string | null;
   labels: { id: string; name: string; color: string | null }[];   // sorted by name

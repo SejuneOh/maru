@@ -13,7 +13,7 @@ public sealed record BoardPatch(
     bool SetStatus, string? Status,
     bool SetPriority, string? Priority,
     bool SetSize, string? Size,
-    DateTime? ExpectedUpdatedAt)
+    bool CheckExpected, DateTime? ExpectedUpdatedAt)
 {
     public static readonly string[] Statuses = ["todo", "in_progress", "in_review", "done", "cancelled"];
     public static readonly string[] Priorities = ["urgent", "high", "normal", "low"];
@@ -28,7 +28,7 @@ public sealed record BoardPatch(
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return null;
 
-            BoardPatch patch = new(false, null, false, null, false, null, null);
+            BoardPatch patch = new(false, null, false, null, false, null, false, null);
             foreach (var p in doc.RootElement.EnumerateObject())
             {
                 switch (p.Name.ToLowerInvariant())
@@ -50,10 +50,13 @@ public sealed record BoardPatch(
                         break;
                     case "expectedupdatedat":
                         if (p.Value.ValueKind == JsonValueKind.Null)
+                        {
+                            patch = patch with { CheckExpected = true, ExpectedUpdatedAt = null };
                             break;
+                        }
                         if (p.Value.ValueKind != JsonValueKind.String || !p.Value.TryGetDateTimeOffset(out var at))
                             return null;
-                        patch = patch with { ExpectedUpdatedAt = at.UtcDateTime };
+                        patch = patch with { CheckExpected = true, ExpectedUpdatedAt = at.UtcDateTime };
                         break;
                 }
             }
@@ -83,7 +86,7 @@ public sealed class BoardFieldWrites(
     IGitHubWriter github, MirrorWriter mirror, ILogger<BoardFieldWrites> log)
 {
     private sealed record Current(
-        Guid RepositoryId, int Number, string State, bool Archived, bool PriorityEnabled, bool SizeEnabled);
+        Guid RepositoryId, int Number, string State, string? StateReason, bool Archived, bool PriorityEnabled, bool SizeEnabled);
 
     private sealed record Board(string? StatusOverride, string? Priority, string? Size, DateTime? UpdatedAt);
 
@@ -97,7 +100,7 @@ public sealed class BoardFieldWrites(
     {
         var (current, board) = await db.ReadAsync(async s => (
             await s.QuerySingleOrDefaultAsync<Current>("""
-                select i.repository_id, i.number, i.state, r.archived,
+                select i.repository_id, i.number, i.state, i.state_reason, r.archived,
                        coalesce(ts.priority_enabled, false) as priority_enabled,
                        coalesce(ts.size_enabled, false) as size_enabled
                   from issues i
@@ -114,7 +117,8 @@ public sealed class BoardFieldWrites(
             return Fail(StatusCodes.Status409Conflict, ApiErrors.Conflict);
 
         IssueStateChange? change = null;
-        if (patch.Status is "done" or "cancelled" && current.State == "open")
+        var closeReason = patch.Status switch { "done" => "completed", "cancelled" => "not_planned", _ => null };
+        if (closeReason is not null && (current.State == "open" || current.StateReason != closeReason))
             change = IssueStateChange.Closed;
         else if (patch.Status is "todo" or "in_progress" or "in_review" && current.State == "closed")
             change = IssueStateChange.Reopened;
@@ -143,30 +147,31 @@ public sealed class BoardFieldWrites(
             var mirrored = await mirror.ApplyWrittenIssueAsync(
                 user.Identity.TenantId, current.RepositoryId, written, user.Identity.Member.Id, change, CancellationToken.None);
             if (mirrored is null)
-                return Fail(StatusCodes.Status502BadGateway, ApiErrors.GithubUnavailable, sideEffect: true);
+                log.LogWarning("Issue {IssueId} was written on GitHub but its repository is not in the mirror", issueId);
         }
 
         return await db.WriteAsync(s => ApplyBoardAsync(s, issueId, patch, change), CancellationToken.None);
     }
 
     private static bool IsStale(BoardPatch patch, Board? board) =>
-        patch.ExpectedUpdatedAt is { } expected && (board?.UpdatedAt is null || board.UpdatedAt != expected);
+        patch.CheckExpected && patch.ExpectedUpdatedAt != board?.UpdatedAt;
 
     private static Task<Board?> ReadBoardAsync(TenantSession s, Guid issueId) =>
         s.QuerySingleOrDefaultAsync<Board>(
             "select status_override, priority, size, updated_at from board_fields where issue_id = @issueId", new { issueId });
 
-    // Runs under the assignment lock and re-reads the row, so from-values and the concurrency check see the latest write.
+    // Runs under the assignment lock and re-reads the row, so from-values see the latest write. The concurrency
+    // check happens here only when GitHub was not called; after a GitHub write the change is always applied.
     private async Task<ExternalOutcome> ApplyBoardAsync(TenantSession s, Guid issueId, BoardPatch patch, IssueStateChange? change)
     {
         await SprintWrites.LockAssignmentsAsync(s, user.Identity.TenantId);
         var board = await ReadBoardAsync(s, issueId);
         var githubCalled = change is not null;
-        if (IsStale(patch, board))
-            return Fail(StatusCodes.Status409Conflict, ApiErrors.Conflict, githubCalled);
+        if (!githubCalled && IsStale(patch, board))
+            return Fail(StatusCodes.Status409Conflict, ApiErrors.Conflict);
 
         var newOverride = patch.Status is "todo" or "in_progress" or "in_review" ? patch.Status : null;
-        var setStatus = patch.SetStatus && (patch.Status is null || newOverride is not null) && newOverride != board?.StatusOverride;
+        var setStatus = patch.SetStatus && newOverride != board?.StatusOverride;
         var setPriority = patch.SetPriority && patch.Priority != board?.Priority;
         var setSize = patch.SetSize && patch.Size != board?.Size;
 
