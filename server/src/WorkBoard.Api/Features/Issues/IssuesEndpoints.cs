@@ -1,5 +1,8 @@
+using System.Text.Json;
+using WorkBoard.Api.Features.Sprints;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
+using WorkBoard.Api.Infrastructure.Writes;
 
 namespace WorkBoard.Api.Features.Issues;
 
@@ -50,6 +53,19 @@ public static class IssuesEndpoints
         {
             var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id), ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
+        });
+
+        api.MapPatch("/issues/{id:guid}/board", async (
+            Guid id, HttpContext http, ICurrentUser user, BoardFieldWrites writes, CancellationToken ct) =>
+        {
+            var bytes = await SprintsEndpoints.ReadBodyAsync(http, ct);
+            if (bytes is null || !http.Request.HasJsonContentType() || BoardPatch.Parse(bytes) is not { } patch)
+                return ApiErrors.BadRequest();
+
+            var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+            var hash = Idempotency.HashRequest(
+                user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+            return await writes.ChangeAsync(id, patch, key, hash, ct);
         });
     }
 }
