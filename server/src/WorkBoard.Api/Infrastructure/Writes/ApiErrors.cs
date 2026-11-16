@@ -15,6 +15,8 @@ public static class ApiErrors
     public const string GithubUnavailable = "github_unavailable";
     public const string GithubWriteNotGranted = "github_write_not_granted";
     public const string AssigneeNotCollaborator = "assignee_not_collaborator";
+    public const string FieldDisabled = "field_disabled";
+    public const string RepositoryArchived = "repository_archived";
 
     public static IResult Of(int status, string code) => Results.Json(new ErrorBody(code), statusCode: status);
 

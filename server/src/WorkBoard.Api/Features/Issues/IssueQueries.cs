@@ -95,7 +95,7 @@ public static class IssueQueries
                      where ipr.issue_id = i.id and p.state = 'open')::int as open_pull_request_count,
                    (select count(*) from comments c where c.issue_id = i.id)::int as comment_count,
                    i.parent_issue_id, bf.sprint_id, sp.name as sprint_name, bf.size, bf.priority,
-                   i.github_updated_at as updated_at, i.closed_at, i.html_url,
+                   i.github_updated_at as updated_at, bf.updated_at as board_updated_at, i.closed_at, i.html_url,
                    i.milestone_id, ms.title as milestone_title, ms.due_on as milestone_due_on
               from issues i
               join repositories r on r.id = i.repository_id
@@ -154,6 +154,7 @@ public static class IssueQueries
             r.Size,
             r.Priority,
             r.UpdatedAt,
+            r.BoardUpdatedAt,
             r.ClosedAt,
             r.HtmlUrl,
             labels[r.Id].Select(l => new LabelDto(l.Id, l.Name, l.Color)).ToList(),
@@ -179,6 +180,7 @@ public static class IssueQueries
         public string? Size { get; set; }
         public string? Priority { get; set; }
         public DateTime UpdatedAt { get; set; }
+        public DateTime? BoardUpdatedAt { get; set; }
         public DateTime? ClosedAt { get; set; }
         public string? HtmlUrl { get; set; }
         public Guid? MilestoneId { get; set; }

@@ -10,7 +10,7 @@ public static class SprintsEndpoints
 {
     public const int NameMaxLength = 80;
     public const int MaxIssuesPerRequest = 200;
-    private const int MaxBodyBytes = 64 * 1024;
+    internal const int MaxBodyBytes = 64 * 1024;
 
     public static void MapSprints(this RouteGroupBuilder api)
     {
@@ -106,7 +106,7 @@ public static class SprintsEndpoints
     }
 
     // Null when the body is larger than allowed.
-    private static async Task<byte[]?> ReadBodyAsync(HttpContext http, CancellationToken ct)
+    internal static async Task<byte[]?> ReadBodyAsync(HttpContext http, CancellationToken ct)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[8192];
