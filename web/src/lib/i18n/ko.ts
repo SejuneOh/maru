@@ -273,11 +273,11 @@ export const ko = {
       repository_archived: "보관된 저장소의 이슈는 닫거나 다시 열 수 없습니다. GitHub에서 보관을 풀어야 합니다.",
       github_write_not_granted: "GitHub App에 이슈를 쓸 권한이 없습니다. 관리자가 GitHub에서 Issues 쓰기 권한을 승인해야 합니다.",
       not_found: "이슈를 찾을 수 없거나 저장소의 GitHub 연결이 끊겼습니다. 설정에서 연결을 확인하세요.",
-      github_unavailable: "GitHub에 잠시 연결할 수 없습니다. 원래 칸으로 돌려놓았으니 조금 뒤 다시 시도하세요.",
+      github_unavailable: "GitHub에 잠시 연결할 수 없어 바꾸지 못했습니다. GitHub에서 이미 바뀌었는지 확인한 뒤 다시 시도하세요.",
       timeout: "GitHub이 제때 답하지 않았습니다. 이미 바뀌었을 수 있어 최신 값을 다시 불러왔습니다.",
       request_in_progress: "같은 요청을 아직 처리하는 중입니다. 잠시 뒤 다시 시도하세요.",
       network: "서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.",
-      unknown: "저장하지 못했습니다. 원래 값으로 돌려놓았으니 잠시 뒤 다시 시도하세요.",
+      unknown: "저장하지 못해 카드는 바꾸기 전 값 그대로입니다. 잠시 뒤 다시 시도하세요.",
     },
   },
 

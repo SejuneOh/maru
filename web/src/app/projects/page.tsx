@@ -40,6 +40,7 @@ export default function ProjectsBoardPage() {
   const board = useApi<BoardIssue[]>(
     selectedId || hasFilters(filters) ? issuesQuery(filters, selectedId ? { projectId: selectedId } : {}) : null,
   );
+  const boardEdited = useEditedIssues(board.data);
   const notes = useApi<MeetingNoteSummary[]>("/api/meeting-notes");
   const members = useApi<Member[]>(filters.person ? "/api/members" : null);
 
@@ -86,8 +87,8 @@ export default function ProjectsBoardPage() {
   });
   const leading = [...stats].filter((s) => s.total > 0).sort((a, b) => b.pct - a.pct)[0];
   const showBoard = selected !== null || hasFilters(filters);
-  const boardIssues = board.data
-    ? applyFilters(board.data, filters).filter((i) => !selected || i.projectIds.includes(selected.id))
+  const boardIssues = boardEdited
+    ? applyFilters(boardEdited, filters).filter((i) => !selected || i.projectIds.includes(selected.id))
     : null;
 
   return (

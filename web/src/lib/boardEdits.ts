@@ -76,13 +76,13 @@ function categoryOf(s: Status): BoardIssue["category"] {
 /**
  * Our write answer wins only over an older server copy (a refetch that left before the write). A copy at
  * least as new already holds the write, plus anything that does not move the timestamps (sprint, linked
- * PRs, the PR-driven status), so it replaces the answer for good.
+ * PRs, the PR-driven status), so it is shown instead. Answers are kept, never dropped here: lists that
+ * refetch later still need them, and this runs during render.
  */
 function merge<T extends BoardIssue>(issue: T): T {
   const mine = confirmed.get(issue.id);
   let out: T = issue;
   if (mine && freshness(mine) > freshness(issue)) out = { ...issue, ...mine };
-  else if (mine) confirmed.delete(issue.id);
   const p = pending.get(issue.id);
   if (p?.phase === "saving") {
     out = { ...out, ...p.change };
@@ -140,22 +140,37 @@ function show(n: DistributiveOmit<Notice, "id">) {
   bump();
 }
 
-/** 5xx, a timeout or no answer: GitHub may have acted, so a retry must reuse the key. */
-function failureOf(e: unknown): { failure: EditFailure; uncertain: boolean } {
-  if (!(e instanceof ApiError)) return { failure: "network", uncertain: true };
+type FailureInfo = {
+  failure: EditFailure;
+  /** GitHub may have acted, so the board is reloaded. */
+  reload: boolean;
+  /** How a retry is sent: under the same key (the first request may still finish), a new key, or not at all. */
+  retry: "same" | "new" | null;
+};
+
+/**
+ * A 504 or no answer leaves the key reserved, so a retry under it waits for the first request. A 502 is
+ * stored under the key and would only be replayed, so its retry takes a new key; closing or reopening
+ * twice does no harm.
+ */
+function failureOf(e: unknown): FailureInfo {
+  if (!(e instanceof ApiError)) return { failure: "network", reload: true, retry: "same" };
   switch (e.code) {
     case "conflict":
+      return { failure: e.code, reload: true, retry: null };
     case "field_disabled":
     case "repository_archived":
     case "github_write_not_granted":
     case "not_found":
-      return { failure: e.code, uncertain: false };
+      return { failure: e.code, reload: false, retry: null };
     case "github_unavailable":
-      return { failure: e.status === 504 ? "timeout" : "github_unavailable", uncertain: true };
+      return e.status === 504
+        ? { failure: "timeout", reload: true, retry: "same" }
+        : { failure: "github_unavailable", reload: true, retry: "new" };
     case "request_in_progress":
-      return { failure: "request_in_progress", uncertain: true };
+      return { failure: "request_in_progress", reload: true, retry: "same" };
   }
-  return { failure: "unknown", uncertain: e.status >= 500 };
+  return e.status >= 500 ? { failure: "unknown", reload: true, retry: "new" } : { failure: "unknown", reload: false, retry: "new" };
 }
 
 function sameValue(issue: BoardIssue, change: BoardChange): boolean {
@@ -201,31 +216,26 @@ function send(issue: BoardIssue, change: BoardChange, req: BoardChangeRequest, k
           ref,
           to: saved.status,
           until: Date.now() + UNDO_MS,
-          undo: () => editIssue(saved, { status: issue.status }, { undoOf: saved.status }),
+          // The card may have been edited since (priority in the panel), so undo starts from its newest copy.
+          undo: () => editIssue(knownIssue(saved.id) ?? saved, { status: issue.status }, { undoOf: saved.status }),
         });
       else bump();
       window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
     },
     (e: unknown) => {
       pending.delete(issue.id);
-      const { failure, uncertain } = failureOf(e);
+      const { failure, reload, retry } = failureOf(e);
       show({
         kind: "failed",
         ref,
         failure,
-        retry:
-          failure === "conflict" ||
-          failure === "field_disabled" ||
-          failure === "repository_archived" ||
-          failure === "not_found" ||
-          failure === "github_write_not_granted"
-            ? null
-            : () => {
-                if (!pending.has(issue.id)) send(issue, change, req, uncertain ? key : newIdempotencyKey(), phase, opts);
-              },
+        retry: retry
+          ? () => {
+              if (!pending.has(issue.id)) send(issue, change, req, retry === "same" ? key : newIdempotencyKey(), phase, opts);
+            }
+          : null,
       });
-      // The card may have changed under us (conflict) or on GitHub (no answer): show what the server has now.
-      if (failure === "conflict" || uncertain) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
+      if (reload) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
     },
   );
 }

@@ -263,11 +263,11 @@ export const en: Dict = {
       repository_archived: "Issues in an archived repository can't be closed or reopened. Unarchive it on GitHub first.",
       github_write_not_granted: "The GitHub App can't write issues. An admin has to approve the Issues write permission on GitHub.",
       not_found: "The issue is gone or its repository is no longer connected to GitHub. Check the connection in settings.",
-      github_unavailable: "GitHub can't be reached right now. The card is back where it was; try again shortly.",
+      github_unavailable: "GitHub can't be reached right now, so nothing changed here. Check whether it changed on GitHub, then try again.",
       timeout: "GitHub didn't answer in time. It may have changed anyway, so the latest values were reloaded.",
       request_in_progress: "The same request is still running. Try again in a moment.",
       network: "Couldn't reach the server. Check your connection and try again.",
-      unknown: "Couldn't save. The old value is back; try again shortly.",
+      unknown: "Couldn't save, so the card keeps its old value. Try again shortly.",
     },
   },
 
