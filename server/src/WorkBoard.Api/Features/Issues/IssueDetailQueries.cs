@@ -1,16 +1,25 @@
 using WorkBoard.Api.Infrastructure.Data;
+using WorkBoard.Api.Infrastructure.GitHub;
 
 namespace WorkBoard.Api.Features.Issues;
 
 public static class IssueDetailQueries
 {
-    public static async Task<IssueDetail?> GetAsync(TenantSession s, Guid id)
+    public static async Task<IssueDetail?> GetAsync(TenantSession s, Guid id, GitHubAppOptions app)
     {
         var issue = await IssueQueries.GetAsync(s, id);
         if (issue is null)
             return null;
 
-        var body = await s.QuerySingleOrDefaultAsync<string?>("select body from issues where id = @id", new { id });
+        var bodyRow = await s.QuerySingleOrDefaultAsync<BodyRow>("""
+            select i.body, gu.login as author_login
+              from issues i
+              left join github_users gu on gu.github_user_id = i.author_github_id
+             where i.id = @id
+            """, new { id });
+        var body = bodyRow?.Body is { } raw && app.IsBot(bodyRow.AuthorLogin) && BoardFooter.Strip(raw) is { } own
+            ? own.Body
+            : bodyRow?.Body;
 
         var parent = issue.ParentIssueId is { } parentId
             ? await s.QuerySingleOrDefaultAsync<ParentRow>(
@@ -35,9 +44,10 @@ public static class IssueDetailQueries
             """, new { id });
 
         var comments = await s.QueryAsync<CommentRow>("""
-            select c.id, m.github_login, m.display_name, c.body, c.github_created_at as created_at
+            select c.id, m.github_login, m.display_name, gu.login as author_login, c.body, c.github_created_at as created_at
               from comments c
               left join members m on m.github_user_id = c.author_github_id
+              left join github_users gu on gu.github_user_id = c.author_github_id
              where c.issue_id = @id
              order by c.github_created_at, c.id
             """, new { id });
@@ -68,14 +78,43 @@ public static class IssueDetailQueries
             PullRequests = pullRequests
                 .Select(p => new PullRequestDto(p.Id, p.Number, p.Title, p.State, p.Draft, p.ReviewRequested, p.HtmlUrl))
                 .ToList(),
-            Comments = comments
-                .Select(c => new CommentDto(c.Id, new CommentAuthor(c.GithubLogin, c.DisplayName), c.Body, c.CreatedAt))
-                .ToList(),
+            Comments = await CommentsAsync(s, comments, app),
             MeetingNotes = meetingNotes.Select(n => new LinkedMeetingNote(n.Id, n.Title, n.HeldAt)).ToList(),
             LastBoardChange = boardChange is null
                 ? null
                 : new BoardChange(boardChange.At, new BoardChangeBy(boardChange.GithubLogin, boardChange.DisplayName)),
         };
+    }
+
+    // A comment the App wrote for a member is shown as that member's, without the footer.
+    private static async Task<List<CommentDto>> CommentsAsync(TenantSession s, IEnumerable<CommentRow> rows, GitHubAppOptions app)
+    {
+        var all = rows
+            .Select(r => (Row: r, Own: r.GithubLogin is null && app.IsBot(r.AuthorLogin) ? BoardFooter.Strip(r.Body) : null))
+            .ToList();
+        var logins = all.Where(b => b.Own is not null).Select(b => b.Own!.Value.Login.ToLowerInvariant()).Distinct().ToArray();
+        var names = logins.Length == 0
+            ? []
+            : (await s.QueryAsync<MemberName>(
+                    "select github_login, display_name from members where lower(github_login) = any(@logins)", new { logins }))
+                .ToDictionary(m => m.GithubLogin.ToLowerInvariant(), m => m.DisplayName);
+        return all.Select(b => b.Own is { } own
+                ? new CommentDto(b.Row.Id, new CommentAuthor(own.Login, names.GetValueOrDefault(own.Login.ToLowerInvariant())),
+                    own.Body, b.Row.CreatedAt)
+                : new CommentDto(b.Row.Id, new CommentAuthor(b.Row.GithubLogin, b.Row.DisplayName), b.Row.Body, b.Row.CreatedAt))
+            .ToList();
+    }
+
+    private sealed class BodyRow
+    {
+        public string? Body { get; set; }
+        public string? AuthorLogin { get; set; }
+    }
+
+    private sealed class MemberName
+    {
+        public string GithubLogin { get; set; } = "";
+        public string? DisplayName { get; set; }
     }
 
     private sealed class ParentRow
@@ -110,6 +149,7 @@ public static class IssueDetailQueries
         public Guid Id { get; set; }
         public string? GithubLogin { get; set; }
         public string? DisplayName { get; set; }
+        public string? AuthorLogin { get; set; }
         public string Body { get; set; } = "";
         public DateTime CreatedAt { get; set; }
     }

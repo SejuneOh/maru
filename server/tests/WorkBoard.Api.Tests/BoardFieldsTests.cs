@@ -57,7 +57,10 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
         public Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task<SourceComment> AddCommentAsync(GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct) =>
+        public Task<SourceComment?> FindCreatedCommentAsync(GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SourceComment> AddCommentAsync(GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct, string? marker = null) =>
             throw new NotSupportedException();
     }
 

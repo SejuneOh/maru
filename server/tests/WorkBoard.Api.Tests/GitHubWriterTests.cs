@@ -53,7 +53,7 @@ public class GitHubWriterTests
     {
         var handler = new FakeHandler(respond);
         var tokens = new FakeTokens();
-        return (new GitHubWriter(new HttpClient(handler), tokens), handler, tokens);
+        return (new GitHubWriter(new HttpClient(handler), tokens, Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions { Slug = "app" })), handler, tokens);
     }
 
     private static JsonElement Body(Recorded r) => JsonDocument.Parse(r.Body).RootElement;
@@ -189,6 +189,66 @@ public class GitHubWriterTests
         Assert.Equal("hi\n\n---\n_작성: `@carol` (work-board)_", Body(r).GetProperty("body").GetString());
         Assert.Equal(900, c.Id);
         Assert.Equal(7, c.IssueNumber);
+    }
+
+    private static string CommentsJson(params (long Id, string Login, string Body)[] comments) =>
+        "[" + string.Join(",", comments.Select(c => JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["id"] = c.Id, ["user"] = new { id = 9, login = c.Login }, ["body"] = c.Body,
+            ["created_at"] = "2026-11-01T09:00:00Z", ["updated_at"] = "2026-11-01T09:00:00Z", ["html_url"] = "https://x",
+        }))) + "]";
+
+    [Fact]
+    public async Task Add_comment_appends_the_marker_after_the_footer()
+    {
+        var (w, h, _) = Make(_ => Json(HttpStatusCode.Created, CommentsJson((900, "app[bot]", "x"))[1..^1]));
+        var marker = GitHubWriter.CommentMarker("abc");
+        await w.AddCommentAsync(Repo, "carol", 7, "hi", default, marker);
+        Assert.Equal("hi\n\n---\n_작성: `@carol` (work-board)_\n<!-- work-board:comment:abc -->", Body(h.Requests[0]).GetProperty("body").GetString());
+    }
+
+    [Fact]
+    public async Task Find_created_comment_reads_the_issue_comments_since_and_matches_a_bot_marker()
+    {
+        var marker = GitHubWriter.CommentMarker("abc");
+        var (w, h, _) = Make(_ => Json(HttpStatusCode.OK,
+            CommentsJson((1, "human", "copy " + marker), (2, "app[bot]", "other"), (3, "app[bot]", "hi\n" + marker))));
+
+        var found = await w.FindCreatedCommentAsync(Repo, 7, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default);
+
+        Assert.Equal(3, found!.Id);
+        Assert.Equal(7, found.IssueNumber);
+        var r = Assert.Single(h.Requests);
+        Assert.Equal(HttpMethod.Get, r.Method);
+        Assert.Contains("/repos/octo/api/issues/7/comments?since=2026-11-01T09%3A00%3A00Z&per_page=100&page=1", r.Uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task Find_created_comment_ignores_another_bot_and_needs_a_slug()
+    {
+        var marker = GitHubWriter.CommentMarker("abc");
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.OK, CommentsJson((1, "github-actions[bot]", "x " + marker))));
+        Assert.Null(await w.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, CommentsJson((1, "app[bot]", "x " + marker))));
+        var noSlug = new GitHubWriter(new HttpClient(handler), new FakeTokens(),
+            Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions()));
+        await Assert.ThrowsAsync<GitHubWriteException>(() => noSlug.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+        await Assert.ThrowsAsync<GitHubWriteException>(() => noSlug.FindCreatedIssueAsync(Repo, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Find_created_comment_is_null_on_a_short_page_and_throws_past_the_page_bound()
+    {
+        var marker = GitHubWriter.CommentMarker("abc");
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.OK, CommentsJson((1, "app[bot]", "x"))));
+        Assert.Null(await w.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+
+        var full = CommentsJson(Enumerable.Range(1, GitHubWriter.LookupPageSize).Select(i => ((long)i, "app[bot]", "x")).ToArray());
+        var (w2, h2, _) = Make(_ => Json(HttpStatusCode.OK, full));
+        await Assert.ThrowsAsync<GitHubWriteException>(() => w2.FindCreatedCommentAsync(Repo, 7, marker, DateTimeOffset.UtcNow.AddHours(-1), default));
+        Assert.Equal(GitHubWriter.LookupMaxPages, h2.Requests.Count);
     }
 
     [Theory]
@@ -354,7 +414,7 @@ public class GitHubWriterTests
     public async Task Token_failure_is_unavailable_and_nothing_is_sent()
     {
         var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, IssueJson));
-        var w = new GitHubWriter(new HttpClient(handler), new FakeTokens { Fail = true });
+        var w = new GitHubWriter(new HttpClient(handler), new FakeTokens { Fail = true }, Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions { Slug = "app" }));
         var e = await Assert.ThrowsAsync<GitHubWriteException>(() => w.ReopenIssueAsync(Repo, 7, default));
 
         Assert.Equal(GitHubWriteErrorKind.Unavailable, e.Kind);

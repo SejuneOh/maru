@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Options;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -30,13 +31,12 @@ public sealed record NewIssue(
     IReadOnlyList<(long UserId, string Login)> Assignees, string? Status, string? Priority, string? Size);
 
 public sealed class IssueCreation(
-    ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events)
+    ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events,
+    IOptions<GitHubAppOptions> app)
 {
     public const string RepositoryArchived = "repository_archived";
 
     private sealed record LabelName(string Name);
-
-    private sealed record AssigneeRow(long GithubUserId, string GithubLogin);
 
     // Window before the reservation in which an earlier attempt's issue may have been created (clock skew).
     public static readonly TimeSpan LookupMargin = TimeSpan.FromMinutes(5);
@@ -131,7 +131,7 @@ public sealed class IssueCreation(
 
         await audit.WriteAsync(s, "issue.create", "issue", issueId, null,
             new { repository = $"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", number = created.Number });
-        return (await IssueDetailQueries.GetAsync(s, issueId))!;
+        return (await IssueDetailQueries.GetAsync(s, issueId, app.Value))!;
     }
 
     // Stored names of the repository's mirrored labels (case-insensitive match), and the requested names that match none.
@@ -157,12 +157,5 @@ public sealed class IssueCreation(
 
     // Null when any id is not a member of the caller's tenant.
     public Task<List<(long UserId, string Login)>?> ResolveAssigneesAsync(long[] ids, CancellationToken ct) =>
-        db.ReadAsync<List<(long, string)>?>(async s =>
-        {
-            if (ids.Length == 0)
-                return [];
-            var rows = await s.QueryAsync<AssigneeRow>(
-                "select github_user_id, github_login from members where github_user_id = any(@ids)", new { ids });
-            return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
-        }, ct);
+        TenantAssignees.ResolveAsync(db, ids, ct);
 }

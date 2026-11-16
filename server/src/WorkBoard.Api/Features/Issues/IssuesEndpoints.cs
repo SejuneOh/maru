@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
+using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Features.Sprints;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -49,9 +51,9 @@ public static class IssuesEndpoints
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
 
-        api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, CancellationToken ct) =>
+        api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, IOptions<GitHubAppOptions> app, CancellationToken ct) =>
         {
-            var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id), ct);
+            var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id, app.Value), ct);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         });
 
@@ -67,5 +69,38 @@ public static class IssuesEndpoints
                 user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
             return await writes.ChangeAsync(id, patch, key, hash, ct);
         });
+
+        api.MapPatch("/issues/{id:guid}", async (
+            Guid id, HttpContext http, ICurrentUser user, AssigneeWrites writes, TenantDb db, CancellationToken ct) =>
+        {
+            var bytes = await RequestBodies.ReadAsync(http, SprintsEndpoints.MaxBodyBytes, ct);
+            if (bytes is null || !http.Request.HasJsonContentType()
+                || TenantAssignees.ParseIds(bytes, NewIssueEndpoints.MaxAssignees) is not { } ids)
+                return ApiErrors.BadRequest();
+            if (await TenantAssignees.ResolveForIssueAsync(db, id, ids, ct) is not { } assignees)
+                return ApiErrors.BadRequest();
+
+            var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+            var hash = Idempotency.HashRequest(
+                user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+            return await writes.SetAsync(id, assignees, key, hash, ct);
+        });
+
+        api.MapPost("/issues/{id:guid}/comments", async (
+            Guid id, HttpContext http, ICurrentUser user, CommentWrites writes, CancellationToken ct) =>
+        {
+            var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+            if (string.IsNullOrWhiteSpace(key))
+                return ApiErrors.BadRequest();
+            var bytes = await RequestBodies.ReadAsync(http, CommentMaxBodyBytes, ct);
+            if (bytes is null || !http.Request.HasJsonContentType() || CommentWrites.Parse(bytes) is not { } body)
+                return ApiErrors.BadRequest();
+
+            var hash = Idempotency.HashRequest(
+                user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+            return await writes.AddAsync(id, body, key, hash, ct);
+        });
     }
+
+    private const int CommentMaxBodyBytes = 256 * 1024;
 }

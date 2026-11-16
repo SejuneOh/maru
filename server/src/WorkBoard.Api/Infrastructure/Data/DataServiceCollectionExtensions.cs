@@ -23,6 +23,8 @@ public static class DataServiceCollectionExtensions
         services.AddScoped<Features.Sprints.SprintWrites>();
         services.AddScoped<Features.Issues.IssueCreation>();
         services.AddScoped<Features.Issues.BoardFieldWrites>();
+        services.AddScoped<Features.Issues.AssigneeWrites>();
+        services.AddScoped<Features.Issues.CommentWrites>();
         return services;
     }
 

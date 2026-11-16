@@ -64,7 +64,7 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 | `GitHub__App__ClientId` | App의 Client ID |
 | `GitHub__App__ClientSecret` | App의 Client secret. 설치 후 받은 `code`를 사용자 토큰으로 바꿀 때만 사용 |
 | `GitHub__App__PrivateKeyPath` | 내려받은 `.pem` 경로. 절대 경로 또는 API 폴더 기준 상대 경로. `*.pem`은 `.gitignore`에 있음 |
-| `GitHub__App__Slug` | App 주소의 이름. API는 쓰지 않고 화면의 설치 링크용 |
+| `GitHub__App__Slug` | App 주소의 이름. **필수**: API가 `<Slug>[bot]`으로 App이 쓴 댓글·본문을 알아보고(작성자 표시), 중단된 요청을 다시 보낼 때 이미 만든 이슈·댓글을 찾는 데 씀. 비우면 작성자가 봇으로 보이고, 이어받는 재시도는 504로 멈춤. 화면의 설치 링크에도 씀 |
 
 샘플 사용자: `haneul-dev`(acme-health 관리자), `other-org-dev`(globex-labs). 두 번째 사용자로 바꾸면 첫 번째 회사의 데이터가 하나도 보이지 않아야 합니다.
 

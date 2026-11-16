@@ -44,13 +44,21 @@ public interface IGitHubWriter
 
     // The issue (or null) in the repository whose body contains marker, created at or after since. Reads the issue
     // list newest first, a bounded number of pages, never the search index. Throws GitHubWriteException when the
-    // list cannot be read: the answer is then unknown.
+    // list cannot be read, or GitHub:App:Slug is not set (this App's bot cannot be recognised): the answer is then unknown.
     Task<SourceIssue?> FindCreatedIssueAsync(GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct);
 
     // Replaces the assignee list.
     Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct);
 
-    Task<SourceComment> AddCommentAsync(GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct);
+    // marker works as for CreateIssueAsync, found again by FindCreatedCommentAsync.
+    Task<SourceComment> AddCommentAsync(
+        GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct, string? marker = null);
+
+    // The comment (or null) on the issue whose body contains marker, updated at or after since and written by this App's bot.
+    // Reads a bounded number of pages; throws GitHubWriteException when they cannot be read or do not cover since,
+    // or when GitHub:App:Slug is not set.
+    Task<SourceComment?> FindCreatedCommentAsync(
+        GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct);
 
     Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct);
 

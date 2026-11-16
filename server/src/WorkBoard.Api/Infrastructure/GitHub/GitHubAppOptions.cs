@@ -12,6 +12,11 @@ public sealed class GitHubAppOptions
     public string? PrivateKeyPath { get; set; }
     public string? Slug { get; set; }
 
+    // The login GitHub shows for what this App writes; null without a Slug.
+    public string? BotLogin => string.IsNullOrWhiteSpace(Slug) ? null : Slug.Trim() + "[bot]";
+
+    public bool IsBot(string? login) => BotLogin is { } bot && string.Equals(login, bot, StringComparison.OrdinalIgnoreCase);
+
     // Enough to mint installation tokens and read data; the connect flow also needs the client secret.
     public bool CanReadInstallations => AppId > 0 && !string.IsNullOrWhiteSpace(PrivateKeyPath);
 

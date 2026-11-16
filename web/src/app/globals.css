@@ -428,7 +428,7 @@ html[data-lang-pending] body {
     outline: none;
     animation: wb-rise 120ms var(--ease-tool) both;
   }
-  .menu > [role="option"] {
+  .menu [role="option"] {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -440,16 +440,35 @@ html[data-lang-pending] body {
     cursor: pointer;
     white-space: nowrap;
   }
-  .menu > [data-active] {
+  .menu [data-active] {
     background: var(--wb-hover);
     color: var(--wb-ink);
   }
-  .menu:focus-visible > [data-active] {
+  .menu:focus-visible > [data-active],
+  .menu [role="listbox"]:focus-visible > [data-active] {
     box-shadow: inset 0 0 0 2px var(--wb-focus);
   }
-  .menu > [aria-selected="true"] {
+  .menu [aria-selected="true"] {
     color: var(--wb-ink);
     font-weight: 600;
+  }
+  .menu [aria-disabled="true"] {
+    cursor: default;
+    opacity: 0.5;
+  }
+  /* Several values at once (assignees): wider, the pick is saved from the footer, not on each click. */
+  .menu-wide {
+    /* 390px: the value column starts about 9rem from the left edge. */
+    width: min(260px, calc(100vw - 9.25rem));
+  }
+  .menu-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 8px 8px 4px;
+    border-top: 1px solid var(--wb-rule);
   }
 
   /* Waiting for the server or GitHub. Next to the words "저장 중", never alone. */

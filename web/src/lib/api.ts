@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
-import type { BoardChangeRequest, BoardIssue, CreateIssueRequest, CreatedIssue, Milestone, PendingIssue, SyncStatus } from "./types";
+import type {
+  AddCommentRequest,
+  AssignedIssue,
+  BoardChangeRequest,
+  BoardIssue,
+  CreateIssueRequest,
+  CreatedIssue,
+  Milestone,
+  PendingIssue,
+  PostedComment,
+  SetAssigneesRequest,
+  SyncStatus,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 const DEV_USER_KEY = "workboard.devUser";
@@ -153,6 +165,24 @@ export async function createIssue(req: CreateIssueRequest, idempotencyKey: strin
 export function changeBoard(id: string, req: BoardChangeRequest, idempotencyKey: string): Promise<BoardIssue> {
   return request<BoardIssue>(`/api/issues/${encodeURIComponent(id)}/board`, {
     method: "PATCH",
+    body: req,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `PATCH /api/issues/{id}`. Rejects with an `ApiError` whose `code` is a `SetAssigneesError`, or a `TypeError` when offline. */
+export function setAssignees(id: string, req: SetAssigneesRequest, idempotencyKey: string): Promise<AssignedIssue> {
+  return request<AssignedIssue>(`/api/issues/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: req,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `POST /api/issues/{id}/comments`. Rejects with an `ApiError` whose `code` is an `AddCommentError`, or a `TypeError` when offline. */
+export function addComment(id: string, req: AddCommentRequest, idempotencyKey: string): Promise<PostedComment> {
+  return request<PostedComment>(`/api/issues/${encodeURIComponent(id)}/comments`, {
+    method: "POST",
     body: req,
     headers: { "Idempotency-Key": idempotencyKey },
   });
