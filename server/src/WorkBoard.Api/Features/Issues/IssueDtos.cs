@@ -46,7 +46,7 @@ public sealed record CommentDto(Guid Id, CommentAuthor Author, string Body, Date
 
 public sealed record LinkedMeetingNote(Guid Id, string Title, DateTime HeldAt);
 
-public sealed record IssueDetail : BoardIssue
+public record IssueDetail : BoardIssue
 {
     public IssueDetail(BoardIssue issue) : base(issue)
     {

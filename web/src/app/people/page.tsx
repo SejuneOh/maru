@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
 import { IssueCard } from "@/components/IssueCard";
-import { CanceledGroup, boardCols } from "@/components/StatusColumns";
+import { AddToColumn, CanceledGroup, boardCols } from "@/components/StatusColumns";
 import { Avatar, Dot, Flag, PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
@@ -120,10 +120,14 @@ export default function PeopleBoardPage() {
                 <div className={`grid grid-cols-1 items-start gap-x-4 gap-y-5 ${boardCols(statuses.length)}`}>
                   {statuses.map((s) => (
                     <div key={s} className={`flex min-w-0 flex-col gap-2 ${filled(s) ? "" : "@max-[34rem]:hidden"}`}>
-                      <h3 className="flex items-center gap-2 px-1 text-small font-semibold text-ink-soft">
+                      <h3 className="flex min-h-7 items-center gap-2 px-1 text-small font-semibold text-ink-soft">
                         <Dot className={STATUS_DOT[s]} />
                         {t.status[s]}
                         <span className="font-mono text-meta font-normal text-muted">{groups[s].length}</span>
+                        <AddToColumn
+                          status={s}
+                          assignee={row.member ? { githubUserId: row.member.githubUserId, name: fmt.person(row.member) } : undefined}
+                        />
                       </h3>
                       {!filled(s) && <p className="px-1 py-2 text-small text-muted">{t.common.none}</p>}
                       {groups[s].map((i) => (

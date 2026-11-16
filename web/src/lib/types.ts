@@ -126,6 +126,50 @@ export type IssueDetail = BoardIssue & {
   meetingNotes: { id: string; title: string; heldAt: string }[];
 };
 
+/** `GET /api/issues/new-options`: repositories the caller can create in (archived last, no labels), and every member. */
+export type NewIssueOptions = {
+  repositories: {
+    id: string;
+    name: string;
+    fullName: string;
+    archived: boolean;
+    labels: { name: string; color: string | null }[];
+  }[];
+  assignees: { githubUserId: number; githubLogin: string; displayName: string | null; avatarUrl: string | null }[];
+};
+
+/** Board status a new issue may start in. */
+export type NewIssueStatus = "todo" | "in_progress" | "in_review" | "done";
+
+/** `POST /api/issues` body; the request also needs an `Idempotency-Key` header. */
+export type CreateIssueRequest = {
+  repositoryId: string;
+  title: string;
+  body?: string;
+  labels?: string[];
+  assigneeGithubUserIds?: number[];
+  status?: NewIssueStatus;
+  priority?: Priority;
+  size?: Size;
+};
+
+/** 201: on GitHub and on the board. `droppedAssignees` are GitHub user ids GitHub did not assign. */
+export type CreatedIssue = IssueDetail & { droppedAssignees: number[] };
+
+/** 202: on GitHub, on the board only after the next sync; status, priority and size were not saved. */
+export type PendingIssue = { repository: string; number: number; htmlUrl: string; mirrorPending: true };
+
+/** `POST /api/issues` error codes (`error` field). */
+export type CreateIssueError =
+  | "invalid_request"
+  | "not_found"
+  | "repository_archived"
+  | "github_write_not_granted"
+  | "assignee_not_collaborator"
+  | "github_unavailable"
+  | "request_in_progress"
+  | "idempotency_key_reused";
+
 export type MeetingNoteSummary = {
   id: string;
   title: string;

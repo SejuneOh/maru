@@ -48,7 +48,11 @@ public class BoardFieldsTests(WebApplicationFactory<Program> factory) : IClassFi
         }
 
         public Task<SourceIssue> CreateIssueAsync(GitHubRepoRef repo, string actorLogin, string title, string? body,
-            IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct) => throw new NotSupportedException();
+            IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct, string? marker = null) =>
+            throw new NotSupportedException();
+
+        public Task<SourceIssue?> FindCreatedIssueAsync(GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct) =>
+            throw new NotSupportedException();
 
         public Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) =>
             throw new NotSupportedException();

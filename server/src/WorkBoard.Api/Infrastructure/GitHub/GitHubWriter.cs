@@ -17,13 +17,41 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
 
     public static string Footer(string login) => $"\n\n---\n_작성: `@{login}` (work-board)_";
 
-    private static string WithFooter(string? body, string login) => (body ?? "").TrimEnd() + Footer(login);
+    public static string CreateMarker(string id) => $"<!-- work-board:create:{id} -->";
+
+    public const int LookupPageSize = 100;
+    public const int LookupMaxPages = 5;
+
+    private static string WithFooter(string? body, string login, string? marker = null) =>
+        (body ?? "").TrimEnd() + Footer(login) + (marker is null ? "" : "\n" + marker);
 
     public async Task<SourceIssue> CreateIssueAsync(
         GitHubRepoRef repo, string actorLogin, string title, string? body,
-        IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct) =>
+        IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct, string? marker = null) =>
         ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Post, IssuesUrl(repo),
-            new { title, body = WithFooter(body, actorLogin), labels, assignees }, ct));
+            new { title, body = WithFooter(body, actorLogin, marker), labels, assignees }, ct));
+
+    public async Task<SourceIssue?> FindCreatedIssueAsync(
+        GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct)
+    {
+        for (var page = 1; page <= LookupMaxPages; page++)
+        {
+            var issues = await SendAsync<List<RestIssue>>(repo, HttpMethod.Get,
+                $"{IssuesUrl(repo)}?state=all&sort=created&direction=desc&per_page={LookupPageSize}&page={page}", null, ct);
+            foreach (var issue in issues)
+            {
+                if (issue.CreatedAt < since)
+                    return null;
+                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true
+                    && issue.User?.Login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) == true)
+                    return ToIssue(issue);
+            }
+            if (issues.Count < LookupPageSize)
+                return null;
+        }
+        throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+            "The issue list is longer than the lookup window, so absence cannot be shown.");
+    }
 
     public async Task<SourceIssue> SetAssigneesAsync(
         GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) =>
@@ -49,9 +77,9 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
 
     // ---- transport ---------------------------------------------------------------------------
 
-    private async Task<T> SendAsync<T>(GitHubRepoRef repo, HttpMethod method, string url, object payload, CancellationToken ct)
+    private async Task<T> SendAsync<T>(GitHubRepoRef repo, HttpMethod method, string url, object? payload, CancellationToken ct)
     {
-        var content = JsonSerializer.Serialize(payload, Json);
+        var content = payload is null ? null : JsonSerializer.Serialize(payload, Json);
         for (var attempt = 0; ; attempt++)
         {
             string token;
@@ -66,7 +94,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
 
             using var request = new HttpRequestMessage(method, url)
             {
-                Content = new StringContent(content, Encoding.UTF8, "application/json"),
+                Content = content is null ? null : new StringContent(content, Encoding.UTF8, "application/json"),
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));

@@ -36,9 +36,16 @@ public enum IssueCloseReason
 // as the same records the sync reads, ready for MirrorWriter. Throws GitHubWriteException.
 public interface IGitHubWriter
 {
+    // marker, when given, is appended to the body as an invisible HTML comment (see CreateMarker) so a later
+    // FindCreatedIssueAsync can recognise the issue.
     Task<SourceIssue> CreateIssueAsync(
         GitHubRepoRef repo, string actorLogin, string title, string? body,
-        IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct);
+        IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct, string? marker = null);
+
+    // The issue (or null) in the repository whose body contains marker, created at or after since. Reads the issue
+    // list newest first, a bounded number of pages, never the search index. Throws GitHubWriteException when the
+    // list cannot be read: the answer is then unknown.
+    Task<SourceIssue?> FindCreatedIssueAsync(GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct);
 
     // Replaces the assignee list.
     Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct);

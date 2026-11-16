@@ -88,6 +88,73 @@ public class GitHubWriterTests
     }
 
     [Fact]
+    public async Task Create_issue_appends_the_marker_after_the_footer()
+    {
+        var (w, h, _) = Make(_ => Json(HttpStatusCode.Created, IssueJson));
+        await w.CreateIssueAsync(Repo, "carol", "T", "hi", [], [], default, GitHubWriter.CreateMarker("abc"));
+        Assert.Equal("hi\n\n---\n_작성: `@carol` (work-board)_\n<!-- work-board:create:abc -->",
+            Body(h.Requests[0]).GetProperty("body").GetString());
+    }
+
+    private static string ListJson(params (int Number, string Created, string Body)[] items) =>
+        "[" + string.Join(",", items.Select(i =>
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["id"] = 900 + i.Number, ["number"] = i.Number, ["title"] = "t", ["body"] = i.Body, ["state"] = "open",
+                ["user"] = new { id = 9, login = "app[bot]" }, ["created_at"] = i.Created, ["updated_at"] = i.Created,
+                ["html_url"] = "https://x/" + i.Number,
+            }))) + "]";
+
+    [Fact]
+    public async Task Find_created_issue_reads_the_issue_list_newest_first_and_matches_the_marker()
+    {
+        var marker = GitHubWriter.CreateMarker("abc");
+        var (w, h, _) = Make(_ => Json(HttpStatusCode.OK, ListJson(
+            (9, "2026-11-01T10:00:00Z", "other"), (8, "2026-11-01T09:30:00Z", "x\n" + marker), (7, "2026-11-01T09:00:00Z", "old"))));
+
+        var found = await w.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default);
+
+        Assert.Equal(8, found!.Number);
+        var r = Assert.Single(h.Requests);
+        Assert.Equal(HttpMethod.Get, r.Method);
+        Assert.Contains("state=all&sort=created&direction=desc", r.Uri.Query);
+        Assert.Equal("", r.Body);
+    }
+
+    [Fact]
+    public async Task Find_created_issue_stops_at_since_and_at_the_page_bound()
+    {
+        var marker = GitHubWriter.CreateMarker("abc");
+        var (w, h, _) = Make(_ => Json(HttpStatusCode.OK, ListJson((9, "2026-11-01T08:00:00Z", marker))));
+        Assert.Null(await w.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
+        Assert.Single(h.Requests);
+
+        var full = ListJson(Enumerable.Range(1, GitHubWriter.LookupPageSize).Select(i => (i, "2026-11-01T10:00:00Z", "n")).ToArray());
+        var (w2, h2, _) = Make(_ => Json(HttpStatusCode.OK, full));
+        var e = await Assert.ThrowsAsync<GitHubWriteException>(() =>
+            w2.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
+        Assert.Equal(GitHubWriteErrorKind.Unavailable, e.Kind);
+        Assert.Equal(GitHubWriter.LookupMaxPages, h2.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Find_created_issue_ignores_a_marker_copied_into_a_human_issue()
+    {
+        var marker = GitHubWriter.CreateMarker("abc");
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.OK, ListJson((9, "2026-11-01T10:00:00Z", marker)).Replace("app[bot]", "human")));
+        Assert.Null(await w.FindCreatedIssueAsync(Repo, marker, new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), default));
+    }
+
+    [Fact]
+    public async Task Find_created_issue_throws_when_the_list_cannot_be_read()
+    {
+        var (w, _, _) = Make(_ => Json(HttpStatusCode.BadGateway, "{}"));
+        var e = await Assert.ThrowsAsync<GitHubWriteException>(() =>
+            w.FindCreatedIssueAsync(Repo, "m", DateTimeOffset.UtcNow.AddHours(-1), default));
+        Assert.Equal(GitHubWriteErrorKind.Unavailable, e.Kind);
+    }
+
+    [Fact]
     public async Task Create_issue_without_body_still_gets_the_footer()
     {
         var (w, h, _) = Make(_ => Json(HttpStatusCode.Created, IssueJson));

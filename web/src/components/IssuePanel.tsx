@@ -1,20 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/api";
 import { useFormat, useT } from "@/lib/i18n";
 import { daysSince, isStale, safeHttpUrl } from "@/lib/labels";
 import { useSettings } from "@/lib/me";
-import type { IssueDetail } from "@/lib/types";
+import type { CreatedIssue, IssueDetail } from "@/lib/types";
 import { ErrorBox, Loading } from "./Feedback";
 import { Avatar, Count, ExternalIcon, Flag, GitHubLink, Kbd, LabelChips, MilestoneIcon, StatusBadge } from "./ui";
-import { useIssuePanel } from "./useIssuePanel";
+import { NewIssueForm } from "./NewIssueForm";
+import { NEW_ISSUE, useIssuePanel } from "./useIssuePanel";
 
 /** Everything about one issue in one place: PRs, sub-issues, comments and the meetings it came from. */
 export function IssuePanel() {
-  const { issueId, open, close } = useIssuePanel();
-  const { data, error, loading } = useApi<IssueDetail>(issueId ? `/api/issues/${issueId}` : null);
+  const { issueId, open, close, prefill } = useIssuePanel();
+  const isNew = issueId === NEW_ISSUE;
+  const { data, error, loading } = useApi<IssueDetail>(issueId && !isNew ? `/api/issues/${issueId}` : null);
+  const [created, setCreated] = useState<{ issue: CreatedIssue; dropped: string[] } | null>(null);
+  const onCreated = useCallback(
+    (issue: CreatedIssue, dropped: string[]) => {
+      setCreated({ issue, dropped });
+      open(issue.id);
+    },
+    [open],
+  );
   const settings = useSettings();
   const t = useT();
   const p = t.panel;
@@ -25,19 +35,25 @@ export function IssuePanel() {
   useEffect(() => {
     if (!isOpen) return;
     const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeRef.current?.focus();
+    // The new-issue form puts focus on its title field itself.
+    if (!isNew) closeRef.current?.focus();
     return () => returnTo?.focus();
+  }, [isOpen, isNew]);
+
+  useEffect(() => {
+    if (!isOpen) setCreated(null);
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.isComposing && close();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, close]);
 
   if (!issueId) return null;
-  const shown = data && data.id === issueId ? data : null;
+  const shown = data && data.id === issueId ? data : created && created.issue.id === issueId ? created.issue : null;
+  const justCreated = created && shown && created.issue.id === shown.id ? created : null;
   const urgent = shown && settings.priorityEnabled && shown.priority === "urgent" && shown.category !== "done";
 
   return (
@@ -49,7 +65,11 @@ export function IssuePanel() {
         role="dialog"
       >
         <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-rule bg-surface px-6">
-          <span className="min-w-0 truncate font-mono text-meta text-muted">{shown ? `${shown.repository.name} #${shown.number}` : p.issue}</span>
+          {isNew ? (
+            <span className="min-w-0 truncate text-meta text-muted">{t.newIssue.head}</span>
+          ) : (
+            <span className="min-w-0 truncate font-mono text-meta text-muted">{shown ? `${shown.repository.name} #${shown.number}` : p.issue}</span>
+          )}
           {shown?.htmlUrl && (
             <GitHubLink
               href={shown.htmlUrl}
@@ -70,7 +90,11 @@ export function IssuePanel() {
           </button>
         </div>
 
+        {isNew ? (
+          <NewIssueForm key={`${prefill.status ?? ""}:${prefill.assignee ?? ""}`} prefill={prefill} onCreated={onCreated} />
+        ) : (
         <div className="flex flex-col gap-7 px-6 py-6 max-[639px]:px-4">
+          {justCreated && <CreatedNote issue={justCreated.issue} dropped={justCreated.dropped} />}
           {loading && !shown && <Loading />}
           {error && <ErrorBox error={error} />}
           {shown && (
@@ -234,8 +258,38 @@ export function IssuePanel() {
             </>
           )}
         </div>
+        )}
       </aside>
     </>
+  );
+}
+
+/** Confirms the create in place; the card is already on the board, at the top of its column. */
+function CreatedNote({ issue, dropped }: { issue: CreatedIssue; dropped: string[] }) {
+  const t = useT();
+  const ref = `${issue.repository.name} #${issue.number}`;
+  return (
+    <div role="status" className="flex flex-col gap-1 rounded-item bg-sunken px-4 py-3 text-small">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className="shrink-0">
+          <path d="m3.5 8.5 3 3 6-7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span>
+          <span className="font-mono text-meta font-medium">{ref}</span> {t.newIssue.created}
+        </span>
+        {issue.htmlUrl && (
+          <>
+            <span aria-hidden className="text-faint">
+              ·
+            </span>
+            <GitHubLink href={issue.htmlUrl} label={t.github.openRef(ref)} className="link inline-flex items-center gap-1 text-ink">
+              {t.newIssue.openOnGitHub}
+            </GitHubLink>
+          </>
+        )}
+      </p>
+      {dropped.length > 0 && <p className="pl-[22px] text-ink-soft">{t.newIssue.dropped(dropped.join(", "))}</p>}
+    </div>
   );
 }
 

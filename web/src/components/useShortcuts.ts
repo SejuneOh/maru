@@ -38,10 +38,10 @@ function moveRow(step: 1 | -1): boolean {
 }
 
 /**
- * `/` search, `g`+letter screens, `j`/`k` rows. Off while typing, with a modifier held,
+ * `/` search, `c` new issue, `g`+letter screens, `j`/`k` rows. Off while typing, with a modifier held,
  * or while the issue panel (a dialog) is open; Esc for the panel lives in IssuePanel.
  */
-export function useShortcuts(focusSearch: () => void) {
+export function useShortcuts(focusSearch: () => void, newIssue: () => void) {
   const router = useRouter();
 
   useEffect(() => {
@@ -74,6 +74,10 @@ export function useShortcuts(focusSearch: () => void) {
           goPending = true;
           goTimer = setTimeout(() => (goPending = false), GO_TIMEOUT_MS);
           break;
+        case "KeyC":
+          e.preventDefault();
+          newIssue();
+          break;
         case "KeyJ":
           if (moveRow(1)) e.preventDefault();
           break;
@@ -88,5 +92,5 @@ export function useShortcuts(focusSearch: () => void) {
       window.removeEventListener("keydown", onKey);
       clearTimeout(goTimer);
     };
-  }, [router, focusSearch]);
+  }, [router, focusSearch, newIssue]);
 }

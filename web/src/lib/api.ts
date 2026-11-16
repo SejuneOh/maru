@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
-import type { Milestone, SyncStatus } from "./types";
+import type { CreateIssueRequest, CreatedIssue, Milestone, PendingIssue, SyncStatus } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 const DEV_USER_KEY = "workboard.devUser";
 const DEV_TENANT_KEY = "workboard.devTenant";
 export const DEV_USER_EVENT = "workboard:dev-user";
+/** Fired after a write that changes issues, so every board refetches its issue lists. */
+export const ISSUES_CHANGED_EVENT = "workboard:issues-changed";
 
 /** The same login can belong to several tenants, so a dev identity is the pair. */
 export type DevIdentity = { login: string; tenantId: string | null };
@@ -73,8 +75,14 @@ async function authHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json", ...(await authHeaders()) };
+type ReqInit = { method?: string; body?: unknown; headers?: Record<string, string> };
+
+async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
+  return (await send<T>(path, init)).data;
+}
+
+async function send<T>(path: string, init: ReqInit = {}): Promise<{ status: number; data: T }> {
+  const headers: Record<string, string> = { Accept: "application/json", ...(await authHeaders()), ...init.headers };
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(`${API_URL}${path}`, {
     method: init.method ?? "GET",
@@ -93,7 +101,7 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
     if (refused && path !== "/api/me") setTimeout(() => window.dispatchEvent(new Event(GATE_EVENT)), 0);
     throw new ApiError(res.status, `${res.status} ${res.statusText}`, code, body);
   }
-  return (await res.json()) as T;
+  return { status: res.status, data: (await res.json()) as T };
 }
 
 export function apiGet<T>(path: string): Promise<T> {
@@ -118,6 +126,32 @@ export function getSyncStatus(): Promise<SyncStatus> {
 /** Admin only. Resolves on 202; rejects with an `ApiError` whose `code` is a `RunSyncError`. */
 export function runSync(): Promise<{ started: true }> {
   return request<{ started: true }>("/api/sync/run", { method: "POST" });
+}
+
+export const NEW_ISSUE_OPTIONS_PATH = "/api/issues/new-options";
+
+/** One key per form submission; a retry of the same submission sends the same key so GitHub gets one issue. */
+export function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+export type CreateIssueResult = { kind: "created"; issue: CreatedIssue } | { kind: "pending"; issue: PendingIssue };
+
+/** `POST /api/issues`. Rejects with an `ApiError` whose `code` is a `CreateIssueError`, or a `TypeError` when offline. */
+export async function createIssue(req: CreateIssueRequest, idempotencyKey: string): Promise<CreateIssueResult> {
+  const res = await send<CreatedIssue | PendingIssue>("/api/issues", {
+    method: "POST",
+    body: req,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+  return res.status === 202 ? { kind: "pending", issue: res.data as PendingIssue } : { kind: "created", issue: res.data as CreatedIssue };
+}
+
+/** Issue lists and the overview are what a new issue changes. */
+function showsIssues(path: string): boolean {
+  return (path.startsWith("/api/issues") && path !== NEW_ISSUE_OPTIONS_PATH) || path.startsWith("/api/overview") || path.startsWith("/api/backlog");
 }
 
 export type Loadable<T> = { data: T | null; error: ApiError | Error | null; loading: boolean; reload: () => void };
@@ -146,6 +180,12 @@ export function useApi<T>(path: string | null): Loadable<T> {
       window.removeEventListener(AUTH_EVENT, onUser);
     };
   }, [reload]);
+
+  useEffect(() => {
+    if (path === null || !showsIssues(path)) return;
+    window.addEventListener(ISSUES_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(ISSUES_CHANGED_EVENT, reload);
+  }, [path, reload]);
 
   useEffect(() => {
     if (path === null) {

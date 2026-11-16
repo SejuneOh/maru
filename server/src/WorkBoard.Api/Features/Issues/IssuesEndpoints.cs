@@ -58,7 +58,7 @@ public static class IssuesEndpoints
         api.MapPatch("/issues/{id:guid}/board", async (
             Guid id, HttpContext http, ICurrentUser user, BoardFieldWrites writes, CancellationToken ct) =>
         {
-            var bytes = await SprintsEndpoints.ReadBodyAsync(http, ct);
+            var bytes = await RequestBodies.ReadAsync(http, SprintsEndpoints.MaxBodyBytes, ct);
             if (bytes is null || !http.Request.HasJsonContentType() || BoardPatch.Parse(bytes) is not { } patch)
                 return ApiErrors.BadRequest();
 

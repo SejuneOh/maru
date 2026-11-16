@@ -70,6 +70,7 @@ authed.MapMembers();
 authed.MapConnections();
 authed.MapProjects();
 authed.MapIssues();
+authed.MapNewIssue();
 authed.MapSprints();
 authed.MapBacklog();
 authed.MapMilestones();
