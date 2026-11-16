@@ -207,7 +207,7 @@ export function NoteEditor({
     inFlight.current = true;
     setPhase("saving");
     try {
-      const keepalive = !!opts.keepalive && json.length < KEEPALIVE_MAX;
+      const keepalive = !!opts.keepalive && new TextEncoder().encode(JSON.stringify(req)).length < KEEPALIVE_MAX;
       const { note, created: applied } = await saveMeetingNote(req, attempt.current.key, isCreated ? id : null, keepalive);
       attempt.current = null;
       uncertain.current = null;
@@ -220,9 +220,17 @@ export function NoteEditor({
         if (mounted.current) onCreated(note);
       }
       if (!applied) {
-        // A repeated POST answers with the note as an earlier attempt stored it; the edit follows as a PATCH.
-        setPhase("idle");
-        again.current = true;
+        // A repeated POST answers with the note as an earlier attempt stored it. This editor saved nothing after
+        // that create, so a note changed since (updatedAt past createdAt) holds someone else's edit: the person
+        // chooses, as on a 409. Only an untouched note lets the edit follow as a PATCH.
+        if (note.updatedAt !== note.createdAt) {
+          setLatest(note);
+          setLatestFailed(false);
+          setPhase("conflict");
+        } else {
+          setPhase("idle");
+          again.current = true;
+        }
         keepDraft();
         return;
       }

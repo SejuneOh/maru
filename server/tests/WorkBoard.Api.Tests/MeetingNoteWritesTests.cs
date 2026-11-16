@@ -232,6 +232,7 @@ public class MeetingNoteWritesTests(WebApplicationFactory<Program> factory) : IC
 
         Assert.Equal(HttpStatusCode.Created, created);
         Assert.Equal(id, first.GetProperty("id").GetGuid());
+        Assert.Equal(first.GetProperty("createdAt").GetString(), first.GetProperty("updatedAt").GetString());
         Assert.Equal(HttpStatusCode.OK, repeated);
         Assert.Equal("first", again.GetProperty("title").GetString());
         Assert.Equal(first.GetProperty("updatedAt").GetString(), again.GetProperty("updatedAt").GetString());
@@ -243,6 +244,33 @@ public class MeetingNoteWritesTests(WebApplicationFactory<Program> factory) : IC
         Assert.Equal(1, await CountAsync(t, "select count(*)::int from meeting_action_items where tenant_id = @tid"));
         Assert.Equal(0, await CountAsync(outside, "select count(*)::int from meeting_notes where tenant_id = @tid"));
         Assert.Equal(1, await CountAsync(t, "select count(*)::int from audit_log where tenant_id = @tid and action = 'meeting_note.create'"));
+
+        // The editor treats a replayed create whose updatedAt moved past createdAt as someone else's edit.
+        var (_, edited) = await SendAsync(other, HttpMethod.Patch, $"/api/meeting-notes/{id}",
+            Body("edited", [me], [], expected: first.GetProperty("updatedAt").GetString()));
+        var (replayed, afterEdit) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", NewBody(id, "mine again", [me]), key: "c");
+        Assert.Equal(HttpStatusCode.OK, replayed);
+        Assert.Equal("edited", afterEdit.GetProperty("title").GetString());
+        Assert.Equal(edited.GetProperty("updatedAt").GetString(), afterEdit.GetProperty("updatedAt").GetString());
+        Assert.NotEqual(afterEdit.GetProperty("createdAt").GetString(), afterEdit.GetProperty("updatedAt").GetString());
+    }
+
+    [DbFact]
+    public async Task Post_refuses_an_empty_id_and_items_with_ids()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var me = await MemberIdAsync(t, t.ViewerLogin);
+
+        var emptyId = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", NewBody(Guid.Empty, "a", [me]));
+        var itemId = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes",
+            Body("a", [me], [new { id = Guid.NewGuid(), text = "x" }]));
+
+        foreach (var r in new[] { emptyId, itemId })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, r.Status);
+            Assert.Equal("invalid_request", r.Body.GetProperty("error").GetString());
+        }
+        Assert.Equal(0, await CountAsync(t, "select count(*)::int from meeting_notes where tenant_id = @tid"));
     }
 
     [DbFact]

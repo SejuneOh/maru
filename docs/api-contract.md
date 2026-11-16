@@ -312,10 +312,12 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
   `attendeeIds` (member ids, max 100, duplicates ignored), `actionItems` (max 100, in display order; `text` trimmed 1..500,
   `assigneeId` a member id or null, `dueDate` `yyyy-MM-dd` or null; `id` must be absent). The caller becomes `createdBy`.
   Response `201 MeetingNote`.
-  `id` (optional, a uuid the client generates) makes creation safe to repeat: if a note with that id already exists and the
+  `id` (optional, a uuid the client generates, not all zeros) makes creation safe to repeat: if a note with that id already exists and the
   caller wrote it, the response is `200` with that note **as stored** (the body of the repeat is not applied; save changes
   with `PATCH`). A note with that id written by someone else, or in another tenant, is `409 id_taken`. The web always sends
-  an `id`, so a POST whose answer was lost can be resent (even with newer text) without creating a second note.
+  an `id`, so a POST whose answer was lost can be resent (even with newer text) without creating a second note. A note
+  nobody changed since its creation has `updatedAt` equal to `createdAt`; when a repeat returns a note whose `updatedAt` is
+  later, someone else edited it and the web shows the conflict view instead of saving over it.
 - `PATCH /api/meeting-notes/{id}` replaces the whole note: send every field of `MeetingNoteRequest` (`bodyMd`, `decisions`,
   `attendeeIds`, `actionItems` must be present, empty lists allowed) plus `expectedUpdatedAt`, the `updatedAt` of the copy
   you edited. A different value is `409 conflict` (someone saved in between; reload and let the person choose). Any member may edit.
