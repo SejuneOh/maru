@@ -238,4 +238,22 @@ public class SprintDailyTests(WebApplicationFactory<Program> factory) : IClassFi
         var undo = await client.PostAsync($"/api/sprints/{from}/carry-over/{carryOverId}/undo", null);
         Assert.Equal(HttpStatusCode.OK, undo.StatusCode);
     }
+
+    [DbFact]
+    public async Task A_close_reason_change_between_syncs_is_recorded_and_matches_the_snapshot()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var (sprint, issues) = await SeedAsync(t);
+
+        await SyncStateAsync(t, issues[0], "closed", "completed");
+        await SyncStateAsync(t, issues[0], "closed", "not_planned");
+        await Recorder.RecordAsync(Recorder.Today, default, t.Id);
+
+        var events = await t.QueryAsync(
+            "select kind, from_value, to_value from issue_events where issue_id = @issue and kind = 'closed' order by at", new { issue = issues[0] });
+        Assert.Equal(["closed:>completed", "closed:completed>not_planned"], events.Select(e => $"{e.kind}:{e.from_value}>{e.to_value}"));
+        var expected = await ReconstructAsync(t, sprint);
+        Assert.Equal(new Daily(2, 4, 0, 0), expected);
+        Assert.Equal([expected], await RowsAsync(t, sprint, Recorder.Today));
+    }
 }

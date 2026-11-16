@@ -279,8 +279,9 @@ Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining
   Weight is size S=1, M=2, L=3; an issue without a size weighs 1. The loop runs even when the GitHub App is not configured.
 - Rebuilding a day from `issue_events`: membership from the latest `sprint_added` / `carried_over` / `sprint_removed` event of each issue,
   size from `size_set`, done / cancelled from `closed` (`to_value` `not_planned` = cancelled) / `reopened`. A sync run records `closed` and `reopened`
-  for issues it already stored whose state changed (`member_id` null, `from_value`/`to_value` the GitHub state reason); an issue first seen
-  already closed gets no event, and neither does a state change first seen through a board write that was not a close or reopen.
+  for issues it already stored whose state changed, or that stayed closed with a different reason (`closed`, `from_value`/`to_value` the
+  reasons); `member_id` is null. Board writes that only mirror a response (assignees and similar) record the same member-less event when
+  the applied response differs from the stored state or reason. An issue first seen already closed gets no event.
 
 `GET /api/milestones` counts exclude `cancelled` issues in `issueCount`; `doneCount` counts status `done`.
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.

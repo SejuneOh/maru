@@ -112,7 +112,7 @@ public class WrittenMirrorTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
-    public async Task Other_writes_never_record_events_even_when_the_stored_state_differs()
+    public async Task Other_writes_record_a_member_less_event_when_the_stored_state_differs()
     {
         await using var t = await TestTenant.CreateAsync(_factory);
         var repo = await t.AddRepoAsync("api");
@@ -124,8 +124,16 @@ public class WrittenMirrorTests : IClassFixture<WebApplicationFactory<Program>>
         // Someone closed it on GitHub; the board user only changed assignees.
         await w.ApplyWrittenIssueAsync(t.Id, repo, Issue(id, 70, T0.AddMinutes(1), "closed", "completed",
             assignees: [new SourceUser(21, "alice", null, null)]), member, null, default);
+        // Same state again, and a close reason change.
+        await w.ApplyWrittenIssueAsync(t.Id, repo, Issue(id, 70, T0.AddMinutes(2), "closed", "completed"), member, null, default);
+        await w.ApplyWrittenIssueAsync(t.Id, repo, Issue(id, 70, T0.AddMinutes(3), "closed", "not_planned"), member, null, default);
+        // An older response is not applied and records nothing.
+        await w.ApplyWrittenIssueAsync(t.Id, repo, Issue(id, 70, T0, "open"), member, null, default);
 
-        Assert.Equal(0, await t.ScalarAsync<int>("select count(*)::int from issue_events where tenant_id = @tid", new { tid = t.Id }));
+        var events = await t.QueryAsync(
+            "select kind, from_value, to_value, member_id from issue_events where tenant_id = @tid order by at, to_value", new { tid = t.Id });
+        Assert.Equal(["closed:>completed", "closed:completed>not_planned"], events.Select(e => $"{e.kind}:{e.from_value}>{e.to_value}"));
+        Assert.All(events, e => Assert.Null((Guid?)e.member_id));
     }
 
     [DbFact]

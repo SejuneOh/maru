@@ -69,7 +69,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     // one issue. A REST response does not carry the parent issue, so the stored parent link is left alone.
     // change is set only by the close and reopen calls: exactly that closed or reopened issue_events row is written
     // in the same transaction, attributed to memberId, whatever the stored state or the response age. Other writes
-    // never record one.
+    // record a member-less one only when the applied response changes the stored state or close reason.
     public virtual async Task<MirroredIssue?> ApplyWrittenIssueAsync(
         Guid tenantId, Guid repositoryId, SourceIssue issue, Guid? memberId, IssueStateChange? change, CancellationToken ct)
     {
@@ -113,6 +113,8 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                 toValue = issue.StateReason,
                 memberId,
             });
+        else if (applied.Count > 0 && previous is not null)
+            await RecordExternalChangeAsync(db, issueId, previous.State, previous.StateReason, issue);
         await tx.CommitAsync(ct);
         return new MirroredIssue(issueId, applied.Count > 0);
     }
@@ -143,19 +145,27 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     {
         foreach (var (issue, id) in applied)
         {
-            if (!before.TryGetValue(issue.DatabaseId, out var old) || old.State == issue.State)
-                continue;
-            await db.Exec("""
-                insert into issue_events (tenant_id, issue_id, kind, from_value, to_value)
-                values (@tenantId, @issueId, @kind, @fromValue, @toValue)
-                """, new
-            {
-                issueId = id,
-                kind = issue.State == "closed" ? "closed" : "reopened",
-                fromValue = old.StateReason,
-                toValue = issue.StateReason,
-            });
+            if (before.TryGetValue(issue.DatabaseId, out var old))
+                await RecordExternalChangeAsync(db, id, old.State, old.StateReason, issue);
         }
+    }
+
+    // A state change nobody on the board made: closed or reopened, or a closed issue whose reason changed. No member.
+    private static async Task RecordExternalChangeAsync(
+        Db db, Guid issueId, string oldState, string? oldReason, SourceIssue issue)
+    {
+        if (oldState == issue.State && (issue.State != "closed" || oldReason == issue.StateReason))
+            return;
+        await db.Exec("""
+            insert into issue_events (tenant_id, issue_id, kind, from_value, to_value)
+            values (@tenantId, @issueId, @kind, @fromValue, @toValue)
+            """, new
+        {
+            issueId,
+            kind = issue.State == "closed" ? "closed" : "reopened",
+            fromValue = oldReason,
+            toValue = issue.StateReason,
+        });
     }
 
     private sealed class Db(NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, CancellationToken ct)
