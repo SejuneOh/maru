@@ -260,7 +260,7 @@ Names are unique per tenant, case-insensitive.
   `cancelled` to the target in one transaction (`carried_over` event per issue) and stores who did it. `toSprintId` equal to the
   source is `400 invalid_request`. A target that has ended is `409 sprint_ended`. With nothing unfinished it returns `carryOverId: null` and records nothing.
 - `POST /api/sprints/{id}/carry-over/{carryOverId}/undo` moves the same issues back, only if every one is still in the target
-  sprint, none has an `issue_events` row newer than the carry-over (`closed` / `reopened` rows recorded by a sync, which have no member, do not count), none is now `done`/`cancelled`, and none was deleted:
+  sprint, none has an `issue_events` row newer than the carry-over (`closed` / `reopened` rows with no member, recorded by a sync or when a board write mirrors an outside change, do not count), none is now `done`/`cancelled`, and none was deleted:
   otherwise `409 conflict` with `issueIds` listing the blocking issues, and a second undo is `409 already_undone`. Strict rule: an older carry-over cannot be undone once a later carry-over
   or undo touched the same issues. Records `carried_over` events in reverse.
 - `GET /api/backlog`: open issues whose status is not `done`/`cancelled` and that are in no sprint. Optional `projectId`,

@@ -138,7 +138,8 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
 
     private sealed record StoredState(long GithubId, string State, string? StateReason);
 
-    // A sync run records the closed / reopened transitions it applies to issues it already stored, with no member.
+    // A sync run records the closed / reopened transitions, and close-reason changes, it applies to issues it already
+    // stored, with no member.
     // An issue first seen by a sync has no earlier state, so it gets no event.
     private static async Task RecordStateChangesAsync(
         Db db, List<(SourceIssue Issue, Guid Id)> applied, Dictionary<long, StoredState> before)

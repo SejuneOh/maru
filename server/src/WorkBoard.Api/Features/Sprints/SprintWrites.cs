@@ -233,8 +233,8 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
             new { carryOverId })).ToArray();
 
         // Undo only when nothing touched the issues since: still in the target sprint, no later event
-        // (this carry-over's own events share its transaction time; closed / reopened events recorded by a sync do
-        // not count, the status check covers a finished issue), not finished.
+        // (this carry-over's own events share its transaction time; closed / reopened events with no member, recorded
+        // by a sync or a mirrored write, do not count, the status check covers a finished issue), not finished.
         var blocking = (await s.QueryAsync<Guid>("""
             select i.id
               from issues i
