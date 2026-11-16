@@ -169,7 +169,16 @@ Creating issues (any member, GitHub write through the App):
   (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
   `droppedAssignees` lists assignees GitHub did not apply.
   If GitHub created the issue but saving it locally failed, the response is `202 PendingIssue` and is stored under the key, so a retry
-  replays it and never creates a second issue; the next sync adds the issue to the board. The requested `status`/`priority`/`size` and the `issue.create` audit row are not saved in that case and the sync does not restore them, so the client should ask the person to set them again. If the database itself is down, completing the key can fail too and a retry after the 2-minute pending timeout may create a second issue.
+  replays it and never creates a second issue; the next sync adds the issue to the board. The requested `status`/`priority`/`size` and the `issue.create` audit row are not saved in that case and the sync does not restore them, so the client should ask the person to set them again.
+  No duplicate on retry: every issue created here carries an invisible marker `<!-- work-board:create:<id> -->` after the footer,
+  where `<id>` is a hash of tenant, key and request (the raw key is never written to GitHub, and the same key with a different body gets a
+  different marker). When a retry takes over a stale pending reservation (the earlier call timed out, lost its connection or the server died
+  mid-call), the server first lists the repository's issues (state all, newest first, 5 pages of 100, only those created since the
+  reservation minus 5 minutes) and, if one carries the marker, returns it as the normal `201`/`202` without creating. If that
+  list cannot be read the server does not create: `504 github_unavailable`, the key stays pending and a later retry looks again.
+  Remaining limits: the guarantee is lost if the marker is removed by editing the issue, if more than 500 issues were created in the
+  repository since the reservation, or if the database fails while the key is being completed after GitHub answered (the retry then
+  looks for the marker and normally finds the issue, but the earlier answer is not replayed).
 
 Sprints (UI word: 주기) and the backlog (대기 목록) exist only when the tenant has `sprintsEnabled`. When it is off,
 `GET /api/sprints` and `GET /api/backlog` return empty results and every sprint write is `409 sprints_disabled`.

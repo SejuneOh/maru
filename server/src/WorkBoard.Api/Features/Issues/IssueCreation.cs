@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -36,22 +38,46 @@ public sealed class IssueCreation(
 
     private sealed record AssigneeRow(long GithubUserId, string GithubLogin);
 
+    // Window before the reservation in which an earlier attempt's issue may have been created (clock skew).
+    public static readonly TimeSpan LookupMargin = TimeSpan.FromMinutes(5);
+
+    // Identifies one create request: hashed so the client's raw key never lands in a public issue body, and bound
+    // to the request hash so the same key reused for a different body is not mistaken for a retry.
+    public static string MarkerId(Guid tenantId, string key, string requestHash) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{tenantId:N}\n{key}\n{requestHash}")))[..32].ToLowerInvariant();
+
     // Order matters: the GitHub call comes first, then the mirror, then board fields and the audit row. Nothing is
     // written locally when GitHub refuses.
     public Task<IdempotentResponse> CreateAsync(
         NewIssue issue, string key, string requestHash, ILogger log, CancellationToken ct) =>
-        Idempotency.RunExternalAsync(db, user, key, requestHash, async callCt =>
+        Idempotency.RunExternalAsync(db, user, key, requestHash, async (callCt, attempt) =>
         {
-            SourceIssue created;
-            try
+            var marker = GitHubWriter.CreateMarker(MarkerId(user.Identity.TenantId, key, requestHash));
+            SourceIssue? created = null;
+            if (attempt.TakenOverFrom is { } since)
             {
-                created = await writer.CreateIssueAsync(issue.Target.Repo, user.Identity.Member.GithubLogin, issue.Title,
-                    issue.Body, issue.Labels, issue.Assignees.Select(a => a.Login).ToList(), callCt);
+                try
+                {
+                    created = await writer.FindCreatedIssueAsync(issue.Target.Repo, marker, since - LookupMargin, callCt);
+                }
+                catch (GitHubWriteException e)
+                {
+                    // Unknown whether the earlier attempt created the issue: creating now could duplicate it.
+                    throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "Lookup of an earlier create failed.",
+                        noResponse: true, inner: e);
+                }
             }
-            catch (GitHubWriteException e) when (!e.NoResponse)
-            {
-                return GitHubWriteErrors.ToOutcome(e);
-            }
+
+            if (created is null)
+                try
+                {
+                    created = await writer.CreateIssueAsync(issue.Target.Repo, user.Identity.Member.GithubLogin, issue.Title,
+                        issue.Body, issue.Labels, issue.Assignees.Select(a => a.Login).ToList(), callCt, marker);
+                }
+                catch (GitHubWriteException e) when (!e.NoResponse)
+                {
+                    return GitHubWriteErrors.ToOutcome(e);
+                }
 
             // GitHub has the issue from here on. A local failure must not leave the key pending (a retry would
             // create a second issue), so it completes with a 202 and the next sync fills the rows.

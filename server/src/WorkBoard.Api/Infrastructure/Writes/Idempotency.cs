@@ -12,6 +12,11 @@ public sealed record WriteResult(int StatusCode, object? Body = null);
 // Result of the external call in two-phase mode. SideEffectPossible says whether GitHub may have applied the change.
 public sealed record ExternalOutcome(WriteResult Result, bool SideEffectPossible);
 
+// What the external call is told about its own start. TakenOverFrom is the creation time of the stale pending
+// reservation it replaced: an earlier attempt with this key may already have reached GitHub, so a call that
+// creates something should look for its result before creating again.
+public sealed record ExternalAttempt(DateTimeOffset? TakenOverFrom);
+
 // What a write endpoint returns: a fresh result or the stored one of an earlier request with the same key.
 public sealed record IdempotentResponse(int StatusCode, string? Json, bool Replayed) : IResult
 {
@@ -51,7 +56,8 @@ public static class Idempotency
     // Well under PendingTimeout, so a takeover happens only after the original call can no longer finish normally.
     public static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(60);
 
-    private sealed record StoredKey(string State, string RequestHash, int? StatusCode, string? Response, bool PendingStale);
+    private sealed record StoredKey(
+        string State, string RequestHash, int? StatusCode, string? Response, bool PendingStale, DateTime CreatedAt);
 
     // Binds the key to the caller, method, path with query, and body.
     public static string HashRequest(Guid memberId, string method, string pathAndQuery, ReadOnlySpan<byte> body)
@@ -93,24 +99,35 @@ public static class Idempotency
         return result;
     }
 
-    public static async Task<IdempotentResponse> RunExternalAsync(
+    public static Task<IdempotentResponse> RunExternalAsync(
         TenantDb db, ICurrentUser user, string? key, string requestHash,
         Func<CancellationToken, Task<ExternalOutcome>> call, CancellationToken ct, ILogger? log = null,
+        TimeSpan? callTimeout = null) =>
+        RunExternalAsync(db, user, key, requestHash, (callCt, _) => call(callCt), ct, log, callTimeout);
+
+    public static async Task<IdempotentResponse> RunExternalAsync(
+        TenantDb db, ICurrentUser user, string? key, string requestHash,
+        Func<CancellationToken, ExternalAttempt, Task<ExternalOutcome>> call, CancellationToken ct, ILogger? log = null,
         TimeSpan? callTimeout = null)
     {
         if (string.IsNullOrWhiteSpace(key))
-            return Render((await call(ct)).Result);
+            return Render((await call(ct, new ExternalAttempt(null))).Result);
         if (key.Length > KeyMaxLength)
             return TooLong();
 
         var tenantId = user.Identity.TenantId;
         var reservationId = Guid.NewGuid();
+        DateTimeOffset? takenOverFrom = null;
         var early = await db.WriteAsync<IdempotentResponse?>(async session =>
         {
             await LockAsync(session, tenantId, key);
-            var decided = Decide(await FindAsync(session, tenantId, key), requestHash);
+            var stored = await FindAsync(session, tenantId, key);
+            var decided = Decide(stored, requestHash);
             if (decided is not null)
                 return decided;
+            takenOverFrom = stored is { State: "pending" }
+                ? new DateTimeOffset(DateTime.SpecifyKind(stored.CreatedAt, DateTimeKind.Utc))
+                : null;
 
             await DeleteAsync(session, tenantId, key);
             await session.ExecuteAsync("""
@@ -127,7 +144,7 @@ public static class Idempotency
         timeout.CancelAfter(callTimeout ?? CallTimeout);
         try
         {
-            outcome = await call(timeout.Token);
+            outcome = await call(timeout.Token, new ExternalAttempt(takenOverFrom));
         }
         catch (Exception e) when (
             (e is OperationCanceledException && timeout.IsCancellationRequested && !ct.IsCancellationRequested)
@@ -182,7 +199,7 @@ public static class Idempotency
     private static Task<StoredKey?> FindAsync(TenantSession session, Guid tenantId, string key) =>
         session.QuerySingleOrDefaultAsync<StoredKey>("""
             select state as State, request_hash as RequestHash, status_code as StatusCode, response::text as Response,
-                   (state = 'pending' and created_at <= now() - @pendingTimeout) as PendingStale
+                   (state = 'pending' and created_at <= now() - @pendingTimeout) as PendingStale, created_at as CreatedAt
               from idempotency_keys
              where tenant_id = @tenantId and key = @key and created_at > now() - @lifetime
             """, new { tenantId, key, lifetime = Lifetime, pendingTimeout = PendingTimeout });

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
+using WorkBoard.Api.Features.Issues;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
 using WorkBoard.Api.Infrastructure.Sync;
@@ -25,13 +26,20 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         public List<string> Assignees = [];
         public List<string> Labels = [];
         public TimeSpan Delay;
+        public string? Marker;
+        public int FindCalls;
+        public SourceIssue? Existing;
+        public Exception? FindFail;
+        public DateTimeOffset? FindSince;
+        public string? FindMarker;
         public Dictionary<string, long> Ids = [];
         private int _number = 100;
 
         public async Task<SourceIssue> CreateIssueAsync(GitHubRepoRef repo, string actorLogin, string title, string? body,
-            IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct)
+            IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct, string? marker = null)
         {
             Interlocked.Increment(ref Calls);
+            Marker = marker;
             Actor = actorLogin;
             Assignees = [.. assignees];
             Labels = [.. labels];
@@ -45,6 +53,14 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
                 new SourceUser(9, "app[bot]", null, null), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow,
                 $"https://x/{repo.Name}/{n}", null,
                 labels.Select(l => new SourceLabel(null, null, l, "ededed", null)).ToList(), users, null, null);
+        }
+
+        public Task<SourceIssue?> FindCreatedIssueAsync(GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct)
+        {
+            Interlocked.Increment(ref FindCalls);
+            FindSince = since;
+            FindMarker = marker;
+            return FindFail is not null ? throw FindFail : Task.FromResult(Existing);
         }
 
         public Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) => throw new NotSupportedException();
@@ -376,5 +392,130 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         Assert.All(results, r => Assert.True(
             r.Status == HttpStatusCode.Created || (r.Status == HttpStatusCode.Conflict && Error(r.Body) == "request_in_progress")));
         Assert.Equal(1, await t.ScalarAsync<int>("select count(*)::int from issues where tenant_id = @tid", new { tid = t.Id }));
+    }
+
+    private static string Json(object payload) => JsonSerializer.Serialize(payload);
+
+    // A pending reservation of an earlier attempt that never finished, old enough to be taken over.
+    private static async Task SeedStalePendingAsync(TestTenant t, string key, object payload, int ageMinutes = 10)
+    {
+        var memberId = await t.ScalarAsync<Guid>("select id from members where tenant_id = @tid and github_login = @login",
+            new { tid = t.Id, login = t.ViewerLogin });
+        var hash = Idempotency.HashRequest(memberId, "POST", "/api/issues", Encoding.UTF8.GetBytes(Json(payload)));
+        await t.ExecAsync("""
+            insert into idempotency_keys (tenant_id, key, member_id, request_hash, state, reservation_id, created_at)
+            values (@tid, @key, @memberId, @hash, 'pending', gen_random_uuid(), now() - make_interval(mins => @age))
+            """, new { tid = t.Id, key, memberId, hash, age = ageMinutes });
+    }
+
+    private static async Task<string> ExpectedMarkerAsync(TestTenant t, string key, object payload)
+    {
+        var memberId = await t.ScalarAsync<Guid>("select id from members where tenant_id = @tid and github_login = @login",
+            new { tid = t.Id, login = t.ViewerLogin });
+        var hash = Idempotency.HashRequest(memberId, "POST", "/api/issues", Encoding.UTF8.GetBytes(Json(payload)));
+        return "<!-- work-board:create:" + IssueCreation.MarkerId(t.Id, key, hash) + " -->";
+    }
+
+    private static SourceIssue Found(int number) =>
+        new(TestTenant.NextId(), "node" + number, number, "found", "b", null, "open", null,
+            new SourceUser(9, "app[bot]", null, null), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow,
+            $"https://x/api/{number}", null, [], [], null, null);
+
+    [DbFact]
+    public async Task First_attempt_sends_the_marker_and_does_not_look_anything_up()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+        var payload = new { repositoryId = repo, title = "x" };
+
+        var (status, _) = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.Created, status);
+        Assert.Equal(await ExpectedMarkerAsync(t, "k", payload), writer.Marker);
+        Assert.DoesNotContain("\"k\"", writer.Marker);
+        Assert.Equal(0, writer.FindCalls);
+    }
+
+    [DbFact]
+    public async Task Takeover_that_finds_the_marked_issue_does_not_create_again()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var payload = new { repositoryId = repo, title = "x" };
+        await SeedStalePendingAsync(t, "k", payload);
+        var writer = new FakeWriter { Existing = Found(55) };
+        using var client = Client(writer);
+
+        var (status, body) = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+        var replay = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.Created, status);
+        Assert.Equal(55, body.GetProperty("number").GetInt32());
+        Assert.Equal(0, writer.Calls);
+        Assert.Equal(1, writer.FindCalls);
+        Assert.Equal(await ExpectedMarkerAsync(t, "k", payload), writer.FindMarker);
+        Assert.True(writer.FindSince < DateTimeOffset.UtcNow.AddMinutes(-10));
+        Assert.Equal(body.GetProperty("id").GetGuid(), replay.Body.GetProperty("id").GetGuid());
+        Assert.Equal(1, await t.ScalarAsync<int>("select count(*)::int from issues where tenant_id = @tid and number = 55", new { tid = t.Id }));
+        Assert.Equal(1, await t.ScalarAsync<int>("select count(*)::int from audit_log where tenant_id = @tid and action = 'issue.create'", new { tid = t.Id }));
+    }
+
+    [DbFact]
+    public async Task Takeover_that_finds_nothing_creates_exactly_once()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var payload = new { repositoryId = repo, title = "x" };
+        await SeedStalePendingAsync(t, "k", payload);
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        var (status, _) = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+        await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.Created, status);
+        Assert.Equal(1, writer.FindCalls);
+        Assert.Equal(1, writer.Calls);
+        Assert.Equal(await ExpectedMarkerAsync(t, "k", payload), writer.Marker);
+    }
+
+    [DbFact]
+    public async Task Takeover_whose_lookup_fails_does_not_create_and_stays_pending()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var payload = new { repositoryId = repo, title = "x" };
+        await SeedStalePendingAsync(t, "k", payload);
+        var writer = new FakeWriter { FindFail = new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "502") };
+        using var client = Client(writer);
+
+        var (status, body) = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.GatewayTimeout, status);
+        Assert.Equal("github_unavailable", Error(body));
+        Assert.Equal(0, writer.Calls);
+        Assert.Equal("pending", await t.ScalarAsync<string>("select state from idempotency_keys where tenant_id = @tid and key = 'k'", new { tid = t.Id }));
+        var retry = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+        Assert.Equal(HttpStatusCode.Conflict, retry.Status);
+        Assert.Equal("request_in_progress", Error(retry.Body));
+        Assert.Equal(0, writer.Calls);
+    }
+
+    [DbFact]
+    public async Task Takeover_with_a_different_body_looks_for_a_different_marker()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        await SeedStalePendingAsync(t, "k", new { repositoryId = repo, title = "old" });
+        var other = new { repositoryId = repo, title = "new" };
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        await SendAsync(client, t, HttpMethod.Post, "/api/issues", other, "k");
+
+        Assert.Equal(await ExpectedMarkerAsync(t, "k", other), writer.FindMarker);
+        Assert.Equal(1, writer.Calls);
     }
 }
