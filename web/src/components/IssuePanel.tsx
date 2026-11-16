@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/api";
 import { useFormat, useT } from "@/lib/i18n";
 import { daysSince, isStale, safeHttpUrl } from "@/lib/labels";
@@ -18,6 +18,13 @@ export function IssuePanel() {
   const isNew = issueId === NEW_ISSUE;
   const { data, error, loading } = useApi<IssueDetail>(issueId && !isNew ? `/api/issues/${issueId}` : null);
   const [created, setCreated] = useState<{ issue: CreatedIssue; dropped: string[] } | null>(null);
+  const onCreated = useCallback(
+    (issue: CreatedIssue, dropped: string[]) => {
+      setCreated({ issue, dropped });
+      open(issue.id);
+    },
+    [open],
+  );
   const settings = useSettings();
   const t = useT();
   const p = t.panel;
@@ -84,13 +91,7 @@ export function IssuePanel() {
         </div>
 
         {isNew ? (
-          <NewIssueForm
-            prefill={prefill}
-            onCreated={(issue, dropped) => {
-              setCreated({ issue, dropped });
-              open(issue.id);
-            }}
-          />
+          <NewIssueForm key={`${prefill.status ?? ""}:${prefill.assignee ?? ""}`} prefill={prefill} onCreated={onCreated} />
         ) : (
         <div className="flex flex-col gap-7 px-6 py-6 max-[639px]:px-4">
           {justCreated && <CreatedNote issue={justCreated.issue} dropped={justCreated.dropped} />}

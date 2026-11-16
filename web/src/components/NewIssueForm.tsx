@@ -41,24 +41,43 @@ type Draft = {
   body: string;
   labels: string[];
   assignees: number[];
-  status: NewIssueStatus;
+  /** Picked by the person; a column's `+` status is held apart in `prefilledStatus`. */
+  status: NewIssueStatus | null;
   priority: Priority | null;
   size: Size | null;
 };
 
-const EMPTY: Draft = { repositoryId: "", title: "", body: "", labels: [], assignees: [], status: "todo", priority: null, size: null };
+const EMPTY: Draft = { repositoryId: "", title: "", body: "", labels: [], assignees: [], status: null, priority: null, size: null };
 
 /** `locked`: GitHub may already have the issue, so only the same request may be sent again. */
 type Failure = { lines: readonly string[]; locked: boolean };
 type Attempt = { key: string; payload: string; req: CreateIssueRequest };
 
+type Pending = { issue: PendingIssue; unsaved: string[] };
+
+type Kept = {
+  scope: string;
+  draft: Draft;
+  prefilled: number | undefined;
+  prefilledStatus: NewIssueStatus | undefined;
+  attempt: Attempt | null;
+  failure: Failure | null;
+  /** A request is on its way; nothing may be sent until it settles. */
+  sending: boolean;
+  pending: Pending | null;
+};
+
 /**
- * Survives closing the panel, so Esc never throws away what was typed or unlocks a request GitHub may have
- * taken. Kept per tenant and member, and cleared once the issue exists. A column's prefilled assignee is
+ * Lives outside the form so closing the panel, even mid-request, never throws away what was typed or
+ * unlocks a request GitHub may have taken. The request's outcome is written here whether or not the form
+ * is still mounted. Kept per tenant and member, and cleared once the issue exists. Column prefills are
  * only kept while locked; otherwise the next `+` brings its own.
  */
-let kept: { scope: string; draft: Draft; prefilled: number | undefined; attempt: Attempt | null; failure: Failure | null } | null = null;
-type Pending = { issue: PendingIssue; unsaved: string[] };
+let kept: Kept | null = null;
+
+type FormEvent = { type: "created"; issue: CreatedIssue; dropped: string[] } | { type: "kept" };
+const listeners = new Set<(e: FormEvent) => void>();
+const emit = (e: FormEvent) => listeners.forEach((l) => l(e));
 
 function readLastRepo(): string | null {
   try {
@@ -123,41 +142,72 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
   const projects = useApi<Project[]>(projectId ? "/api/projects" : null);
   const ids = useId();
   const titleRef = useRef<HTMLInputElement>(null);
-  const busyRef = useRef(false);
-  const finished = useRef(false);
   const failureRef = useRef<HTMLDivElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
   const [saved] = useState(() => (kept?.scope === scope ? kept : null));
-  const savedLocked = saved?.failure?.locked ? saved : null;
+  // Locked or still sending: restore exactly what was sent, prefills included.
+  const whole = saved && (saved.sending || saved.failure?.locked) ? saved : null;
   const attempt = useRef<Attempt | null>(saved?.attempt ?? null);
+  const busyRef = useRef(saved?.sending ?? false);
 
   const [draft, setDraftState] = useState<Draft>(() =>
-    savedLocked ? savedLocked.draft : { ...(saved?.draft ?? EMPTY), status: prefill.status ?? saved?.draft.status ?? "todo" },
+    whole ? whole.draft : { ...(saved?.draft ?? EMPTY), status: prefill.status ? null : (saved?.draft.status ?? null) },
   );
-  const [prefilled, setPrefilled] = useState<number | undefined>(() => (savedLocked ? savedLocked.prefilled : prefill.assignee));
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(savedLocked?.failure ?? null);
+  const [prefilled, setPrefilled] = useState<number | undefined>(() => (whole ? whole.prefilled : prefill.assignee));
+  const [prefilledStatus, setPrefilledStatus] = useState<NewIssueStatus | undefined>(() =>
+    whole ? whole.prefilledStatus : prefill.status,
+  );
+  const [busy, setBusy] = useState(saved?.sending ?? false);
+  const [failure, setFailure] = useState<Failure | null>(whole?.failure ?? null);
   const locked = failure?.locked === true;
   const [titleMissing, setTitleMissing] = useState(false);
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [pending, setPending] = useState<Pending | null>(saved?.pending ?? null);
+  const status = draft.status ?? prefilledStatus ?? "todo";
   const [labelQuery, setLabelQuery] = useState("");
   const [mac, setMac] = useState(false);
 
   const setDraft = (patch: Partial<Draft>) => setDraftState((d) => ({ ...d, ...patch }));
 
   useEffect(() => {
-    if (finished.current || !scope) return;
-    kept = { scope, draft, prefilled, attempt: attempt.current, failure };
-  }, [scope, draft, prefilled, failure]);
+    if (busyRef.current || !scope) return;
+    kept = { scope, draft, prefilled, prefilledStatus, attempt: attempt.current, failure, sending: false, pending: null };
+  }, [scope, draft, prefilled, prefilledStatus, failure]);
+
+  // The outcome of a request lands in `kept`; whichever form is mounted then shows it.
+  useEffect(() => {
+    const on = (e: FormEvent) => {
+      if (e.type === "created") {
+        onCreated(e.issue, e.dropped);
+        return;
+      }
+      if (!kept || kept.scope !== scope) return;
+      const k = kept;
+      attempt.current = k.attempt;
+      busyRef.current = k.sending;
+      setBusy(k.sending);
+      setDraftState(k.draft);
+      setPrefilled(k.prefilled);
+      setPrefilledStatus(k.prefilledStatus);
+      setFailure(k.failure);
+      setPending(k.pending);
+    };
+    listeners.add(on);
+    return () => {
+      listeners.delete(on);
+    };
+  }, [scope, onCreated]);
+
+  useEffect(() => {
+    if (locked && !busy) submitRef.current?.focus();
+  }, [locked, busy]);
 
   useEffect(() => {
     if (failure) failureRef.current?.scrollIntoView({ block: "nearest" });
   }, [failure]);
 
   useEffect(() => {
-    // A locked form (reopened after an uncertain failure) starts on its resend button instead.
-    if (titleRef.current?.matches(":disabled")) submitRef.current?.focus();
-    else titleRef.current?.focus();
+    // A locked form starts on its resend button instead (the effect above).
+    if (!titleRef.current?.matches(":disabled")) titleRef.current?.focus();
     setMac(/Mac|iPhone|iPad/.test(navigator.platform));
   }, []);
 
@@ -203,7 +253,7 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
     ...(pickedLabels.length ? { labels: pickedLabels } : {}),
     ...(assignees.length ? { assigneeGithubUserIds: assignees } : {}),
     // Todo is the default; setting it would pin the status so a linked PR could no longer move it.
-    ...(draft.status !== "todo" ? { status: draft.status } : {}),
+    ...(status !== "todo" ? { status } : {}),
     ...(settings.priorityEnabled && draft.priority ? { priority: draft.priority } : {}),
     ...(settings.sizeEnabled && draft.size ? { size: draft.size } : {}),
   });
@@ -227,48 +277,58 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
       key = attempt.current?.payload === payload ? attempt.current.key : newIdempotencyKey();
       attempt.current = { key, payload, req };
     }
+    const base = { scope, draft, prefilled, prefilledStatus, attempt: attempt.current, pending: null };
+    kept = { ...base, failure: { lines: n.errors.sending, locked: true }, sending: true };
     busyRef.current = true;
     setBusy(true);
     setFailure(null);
+    const people = options.data?.assignees ?? [];
+    // From here on only `kept` and `emit` are used: the panel may be closed before the answer comes.
     try {
       const result = await createIssue(req, key);
-      // Stays busy: the panel is about to switch, and nothing may be sent again under a new key.
-      finished.current = true;
-      attempt.current = null;
-      kept = null;
       writeLastRepo(req.repositoryId);
       if (result.kind === "created") {
-        const people = options.data?.assignees ?? [];
+        kept = null;
         const dropped = result.issue.droppedAssignees.map((id) => {
           const p = people.find((x) => x.githubUserId === id);
           return p ? fmt.person(p) : String(id);
         });
         window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
-        onCreated(result.issue, dropped);
-      } else {
-        const unsaved = [
-          ...(req.status ? [t.panel.status] : []),
-          ...(req.priority ? [t.panel.priority] : []),
-          ...(req.size ? [t.panel.size] : []),
-        ];
-        setDraftState({ ...EMPTY, repositoryId: req.repositoryId });
-        setPrefilled(undefined);
-        setFailure(null);
-        setPending({ issue: result.issue, unsaved });
+        // Busy stays on: the panel switches to the issue, and nothing may go out again under a new key.
+        emit({ type: "created", issue: result.issue, dropped });
+        return;
       }
+      const unsaved = [
+        ...(req.status ? [t.panel.status] : []),
+        ...(req.priority ? [t.panel.priority] : []),
+        ...(req.size ? [t.panel.size] : []),
+      ];
+      kept = {
+        scope,
+        draft: { ...EMPTY, repositoryId: req.repositoryId },
+        prefilled: undefined,
+        prefilledStatus: undefined,
+        attempt: null,
+        failure: null,
+        sending: false,
+        pending: { issue: result.issue, unsaved },
+      };
     } catch (e) {
-      busyRef.current = false;
-      setBusy(false);
       const unknown = unknownLabelsOf(e);
       if (unknown.length) {
         const drop = new Set(unknown.map((l) => l.toLowerCase()));
-        setDraft({ labels: draft.labels.filter((l) => !drop.has(l.toLowerCase())) });
-        setFailure({ lines: n.errors.unknownLabels(unknown.join(", ")), locked: false });
+        kept = {
+          ...base,
+          draft: { ...draft, labels: draft.labels.filter((l) => !drop.has(l.toLowerCase())) },
+          failure: { lines: n.errors.unknownLabels(unknown.join(", ")), locked: false },
+          sending: false,
+        };
         options.reload();
       } else {
-        setFailure(failureOf(e, n));
+        kept = { ...base, failure: failureOf(e, n), sending: false };
       }
     }
+    emit({ type: "kept" });
   };
 
   const unlock = () => {
@@ -295,9 +355,6 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
             type="button"
             className="btn"
             onClick={() => {
-              finished.current = false;
-              busyRef.current = false;
-              setBusy(false);
               setPending(null);
               requestAnimationFrame(() => titleRef.current?.focus());
             }}
@@ -435,7 +492,10 @@ export function NewIssueForm({ prefill, onCreated }: Props) {
           <dd>
             <div className="seg" role="group" aria-labelledby={`${ids}-status`}>
               {STATUSES.map((s) => (
-                <button key={s} type="button" aria-pressed={draft.status === s} onClick={() => setDraft({ status: s })}>
+                <button key={s} type="button" aria-pressed={status === s} onClick={() => {
+                    setPrefilledStatus(undefined);
+                    setDraft({ status: s });
+                  }}>
                   <Dot className={STATUS_DOT[s]} />
                   {t.status[s]}
                 </button>

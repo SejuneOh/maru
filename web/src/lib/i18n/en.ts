@@ -303,6 +303,7 @@ export const en: Dict = {
       idempotency_key_reused: ["This clashed with an earlier request.", "Create again."],
       network: ["Could not reach the server.", "Check your connection and try again."],
       unknown: ["The issue was not created.", "Try again in a moment."],
+      sending: ["Waiting for the answer to the request already sent.", "The result shows here once it arrives."],
     },
   },
 

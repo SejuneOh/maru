@@ -38,7 +38,7 @@ export function useIssuePanel() {
   const status = params.get("newStatus");
   const assignee = Number(params.get("newAssignee"));
   const prefill: NewIssuePrefill = {
-    status: status === "in_progress" || status === "in_review" ? status : "todo",
+    status: status === "in_progress" || status === "in_review" ? status : undefined,
     assignee: Number.isSafeInteger(assignee) && assignee > 0 ? assignee : undefined,
   };
 
