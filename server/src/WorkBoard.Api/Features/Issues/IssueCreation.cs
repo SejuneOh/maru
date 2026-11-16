@@ -19,6 +19,9 @@ public sealed record CreatedIssue : IssueDetail
     public IReadOnlyList<long> DroppedAssignees { get; init; }
 }
 
+// 202 body: the issue exists on GitHub but is not in the mirror yet.
+public sealed record PendingIssue(string Repository, int Number, string HtmlUrl, bool MirrorPending);
+
 // A request that passed validation: assignees are already resolved to tenant members.
 public sealed record NewIssue(
     GitHubWriteTarget Target, string Title, string? Body, IReadOnlyList<string> Labels,
@@ -28,6 +31,8 @@ public sealed class IssueCreation(
     ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events)
 {
     public const string RepositoryArchived = "repository_archived";
+
+    private sealed record LabelName(string Name);
 
     private sealed record AssigneeRow(long GithubUserId, string GithubLogin);
 
@@ -48,17 +53,31 @@ public sealed class IssueCreation(
                 return GitHubWriteErrors.ToOutcome(e);
             }
 
-            // GitHub has the issue from here on; finishing locally must not be cut short by the caller leaving.
-            var mirrored = await mirror.ApplyWrittenIssueAsync(
-                user.Identity.TenantId, issue.Target.RepositoryId, created, null, null, CancellationToken.None);
-            if (mirrored is null)
-                return new ExternalOutcome(new WriteResult(StatusCodes.Status404NotFound, new ErrorBody(ApiErrors.NotFound)), true);
+            // GitHub has the issue from here on. A local failure must not leave the key pending (a retry would
+            // create a second issue), so it completes with a 202 and the next sync fills the rows.
+            var pending = new ExternalOutcome(new WriteResult(StatusCodes.Status202Accepted,
+                new PendingIssue($"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", created.Number, created.HtmlUrl, true)), true);
+            try
+            {
+                var mirrored = await mirror.ApplyWrittenIssueAsync(
+                    user.Identity.TenantId, issue.Target.RepositoryId, created, null, null, CancellationToken.None);
+                if (mirrored is null)
+                {
+                    log.LogWarning("Issue {Number} was created on GitHub but the repository is gone from the mirror", created.Number);
+                    return pending;
+                }
 
-            var dropped = issue.Assignees
-                .Where(a => !created.Assignees.Any(c => string.Equals(c.Login, a.Login, StringComparison.OrdinalIgnoreCase)))
-                .Select(a => a.UserId).ToList();
-            var detail = await db.WriteAsync(s => FinishAsync(s, mirrored.IssueId, issue, created), CancellationToken.None);
-            return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created, new CreatedIssue(detail, dropped)), true);
+                var dropped = issue.Assignees
+                    .Where(a => !created.Assignees.Any(c => string.Equals(c.Login, a.Login, StringComparison.OrdinalIgnoreCase)))
+                    .Select(a => a.UserId).ToList();
+                var detail = await db.WriteAsync(s => FinishAsync(s, mirrored.IssueId, issue, created), CancellationToken.None);
+                return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created, new CreatedIssue(detail, dropped)), true);
+            }
+            catch (Exception e)
+            {
+                log.LogError(e, "Issue {Number} was created on GitHub but saving it locally failed", created.Number);
+                return pending;
+            }
         }, ct, log);
 
     private async Task<IssueDetail> FinishAsync(TenantSession s, Guid issueId, NewIssue issue, SourceIssue created)
@@ -88,6 +107,27 @@ public sealed class IssueCreation(
             new { repository = $"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", number = created.Number });
         return (await IssueDetailQueries.GetAsync(s, issueId))!;
     }
+
+    // Stored names of the repository's mirrored labels (case-insensitive match), and the requested names that match none.
+    public Task<(List<string> Stored, List<string> Unknown)> ResolveLabelsAsync(
+        Guid repositoryId, IReadOnlyList<string> requested, CancellationToken ct) =>
+        db.ReadAsync(async s =>
+        {
+            if (requested.Count == 0)
+                return (new List<string>(), new List<string>());
+            var rows = await s.QueryAsync<LabelName>(
+                "select name from labels where repository_id = @repositoryId and lower(name) = any(@lower)",
+                new { repositoryId, lower = requested.Select(l => l.ToLowerInvariant()).ToArray() });
+            var byLower = rows.GroupBy(r => r.Name.ToLowerInvariant()).ToDictionary(g => g.Key, g => g.First().Name);
+            var stored = new List<string>();
+            var unknown = new List<string>();
+            foreach (var l in requested)
+                if (byLower.TryGetValue(l.ToLowerInvariant(), out var name))
+                    stored.Add(name);
+                else
+                    unknown.Add(l);
+            return (stored, unknown);
+        }, ct);
 
     // Null when any id is not a member of the caller's tenant.
     public Task<List<(long UserId, string Login)>?> ResolveAssigneesAsync(long[] ids, CancellationToken ct) =>

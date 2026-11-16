@@ -24,7 +24,7 @@ public sealed record MirroredIssue(Guid IssueId, bool Applied);
 // request or comment older than the stored github_updated_at is ignored along with its child rows.
 // Milestones and labels arrive as full lists, so ones missing from the list are deleted. Issues, pull
 // requests, comments and repositories that disappear from GitHub are kept.
-public sealed class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync)
+public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync)
 {
     public async Task UpsertRepositoriesAsync(
         Guid tenantId, Guid connectionId, IEnumerable<SourceRepository> repositories, CancellationToken ct)
@@ -66,7 +66,7 @@ public sealed class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSo
     // change is set only by the close and reopen calls: exactly that closed or reopened issue_events row is written
     // in the same transaction, attributed to memberId, whatever the stored state or the response age. Other writes
     // never record one.
-    public async Task<MirroredIssue?> ApplyWrittenIssueAsync(
+    public virtual async Task<MirroredIssue?> ApplyWrittenIssueAsync(
         Guid tenantId, Guid repositoryId, SourceIssue issue, Guid? memberId, IssueStateChange? change, CancellationToken ct)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);

@@ -4,6 +4,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Npgsql;
+using WorkBoard.Api.Infrastructure.Data;
+using WorkBoard.Api.Infrastructure.Identity;
+using WorkBoard.Api.Infrastructure.Sync;
+using WorkBoard.Api.Infrastructure.Writes;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Tests.Fakes;
 
@@ -18,23 +23,28 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         public bool DropAssignees;
         public string? Actor;
         public List<string> Assignees = [];
+        public List<string> Labels = [];
+        public TimeSpan Delay;
         public Dictionary<string, long> Ids = [];
         private int _number = 100;
 
-        public Task<SourceIssue> CreateIssueAsync(GitHubRepoRef repo, string actorLogin, string title, string? body,
+        public async Task<SourceIssue> CreateIssueAsync(GitHubRepoRef repo, string actorLogin, string title, string? body,
             IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct)
         {
             Interlocked.Increment(ref Calls);
             Actor = actorLogin;
             Assignees = [.. assignees];
+            Labels = [.. labels];
+            if (Delay > TimeSpan.Zero)
+                await Task.Delay(Delay, ct);
             if (Fail is not null)
                 throw Fail;
             var n = Interlocked.Increment(ref _number);
             var users = DropAssignees ? [] : assignees.Select(a => new SourceUser(Ids.GetValueOrDefault(a, 1), a, null, null)).ToList();
-            return Task.FromResult(new SourceIssue(TestTenant.NextId(), "node" + n, n, title, body, null, "open", null,
+            return new SourceIssue(TestTenant.NextId(), "node" + n, n, title, body, null, "open", null,
                 new SourceUser(9, "app[bot]", null, null), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow,
                 $"https://x/{repo.Name}/{n}", null,
-                labels.Select(l => new SourceLabel(null, null, l, "ededed", null)).ToList(), users, null, null));
+                labels.Select(l => new SourceLabel(null, null, l, "ededed", null)).ToList(), users, null, null);
         }
 
         public Task<SourceIssue> SetAssigneesAsync(GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) => throw new NotSupportedException();
@@ -43,12 +53,30 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         public Task<SourceIssue> ReopenIssueAsync(GitHubRepoRef repo, int number, CancellationToken ct) => throw new NotSupportedException();
     }
 
-    private HttpClient Client(FakeWriter writer) =>
+    private sealed class ThrowingMirror(NpgsqlDataSource sync) : MirrorWriter(sync)
+    {
+        public override Task<MirroredIssue?> ApplyWrittenIssueAsync(
+            Guid tenantId, Guid repositoryId, SourceIssue issue, Guid? memberId, IssueStateChange? change, CancellationToken ct) =>
+            throw new InvalidOperationException("mirror down");
+    }
+
+    private sealed class ThrowingAudit : IAuditLog
+    {
+        public Task WriteAsync(TenantSession session, string action, string targetType, Guid? targetId, object? before, object? after) =>
+            throw new InvalidOperationException("audit down");
+    }
+
+    private HttpClient Client(FakeWriter writer, Action<IServiceCollection>? configure = null) =>
         factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
         {
             s.RemoveAll<IGitHubWriter>();
             s.AddSingleton<IGitHubWriter>(writer);
+            configure?.Invoke(s);
         })).CreateClient();
+
+    private static async Task AddLabelAsync(TestTenant t, Guid repo, string name) =>
+        await t.ExecAsync("insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, @name)",
+            new { tid = t.Id, repo, gid = TestTenant.NextId(), name });
 
     private static async Task<(HttpStatusCode Status, JsonElement Body)> SendAsync(
         HttpClient client, TestTenant t, HttpMethod method, string url, object? body = null, string? key = null)
@@ -83,6 +111,7 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         await using var other = await TestTenant.CreateAsync(factory);
         var repo = await ConnectedRepoAsync(t);
         var (login, userId) = await t.AddMemberAsync("alice");
+        await AddLabelAsync(t, repo, "Bug");
         var writer = new FakeWriter { Ids = { [login] = userId } };
         using var client = Client(writer);
 
@@ -92,7 +121,8 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         Assert.Equal(HttpStatusCode.Created, status);
         Assert.Equal("New thing", body.GetProperty("title").GetString());
         Assert.Equal("details", body.GetProperty("body").GetString());
-        Assert.Equal("bug", body.GetProperty("labels")[0].GetProperty("name").GetString());
+        Assert.Equal("Bug", body.GetProperty("labels")[0].GetProperty("name").GetString());
+        Assert.Equal(["Bug"], writer.Labels);
         Assert.Equal(userId, body.GetProperty("assignees")[0].GetProperty("githubUserId").GetInt64());
         Assert.Empty(body.GetProperty("droppedAssignees").EnumerateArray());
         Assert.Equal(t.ViewerLogin, writer.Actor);
@@ -272,5 +302,79 @@ public class CreateIssueTests(WebApplicationFactory<Program> factory) : IClassFi
         Assert.Equal([false, true], repos.Select(r => r.GetProperty("archived").GetBoolean()));
         Assert.Equal(["bug"], repos[0].GetProperty("labels").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
         Assert.Equal([t.ViewerLogin], body.GetProperty("assignees").EnumerateArray().Select(m => m.GetProperty("githubLogin").GetString()));
+    }
+
+    [DbFact]
+    public async Task Unknown_labels_are_400_with_their_names()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        await AddLabelAsync(t, repo, "bug");
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        var (status, body) = await SendAsync(client, t, HttpMethod.Post, "/api/issues",
+            new { repositoryId = repo, title = "x", labels = new[] { "BUG", "nope", "Other" } }, "k");
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("invalid_request", Error(body));
+        Assert.Equal(["nope", "Other"], body.GetProperty("unknownLabels").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(0, writer.Calls);
+    }
+
+    [DbTheory]
+    [InlineData("mirror")]
+    [InlineData("finish")]
+    public async Task Local_failure_after_github_create_completes_the_key_and_retry_replays(string failing)
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var writer = new FakeWriter();
+        using var client = Client(writer, s =>
+        {
+            if (failing == "mirror")
+            {
+                s.RemoveAll<MirrorWriter>();
+                s.AddSingleton<MirrorWriter>(sp => new ThrowingMirror(sp.GetRequiredKeyedService<NpgsqlDataSource>(DataKeys.Sync)));
+            }
+            else
+            {
+                s.RemoveAll<IAuditLog>();
+                s.AddScoped<IAuditLog, ThrowingAudit>();
+            }
+        });
+        var payload = new { repositoryId = repo, title = "x" };
+
+        var first = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+        var retry = await SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "k");
+
+        Assert.Equal(HttpStatusCode.Accepted, first.Status);
+        Assert.True(first.Body.GetProperty("mirrorPending").GetBoolean());
+        Assert.Equal($"org-{t.Suffix}/api", first.Body.GetProperty("repository").GetString());
+        Assert.Equal(101, first.Body.GetProperty("number").GetInt32());
+        Assert.Contains("https://x/api/", first.Body.GetProperty("htmlUrl").GetString());
+        Assert.Equal(HttpStatusCode.Accepted, retry.Status);
+        Assert.Equal(1, writer.Calls);
+        Assert.Equal(0, await t.ScalarAsync<int>("select count(*)::int from audit_log where tenant_id = @tid and action = 'issue.create'", new { tid = t.Id }));
+    }
+
+    [DbFact]
+    public async Task Parallel_double_submit_with_one_key_calls_github_once()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var writer = new FakeWriter { Delay = TimeSpan.FromMilliseconds(500) };
+        using var client = Client(writer);
+        var payload = new { repositoryId = repo, title = "x" };
+
+        var results = await Task.WhenAll(
+            SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "p"),
+            SendAsync(client, t, HttpMethod.Post, "/api/issues", payload, "p"));
+
+        Assert.Equal(1, writer.Calls);
+        Assert.Contains(results, r => r.Status == HttpStatusCode.Created);
+        Assert.All(results, r => Assert.True(
+            r.Status == HttpStatusCode.Created || (r.Status == HttpStatusCode.Conflict && Error(r.Body) == "request_in_progress")));
+        Assert.Equal(1, await t.ScalarAsync<int>("select count(*)::int from issues where tenant_id = @tid", new { tid = t.Id }));
     }
 }

@@ -99,11 +99,16 @@ public static class NewIssueEndpoints
         if (assignees is null)
             return ApiErrors.BadRequest();
 
+        var (stored, unknown) = await creation.ResolveLabelsAsync(target.RepositoryId, labels, ct);
+        if (unknown.Count > 0)
+            return Results.Json(new { error = ApiErrors.InvalidRequest, unknownLabels = unknown },
+                statusCode: StatusCodes.Status400BadRequest);
+
         var hash = Idempotency.HashRequest(
             user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
         var body = string.IsNullOrWhiteSpace(request.Body) ? null : request.Body;
         return await creation.CreateAsync(
-            new NewIssue(target, title, body, labels, assignees, request.Status, request.Priority, request.Size),
+            new NewIssue(target, title, body, stored, assignees, request.Status, request.Priority, request.Size),
             key, hash, log, ct);
     }
 

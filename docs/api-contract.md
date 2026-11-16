@@ -88,7 +88,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/issues` | dev user | `BoardIssue[]` |
 | GET | `/api/issues/{id}` | dev user | `IssueDetail` or 404 |
 | GET | `/api/issues/new-options` | dev user | `NewIssueOptions` |
-| POST | `/api/issues` | dev user | `201 CreatedIssue`, see below |
+| POST | `/api/issues` | dev user | `201 CreatedIssue` or `202 PendingIssue`, see below |
 | GET | `/api/sprints` | dev user | `SprintList` |
 | POST | `/api/sprints` | dev user | `201 Sprint` |
 | PATCH | `/api/sprints/{id}` | dev user | `Sprint` |
@@ -159,7 +159,7 @@ Creating issues (any member, GitHub write through the App):
   installation, archived ones last and flagged), the labels of each non-archived repository, and every member as a possible assignee.
 - `POST /api/issues` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`). Body:
   `repositoryId`, `title` (trimmed, 1..256, no control or invisible format characters), optional `body` (max 60000 characters),
-  `labels` (max 20, each 1..50 characters without comma, duplicates ignored), `assigneeGithubUserIds` (max 10, must be members of the
+  `labels` (max 20, names of labels already in the repository's mirrored label list, matched case-insensitively and sent to GitHub with the stored spelling; unknown names are `400 invalid_request` with `unknownLabels: string[]`; duplicates ignored), `assigneeGithubUserIds` (max 10, must be members of the
   caller's tenant, else `400 invalid_request`), and the board fields `status` (`todo`, `in_progress`, `in_review`, `done`),
   `priority` (`urgent`, `high`, `normal`, `low`), `size` (`S`, `M`, `L`). Any other value is `400 invalid_request`.
   Order: GitHub create, then the mirror, then board fields (`issue_events` `status_set`, `priority_set`, `size_set`, under the
@@ -168,6 +168,8 @@ Creating issues (any member, GitHub write through the App):
   Errors: `404 not_found` (repository not in the tenant or not connected), `409 repository_archived`, plus the GitHub write errors above
   (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
   `droppedAssignees` lists assignees GitHub did not apply.
+  If GitHub created the issue but saving it locally failed, the response is `202 PendingIssue` and is stored under the key, so a retry
+  replays it and never creates a second issue; the next sync adds the issue to the board.
 
 Sprints (UI word: 주기) and the backlog (대기 목록) exist only when the tenant has `sprintsEnabled`. When it is off,
 `GET /api/sprints` and `GET /api/backlog` return empty results and every sprint write is `409 sprints_disabled`.
@@ -411,6 +413,7 @@ type CreateIssueRequest = {
 };
 
 type CreatedIssue = IssueDetail & { droppedAssignees: number[] };   // GitHub user ids GitHub did not assign
+type PendingIssue = { repository: string; number: number; htmlUrl: string; mirrorPending: true };  // 202, not on the board yet
 
 type MeetingNoteSummary = {
   id: string; title: string; heldAt: string;
