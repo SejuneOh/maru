@@ -116,8 +116,9 @@ public static class IssueQueries
                        and not exists (
                              select 1 from issue_events e
                               where e.tenant_id = i.tenant_id and e.issue_id = i.id
-                                and e.kind in ('sprint_added', 'sprint_removed') and e.at > co.created_at)
-                     order by co.created_at desc
+                                and e.kind in ('sprint_added', 'sprint_removed')
+                                and (case when co.event_seq is null then e.at > co.created_at else e.seq > co.event_seq end))
+                     order by co.event_seq desc nulls last, co.created_at desc
                      limit 1) cf on true
              where {where}
              order by i.github_updated_at desc, i.id

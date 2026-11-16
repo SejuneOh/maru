@@ -21,7 +21,7 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
 
     private sealed record SprintDates(Guid Id, string Name, string StartDate, string EndDate, string State, DateTime UpdatedAt);
 
-    private sealed record CarryOverRow(Guid Id, Guid FromSprintId, Guid ToSprintId, DateTime? UndoneAt, DateTime CreatedAt);
+    private sealed record CarryOverRow(Guid Id, Guid FromSprintId, Guid ToSprintId, DateTime? UndoneAt, DateTime CreatedAt, long? EventSeq);
 
     private static WriteResult Error(int status, string code) => new(status, new ErrorBody(code));
 
@@ -207,6 +207,12 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
                 new { toId, issueIds });
             foreach (var issueId in issueIds)
                 await events.RecordAsync(s, new IssueEvent(issueId, IssueEventKind.CarriedOver, from.Name, to.Name, toId));
+            await s.ExecuteAsync("""
+                update sprint_carry_overs
+                   set event_seq = (select max(seq) from issue_events
+                                     where tenant_id = @tenantId and kind = 'carried_over' and issue_id = any(@issueIds))
+                 where id = @carryOverId
+                """, new { tenantId = user.Identity.TenantId, carryOverId, issueIds });
             await audit.WriteAsync(s, "sprint.carry_over", "sprint", fromId, null,
                 new { carryOverId, toSprintId = toId, issueIds });
         }
@@ -220,7 +226,7 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
             return Disabled();
         await LockAssignmentsAsync(s);
         var carry = await s.QuerySingleOrDefaultAsync<CarryOverRow>("""
-            select id, from_sprint_id, to_sprint_id, undone_at, created_at from sprint_carry_overs
+            select id, from_sprint_id, to_sprint_id, undone_at, created_at, event_seq from sprint_carry_overs
              where id = @carryOverId and from_sprint_id = @sprintId for update
             """, new { carryOverId, sprintId });
         if (carry is null)
@@ -233,7 +239,8 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
             new { carryOverId })).ToArray();
 
         // Undo only when nothing touched the issues since: still in the target sprint, no later event
-        // (this carry-over's own events share its transaction time; closed / reopened events with no member, recorded
+        // (later means a higher seq than this carry-over's own events, or a later time for a carry-over without
+        // event_seq; closed / reopened events with no member, recorded
         // by a sync or a mirrored write, do not count, the status check covers a finished issue), not finished.
         var blocking = (await s.QueryAsync<Guid>("""
             select i.id
@@ -243,10 +250,11 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
              where i.id = any(@issueIds)
                and (bf.sprint_id is distinct from @toId
                     or st.status in ('done', 'cancelled')
-                    or exists (select 1 from issue_events e where e.issue_id = i.id and e.at > @createdAt
+                    or exists (select 1 from issue_events e where e.issue_id = i.id
+                                  and (case when @eventSeq is null then e.at > @createdAt else e.seq > @eventSeq end)
                                   and not (e.member_id is null and e.kind in ('closed', 'reopened'))))
              order by i.id
-            """, new { issueIds, toId = carry.ToSprintId, createdAt = carry.CreatedAt })).ToArray();
+            """, new { issueIds, toId = carry.ToSprintId, createdAt = carry.CreatedAt, eventSeq = carry.EventSeq })).ToArray();
         var existing = (await s.QueryAsync<Guid>("select id from issues where id = any(@issueIds)", new { issueIds })).ToHashSet();
         var blockedIds = blocking.Concat(issueIds.Where(id => !existing.Contains(id))).Distinct().Order().ToArray();
         if (blockedIds.Length > 0)

@@ -260,15 +260,25 @@ Names are unique per tenant, case-insensitive.
   `cancelled` to the target in one transaction (`carried_over` event per issue) and stores who did it. `toSprintId` equal to the
   source is `400 invalid_request`. A target that has ended is `409 sprint_ended`. With nothing unfinished it returns `carryOverId: null` and records nothing.
 - `POST /api/sprints/{id}/carry-over/{carryOverId}/undo` moves the same issues back, only if every one is still in the target
-  sprint, none has an `issue_events` row newer than the carry-over (`closed` / `reopened` rows with no member, recorded by a sync or when a board write mirrors an outside change, do not count), none is now `done`/`cancelled`, and none was deleted:
+  sprint, none has an `issue_events` row newer than the carry-over's own events (higher `seq`; `closed` / `reopened` rows with no member, recorded by a sync or when a board write mirrors an outside change, do not count), none is now `done`/`cancelled`, and none was deleted:
   otherwise `409 conflict` with `issueIds` listing the blocking issues, and a second undo is `409 already_undone`. Strict rule: an older carry-over cannot be undone once a later carry-over
   or undo touched the same issues. Records `carried_over` events in reverse.
 - `GET /api/backlog`: open issues whose status is not `done`/`cancelled` and that are in no sprint. Optional `projectId`,
   `person` (alias `assignee`), `status` (comma list of `todo`, `in_progress`, `in_review`, else `400 invalid_status`),
   `page` (1..10000) and `pageSize` (1..200, default 50), else `400 invalid_request`. Sort like the issue list.
 - `carriedFrom` on every `BoardIssue` (read only): the source sprint of the latest carry-over, not undone, that moved the
-  issue into the sprint it is in now, as long as no `sprint_added` / `sprint_removed` event for the issue is newer than that
-  carry-over. Otherwise `null`: no sprint, added by hand, or moved by hand since (also when it was moved away and back). An undo clears it. The planning screen shows it as the "넘어온 일" flag.
+  issue into the sprint it is in now, as long as no `sprint_added` / `sprint_removed` event for the issue is newer (higher `seq`) than that
+  carry-over's events. Otherwise `null`: no sprint, added by hand, or moved by hand since (also when it was moved away and back). An undo clears it. The planning screen shows it as the "넘어온 일" flag.
+
+Event order: `issue_events.seq` (identity, assigned at insert) orders events; `at` is the transaction start time and is used for
+display, charts and history only. Board and sprint writes take the advisory lock `sprint-assign:{tenant}` before they insert
+events, so their `seq` order is the lock order even when an earlier lock holder has a later `at`. `closed` / `reopened` events
+are written by the mirror without the lock, so their `seq` follows lock order only when writes do not overlap. Member-less
+ones (a sync or a mirrored outside change) are ignored by the "newer" checks; a member's close also makes the issue done or
+cancelled, which the undo's status check refuses on its own. Migrations must run as a role that bypasses RLS (as the local `postgres` does), or the
+`0015` backfill updates no rows and stops at `set not null`. `sprint_carry_overs.event_seq` holds the highest
+`seq` of the `carried_over` events that carry-over wrote; "newer than the carry-over" means `seq > event_seq`. Carry-overs made before
+the column existed have `event_seq` null and keep comparing `at` with `created_at`.
 
 Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining-work chart reads it later):
 
