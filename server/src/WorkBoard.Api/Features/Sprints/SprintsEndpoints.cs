@@ -77,7 +77,7 @@ public static class SprintsEndpoints
     private static async Task<IResult> RunAsync<T>(
         HttpContext http, ICurrentUser user, TenantDb db, CancellationToken ct, Func<T, Plan> plan, bool body)
     {
-        var bytes = await ReadBodyAsync(http, ct);
+        var bytes = await RequestBodies.ReadAsync(http, MaxBodyBytes, ct);
         T? request = default;
         if (body)
         {
@@ -103,20 +103,5 @@ public static class SprintsEndpoints
         var hash = Idempotency.HashRequest(
             user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes ?? []);
         return await db.WriteAsync(s => Idempotency.RunAsync(s, user, key, hash, () => chosen.Work!(s)), ct);
-    }
-
-    // Null when the body is larger than allowed.
-    private static async Task<byte[]?> ReadBodyAsync(HttpContext http, CancellationToken ct)
-    {
-        using var buffer = new MemoryStream();
-        var chunk = new byte[8192];
-        int read;
-        while ((read = await http.Request.Body.ReadAsync(chunk, ct)) > 0)
-        {
-            if (buffer.Length + read > MaxBodyBytes)
-                return null;
-            buffer.Write(chunk, 0, read);
-        }
-        return buffer.ToArray();
     }
 }

@@ -87,6 +87,8 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/overview` | dev user | `Overview` |
 | GET | `/api/issues` | dev user | `BoardIssue[]` |
 | GET | `/api/issues/{id}` | dev user | `IssueDetail` or 404 |
+| GET | `/api/issues/new-options` | dev user | `NewIssueOptions` |
+| POST | `/api/issues` | dev user | `201 CreatedIssue`, see below |
 | GET | `/api/sprints` | dev user | `SprintList` |
 | POST | `/api/sprints` | dev user | `201 Sprint` |
 | PATCH | `/api/sprints/{id}` | dev user | `Sprint` |
@@ -150,6 +152,22 @@ Derived status, first matching rule wins (view `issue_status`):
 
 `cancelled` has category `done` but is excluded from every progress count (overview projects, sprint, people,
 `doneThisWeek`, urgent attention and action-item lists) and from milestone counts.
+
+Creating issues (any member, GitHub write through the App):
+
+- `GET /api/issues/new-options` returns the repositories the caller can create in (active connection with an App
+  installation, archived ones last and flagged), the labels of each non-archived repository, and every member as a possible assignee.
+- `POST /api/issues` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`). Body:
+  `repositoryId`, `title` (trimmed, 1..256, no control or invisible format characters), optional `body` (max 60000 characters),
+  `labels` (max 20, each 1..50 characters without comma, duplicates ignored), `assigneeGithubUserIds` (max 10, must be members of the
+  caller's tenant, else `400 invalid_request`), and the board fields `status` (`todo`, `in_progress`, `in_review`, `done`),
+  `priority` (`urgent`, `high`, `normal`, `low`), `size` (`S`, `M`, `L`). Any other value is `400 invalid_request`.
+  Order: GitHub create, then the mirror, then board fields (`issue_events` `status_set`, `priority_set`, `size_set`, under the
+  per-tenant `sprint-assign` advisory lock) and an `issue.create` `audit_log` row. The GitHub body gets a footer naming the caller.
+  Nothing is written locally when GitHub refuses. A repeat with the same key and body returns the stored `201`.
+  Errors: `404 not_found` (repository not in the tenant or not connected), `409 repository_archived`, plus the GitHub write errors above
+  (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
+  `droppedAssignees` lists assignees GitHub did not apply.
 
 Sprints (UI word: 주기) and the backlog (대기 목록) exist only when the tenant has `sprintsEnabled`. When it is off,
 `GET /api/sprints` and `GET /api/backlog` return empty results and every sprint write is `409 sprints_disabled`.
@@ -380,6 +398,19 @@ type IssueDetail = BoardIssue & {
               body: string; createdAt: string }[];   // oldest first
   meetingNotes: { id: string; title: string; heldAt: string }[];  // notes with an action item linked to this issue
 };
+
+type NewIssueOptions = {
+  repositories: { id: string; name: string; fullName: string; archived: boolean;
+                  labels: { name: string; color: string | null }[] }[];   // archived last; labels empty for archived
+  assignees: { githubUserId: number; githubLogin: string; displayName: string | null; avatarUrl: string | null }[];
+};
+
+type CreateIssueRequest = {
+  repositoryId: string; title: string; body?: string; labels?: string[]; assigneeGithubUserIds?: number[];
+  status?: "todo" | "in_progress" | "in_review" | "done"; priority?: "urgent" | "high" | "normal" | "low"; size?: "S" | "M" | "L";
+};
+
+type CreatedIssue = IssueDetail & { droppedAssignees: number[] };   // GitHub user ids GitHub did not assign
 
 type MeetingNoteSummary = {
   id: string; title: string; heldAt: string;
