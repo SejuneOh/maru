@@ -13,6 +13,7 @@ import { SyncStatus } from "./SyncStatus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Kbd } from "./ui";
 import { UserPicker } from "./UserPicker";
+import { useIssuePanel } from "./useIssuePanel";
 import { useShortcuts } from "./useShortcuts";
 
 const ICONS: Record<keyof Dict["nav"], React.ReactNode> = {
@@ -103,6 +104,20 @@ function OrgMark({ org, size }: { org: string; size: "sm" | "md" }) {
   );
 }
 
+/** The top bar holds it from 640px; on phones there is no room, so it sits on the sync line above the page. */
+function NewIssueButton({ onClick, className = "" }: { onClick: () => void; className?: string }) {
+  const t = useT();
+  return (
+    <button type="button" onClick={onClick} aria-keyshortcuts="c" className={`btn shrink-0 gap-1.5 px-3 text-small ${className}`}>
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden className="shrink-0">
+        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+      </svg>
+      {t.shell.newIssue}
+      <Kbd className="max-[1023px]:hidden">c</Kbd>
+    </button>
+  );
+}
+
 const NARROW_QUERY = "(max-width: 1023px)";
 
 /** Below 1024px the top bar has no room, so the sync line moves above the page there. */
@@ -162,7 +177,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     requestAnimationFrame(() => searchRef.current?.focus());
   }, []);
 
-  useShortcuts(openSearch);
+  const { startNew } = useIssuePanel();
+  const newIssue = useCallback(() => startNew(), [startNew]);
+  useShortcuts(openSearch, newIssue);
   const tabsRef = useTabFade();
   const narrow = useNarrow();
 
@@ -221,6 +238,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-meta leading-5 text-muted">
               <span className="inline-flex items-center gap-1">
                 <Kbd>/</Kbd> {t.shell.hintSearch}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Kbd>c</Kbd> {t.shell.hintNew}
               </span>
               <span className="inline-flex items-center gap-1">
                 <Kbd>j</Kbd>
@@ -290,6 +310,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <SearchIcon size={18} />
             </button>
             {!narrow && <SyncStatus className="flex shrink-0" />}
+            <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" />
             <div className={`flex shrink-0 items-center gap-2 ${searchOpen ? "max-[639px]:hidden" : ""}`}>
               <div className="flex items-center gap-2 min-[1024px]:hidden">
                 <LangToggle />
@@ -317,7 +338,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
         </header>
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-20 pt-6 min-[640px]:px-6 min-[1024px]:px-10 min-[1024px]:pt-8">
-          {narrow && <SyncStatus className="-mt-2 mb-4 flex justify-between min-[640px]:justify-end" />}
+          {narrow && (
+            <div className="-mt-2 mb-4 flex items-center gap-3">
+              <SyncStatus className="flex min-w-0 flex-1 justify-between min-[640px]:justify-end" />
+              <NewIssueButton onClick={newIssue} className="ml-auto h-8 min-[640px]:hidden" />
+            </div>
+          )}
           {children}
         </main>
       </div>

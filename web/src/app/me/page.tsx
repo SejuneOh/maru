@@ -34,7 +34,11 @@ export default function MyWorkPage() {
       {issues.error && <ErrorBox error={issues.error} />}
       {issues.data ? (
         <div className="reveal mt-2 [animation-delay:30ms]">
-          <StatusColumns issues={issues.data} showAssignee={false} />
+          <StatusColumns
+            issues={issues.data}
+            showAssignee={false}
+            owner={{ githubUserId: me.data.member.githubUserId, name: fmt.person(me.data.member) }}
+          />
         </div>
       ) : (
         !issues.error && <Loading />
