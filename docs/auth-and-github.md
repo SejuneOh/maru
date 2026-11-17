@@ -165,7 +165,7 @@ mkdir -p ~/.config/work-board && umask 077
 printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.config/work-board/credential-keys.json
 ```
 
-`appsettings.Local.json`의 `GitHub:Credentials:KeyFile`에 그 경로를 넣습니다. 키 교체는 새 버전 키를 추가하고 `current`를 올린 뒤 `CredentialStore.ReencryptAsync()`로 기존 행을 새 키로 다시 암호화합니다. 옛 버전 키는 그 뒤에 지웁니다. 키를 잃으면 저장된 토큰은 복구할 수 없고 사용자가 다시 등록해야 합니다.
+`appsettings.Local.json`의 `GitHub:Credentials:KeyFile`에 그 경로를 넣습니다. 키 교체는 새 버전 키를 추가하고 `current`를 올린 뒤 `CredentialStore.ReencryptAsync()`로 기존 행을 새 키로 다시 암호화합니다. 옛 버전 키는 `ReencryptAsync`가 돌려준 `Skipped`가 0이고 `select count(*) from github_credentials where key_version <> <current>`도 0일 때만 지웁니다. 건너뛴 행이 남은 채 옛 키를 지우면 그 토큰은 복구할 수 없습니다. 키를 잃으면 저장된 토큰은 복구할 수 없고 사용자가 다시 등록해야 합니다.
 
 ## 토큰으로 조직 연결 (#75)
 

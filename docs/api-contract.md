@@ -189,7 +189,7 @@ organization), `502 github_unavailable`, `503 credential_store_not_configured` (
 Writes through a token connection show the token owner as the GitHub author; the board's "작성: @member" line names
 the member. The duplicate check after a retried write recognises the token owner's login (the App's `<slug>[bot]`
 for App connections). A write on a token connection without a usable token answers `409 credential_missing` (no token
-stored), `409 credential_revoked` or `409 credential_expired`, without calling GitHub.
+stored), `409 credential_revoked` (GitHub answered 401), `409 credential_invalid` (owner check failed, see "Token health") or `409 credential_expired`, without calling GitHub.
 Sync and the new-issue repository list include token connections; the organization's repositories come from
 `GET /orgs/{org}/repos`, but only repositories selected through "Organization import" are read (see below). Webhooks do not reach token connections, so they rely on the periodic sync.
 
@@ -679,7 +679,7 @@ A background service syncs every tenant with an active connection that has an `i
 installation's repositories, upserts them (`sync_enabled` defaults to true) and reads each enabled repository with
 `since = last_synced_at - 2 minutes` (full read on the first run). One run per tenant at a time. Each run writes one
 `sync_runs` row per connection; GitHub errors and a missing App key are recorded there, never thrown. A repository
-that fails does not stop the others, except on `RateLimited`, `Unauthorized`, `CredentialRevoked` and `CredentialExpired`, which end the run.
+that fails does not stop the others, except on `RateLimited`, `Unauthorized`, `CredentialRevoked`, `CredentialInvalid` and `CredentialExpired`, which end the run.
 
 `GET /api/sync/status` (any member) -> `200`:
 ```
