@@ -52,7 +52,7 @@ export function PageHeader({ meta, title, children }: { meta?: React.ReactNode; 
 }
 
 export function Count({ n }: { n: number }) {
-  return <span className="font-mono text-meta font-normal text-muted">{n}</span>;
+  return <span className="shrink-0 font-mono text-meta font-normal text-muted">{n}</span>;
 }
 
 /** Heading for a section that is not a card: title, count, a short hint, and a link on the right. */

@@ -10,6 +10,7 @@ import type {
   OrganizationChoice,
 } from "@/lib/types";
 import { GitHubMark } from "./Auth";
+import { TokenLine } from "./TokenConnection";
 
 const APP_SLUG = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG ?? "";
 
@@ -20,39 +21,74 @@ export const githubInstallUrl: string | null = APP_SLUG
 
 export const ROW_LINE = "relative after:absolute after:inset-x-5 after:top-0 after:h-px after:bg-rule first:after:hidden";
 
-/** Account login, type, repository access and when it was connected; a disconnected one steps back. */
-export function ConnectionRow({ connection: c, className = "" }: { connection: GithubConnection; className?: string }) {
+/**
+ * Account login, how it connects (GitHub App or whose token), type, repository access, body storage and when it was
+ * connected; a token connection adds its health line. A disconnected one steps back.
+ */
+export function ConnectionRow({
+  connection: c,
+  className = "",
+  isAdmin = false,
+  actions,
+  children,
+}: {
+  connection: GithubConnection;
+  className?: string;
+  isAdmin?: boolean;
+  actions?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
   const t = useT();
   const fmt = useFormat();
   const ct = t.connections;
+  const tt = t.tokens;
   const off = c.disconnectedAt !== null;
-  const selection = c.repositorySelection === "all" ? ct.all : c.repositorySelection === "selected" ? ct.selected : ct.unknownSelection;
+  const token = c.authKind === "token";
+  const selection = token
+    ? ct.selected
+    : c.repositorySelection === "all"
+      ? ct.all
+      : c.repositorySelection === "selected"
+        ? ct.selected
+        : ct.unknownSelection;
+  const kind = token ? (c.tokenOwnerLogin ? tt.kindToken(c.tokenOwnerLogin) : tt.kindTokenEmpty) : tt.kindApp;
+  const dot = (
+    <span aria-hidden className="mx-1.5 text-faint">
+      ·
+    </span>
+  );
   return (
-    <li className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4 ${off ? "text-muted" : ""} ${className}`}>
-      <span className="flex min-w-0 items-center gap-2.5">
-        <span className={off ? "text-muted" : "text-ink"}>
-          <GitHubMark size={16} />
+    <li className={`px-5 py-4 ${off ? "text-muted" : ""} ${className}`}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span className="flex min-w-0 max-w-full items-center gap-2.5">
+          <span className={off ? "text-muted" : "text-ink"}>
+            <GitHubMark size={16} />
+          </span>
+          <span className={`truncate font-mono text-ui font-medium ${off ? "" : "text-ink"}`}>{c.accountLogin}</span>
+          <span className="tag min-w-0">
+            <span className="truncate">{kind}</span>
+          </span>
         </span>
-        <span className={`truncate font-mono text-ui font-medium ${off ? "" : "text-ink"}`}>{c.accountLogin}</span>
-      </span>
-      <span className="text-small text-ink-soft">
-        {c.accountType === "organization" ? ct.organization : ct.user}
-        <span aria-hidden className="mx-1.5 text-faint">
-          ·
+        <span className="text-small text-ink-soft">
+          {c.accountType === "organization" ? ct.organization : ct.user}
+          {dot}
+          {selection}
+          {c.orgMemberCount !== null && (
+            <>
+              {dot}
+              {ct.orgMembers(c.orgMemberCount)}
+            </>
+          )}
+          {dot}
+          <span className={c.storeBodies ? "" : "text-muted"}>{c.storeBodies ? tt.bodiesOn : tt.bodiesOff}</span>
         </span>
-        {selection}
-        {c.orgMemberCount !== null && (
-          <>
-            <span aria-hidden className="mx-1.5 text-faint">
-              ·
-            </span>
-            {ct.orgMembers(c.orgMemberCount)}
-          </>
-        )}
-      </span>
-      <span className="w-full whitespace-nowrap text-small tabular-nums text-muted min-[640px]:ml-auto min-[640px]:w-auto">
-        {off ? ct.disconnectedOn(fmt.date(c.disconnectedAt!)) : ct.connectedOn(fmt.date(c.createdAt))}
-      </span>
+        <span className="w-full whitespace-nowrap text-small tabular-nums text-muted min-[640px]:ml-auto min-[640px]:w-auto">
+          {off ? ct.disconnectedOn(fmt.date(c.disconnectedAt!)) : ct.connectedOn(fmt.date(c.createdAt))}
+        </span>
+      </div>
+      {token && !off && <TokenLine connection={c} isAdmin={isAdmin} />}
+      {actions && <div className="mt-3 flex flex-wrap gap-2 pl-[26px] max-[479px]:pl-0">{actions}</div>}
+      {children}
     </li>
   );
 }

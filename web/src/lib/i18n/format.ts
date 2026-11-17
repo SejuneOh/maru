@@ -10,6 +10,8 @@ export type Format = {
   date: (iso: string) => string;
   /** "11.10" / "11/10". */
   shortDate: (iso: string) => string;
+  /** "오후 3:20" / "3:20 PM". */
+  time: (iso: string) => string;
   /** "오늘 · 11월 10일", "어제 · 11월 9일", "11월 8일". */
   dayLabel: (iso: string, now?: Date) => string;
   /** "오늘", "3일 전" / "today", "3 days ago"; `compact` gives "3d ago" for narrow columns. */
@@ -27,6 +29,7 @@ export function makeFormat(lang: Lang, t: Dict): Format {
   const number = new Intl.NumberFormat(locale);
   const longDate = new Intl.DateTimeFormat(locale, { month: "long", day: "numeric", weekday: "short" });
   const monthDay = new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" });
+  const clock = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
   const shortEn = new Intl.DateTimeFormat(locale, { month: "2-digit", day: "2-digit" });
   const rel = new Intl.RelativeTimeFormat(locale, { numeric: "always" });
   const relNarrow = new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "narrow" });
@@ -40,6 +43,7 @@ export function makeFormat(lang: Lang, t: Dict): Format {
       if (lang !== "ko") return shortEn.format(d);
       return `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
     },
+    time: (iso) => clock.format(new Date(iso)),
     dayLabel: (iso, now = new Date()) => {
       const d = new Date(iso);
       const base = monthDay.format(d);

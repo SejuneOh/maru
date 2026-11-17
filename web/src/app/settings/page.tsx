@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { GitHubMark } from "@/components/Auth";
 import { ConnectionRequestPanel, ConnectionRow, ROW_LINE, githubInstallUrl } from "@/components/Connections";
 import { TeamCard } from "@/components/TeamCard";
+import { DisconnectTokenDialog, OrganizationImport, ReplaceTokenForm, STOPPED, TokenConnectFlow } from "@/components/TokenConnection";
 import { Card, Count, PageHeader } from "@/components/ui";
-import { CONNECTION_REQUEST_PATH, type Loadable, useApi } from "@/lib/api";
+import { CONNECTION_REQUEST_PATH, type Loadable, SYNC_CHANGED_EVENT, useApi } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import type { ConnectionRequestState, GithubConnection, Project } from "@/lib/types";
@@ -76,25 +77,59 @@ export default function SettingsPage() {
   );
 }
 
+const SMALL_BTN = "btn h-8 px-3 text-small";
+
+type Open ={ kind: "connect" } | { kind: "import"; connection: GithubConnection } | null;
+
 function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<GithubConnection[]>; isAdmin: boolean }) {
   const t = useT();
   const ct = t.connections;
+  const tt = t.tokens;
   const list = connections.data;
   const pending = useApi<ConnectionRequestState>(CONNECTION_REQUEST_PATH);
   const request = pending.data?.request ?? null;
   const [connected, setConnected] = useState<string | null>(null);
+  const [open, setOpen] = useState<Open>(null);
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<GithubConnection | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
   const onConnected = (c: GithubConnection) => {
     setConnected(c.accountLogin);
     connections.reload();
     pending.reload();
   };
-  const action =
-    isAdmin && githubInstallUrl ? (
-      <a href={githubInstallUrl} className="btn btn-primary">
-        <GitHubMark />
-        {list && list.length > 0 ? ct.reconnect : ct.connect}
-      </a>
-    ) : null;
+  const refresh = () => {
+    connections.reload();
+    window.dispatchEvent(new Event(SYNC_CHANGED_EVENT));
+  };
+  const close = () => {
+    setOpen(null);
+    startRef.current?.focus();
+  };
+  const hasToken = list?.some((c) => c.authKind === "token" && c.disconnectedAt === null) ?? false;
+  const action = isAdmin ? (
+    <div className="flex flex-wrap gap-2">
+      <button
+        ref={startRef}
+        type="button"
+        className="btn"
+        aria-expanded={open?.kind === "connect"}
+        onClick={() => {
+          setNotice(null);
+          setOpen({ kind: "connect" });
+        }}
+      >
+        {tt.start}
+      </button>
+      {githubInstallUrl && (
+        <a href={githubInstallUrl} className={open ? "btn" : "btn btn-primary"}>
+          <GitHubMark />
+          {list && list.length > 0 ? ct.reconnect : ct.connect}
+        </a>
+      )}
+    </div>
+  ) : null;
 
   return (
     <section aria-labelledby="connections-title" className="card reveal mt-2 [animation-delay:30ms]">
@@ -106,7 +141,25 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
           {list && <Count n={list.length} />}
           <span className="min-w-0 truncate text-small text-muted">{ct.hint}</span>
         </div>
-        {action && <div className="ml-auto shrink-0">{action}</div>}
+        {action && <div className="ml-auto shrink-0 max-[639px]:ml-0">{action}</div>}
+      </div>
+      <p className="px-5 pb-3 text-small text-ink-soft">{tt.kinds}</p>
+      {isAdmin && open && (
+        <div className="mx-5 mb-4 border-t border-rule pt-4">
+          {open.kind === "connect" ? (
+            <TokenConnectFlow onClose={close} onConnected={refresh} />
+          ) : (
+            <OrganizationImport key={open.connection.id} connection={open.connection} onClose={close} onSaved={refresh} />
+          )}
+        </div>
+      )}
+      <div role="status" className="empty:hidden px-5 pb-3">
+        {notice && (
+          <p className="flex items-center gap-2.5 text-ui">
+            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-ink" />
+            <span className="font-medium text-ink">{notice}</span>
+          </p>
+        )}
       </div>
       {request && (
         <div className="px-5 pb-4 pt-2">
@@ -142,12 +195,86 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
         )
       ) : (
         <ul aria-label={ct.listLabel}>
-          {list.map((c) => (
-            <ConnectionRow key={c.id} connection={c} className={ROW_LINE} />
-          ))}
+          {list.map((c) => {
+            const live = c.authKind === "token" && c.disconnectedAt === null;
+            const stopped = live && STOPPED.has(c.tokenStatus);
+            const canImport = live && c.accountType === "organization" && c.tokenStatus === "active";
+            const replaceButton = (
+              <button
+                key="replace"
+                type="button"
+                className={SMALL_BTN}
+                aria-label={tt.replaceLabel(c.accountLogin)}
+                aria-expanded={replacing === c.id}
+                onClick={() => {
+                  setNotice(null);
+                  setReplacing(c.id);
+                }}
+              >
+                {tt.replace}
+              </button>
+            );
+            const actions =
+              isAdmin && live ? (
+                <>
+                  {stopped && replaceButton}
+                  {canImport && (
+                    <button
+                      type="button"
+                      className={SMALL_BTN}
+                      aria-label={tt.pickLabel(c.accountLogin)}
+                      onClick={() => {
+                        setNotice(null);
+                        setOpen({ kind: "import", connection: c });
+                      }}
+                    >
+                      {tt.pick}
+                    </button>
+                  )}
+                  {!stopped && replaceButton}
+                  <button type="button" className={SMALL_BTN} aria-label={tt.disconnectLabel(c.accountLogin)} onClick={() => setDisconnecting(c)}>
+                    {tt.disconnect}
+                  </button>
+                </>
+              ) : undefined;
+            return (
+              <ConnectionRow key={c.id} connection={c} className={ROW_LINE} isAdmin={isAdmin} actions={actions}>
+                {isAdmin && replacing === c.id && (
+                  <ReplaceTokenForm
+                    connection={c}
+                    onCancel={() => setReplacing(null)}
+                    onReplaced={(next) => {
+                      setReplacing(null);
+                      setNotice(tt.replaced(next.accountLogin));
+                      refresh();
+                    }}
+                  />
+                )}
+              </ConnectionRow>
+            );
+          })}
         </ul>
       )}
+      {hasToken && (
+        <div className="mx-5 mb-4 mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-rule pt-3 text-small">
+          <span className="font-semibold text-ink-soft">{tt.bodies}</span>
+          <span className="text-muted">{tt.bodiesNote}</span>
+        </div>
+      )}
       {isAdmin && !githubInstallUrl && <p className="px-5 pb-5 text-small text-muted">{ct.notConfigured}</p>}
+      {disconnecting && (
+        <DisconnectTokenDialog
+          connection={disconnecting}
+          onClose={() => setDisconnecting(null)}
+          onDone={() => {
+            setNotice(tt.disconnected(disconnecting.accountLogin));
+            setDisconnecting(null);
+            setReplacing(null);
+            if (open?.kind === "import" && open.connection.id === disconnecting.id) setOpen(null);
+            refresh();
+          }}
+        />
+      )}
     </section>
   );
 }

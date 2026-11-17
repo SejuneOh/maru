@@ -2,14 +2,24 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ApiError, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
-import { useFormat, useT } from "@/lib/i18n";
+import { ApiError, SYNC_CHANGED_EVENT, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
+import { type Dict, type Format, useFormat, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
-import type { RunSyncError, SyncStatus as Status } from "@/lib/types";
+import type { RunSyncError, SyncStatus as Status, TokenHealth } from "@/lib/types";
+import { TokenMarks, urgency } from "./TokenConnection";
 
 const IDLE_POLL_MS = 60_000;
 const RUNNING_POLL_MS = 5_000;
 const NOTICE_MS = 6_000;
+
+/** "acme · @octocat의 토큰 · 12월 1일 만료": whose token keeps the sync going and until when. */
+function tokenSummary(h: TokenHealth, t: Dict, fmt: Format): string {
+  const tt = t.tokens;
+  const owner = h.tokenOwnerLogin ? tt.kindToken(h.tokenOwnerLogin) : tt.status.token_required;
+  const parts = [h.accountLogin, owner];
+  if (h.tokenStatus !== "token_required") parts.push(h.tokenExpiresAt ? tt.expiresOn(fmt.date(h.tokenExpiresAt)) : tt.noExpiry);
+  return parts.join(" · ");
+}
 
 /**
  * "Synced 3 min ago" for the top bar, refreshed every minute (every 5 s while a sync runs) while the tab is visible.
@@ -33,9 +43,11 @@ export function SyncStatus({ className = "" }: { className?: string }) {
       if (!document.hidden) reload();
     };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener(SYNC_CHANGED_EVENT, reload);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener(SYNC_CHANGED_EVENT, reload);
     };
   }, [reload, running]);
 
@@ -92,8 +104,24 @@ export function SyncStatus({ className = "" }: { className?: string }) {
   } else if (data.lastSyncedAt) label = s.syncedAgo(fmt.relativeTime(data.lastSyncedAt));
   else label = s.never;
 
+  const tokens = [...data.tokens].sort((a, b) => urgency(a) - urgency(b));
+  const first = tokens[0];
+
   return (
-    <div className={`min-w-0 items-center gap-2 text-small ${className}`}>
+    <div className={`min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-small ${className}`}>
+      {first && (
+        <Link
+          href="/settings"
+          title={tokens.map((h) => tokenSummary(h, t, fmt)).join("\n")}
+          className="flex min-w-0 shrink items-center gap-2 rounded-control hover:bg-hover max-[1023px]:basis-full"
+        >
+          <span className="shrink-0 empty:hidden">
+            <TokenMarks health={first} />
+          </span>
+          <span className="min-w-0 truncate text-muted min-[1024px]:sr-only">{tokenSummary(first, t, fmt)}</span>
+          {tokens.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{tokens.length - 1}</span>}
+        </Link>
+      )}
       <p className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={title}>
         <span
           aria-hidden
