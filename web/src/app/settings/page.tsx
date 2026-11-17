@@ -3,6 +3,7 @@
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { GitHubMark } from "@/components/Auth";
 import { ConnectionRow, ROW_LINE, githubInstallUrl } from "@/components/Connections";
+import { TeamCard } from "@/components/TeamCard";
 import { Card, Count, PageHeader } from "@/components/ui";
 import { type Loadable, useApi } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -33,6 +34,8 @@ export default function SettingsPage() {
       </PageHeader>
 
       <ConnectionsCard connections={connections} isAdmin={me.data.member.role === "admin"} />
+
+      {me.data.member.role === "admin" && <TeamCard me={me.data.member} />}
 
       <Card title={st.advanced} hint={st.advancedHint} className="reveal [animation-delay:60ms]">
         <ul>

@@ -9,7 +9,10 @@ import type {
   BoardChangeRequest,
   BoardIssue,
   CreateIssueRequest,
+  CreatedInvitation,
   CreatedIssue,
+  InvitationPreview,
+  JoinedTenant,
   MeetingNote,
   MeetingNoteRequest,
   Milestone,
@@ -276,6 +279,46 @@ export async function saveMeetingNote(
 /** `DELETE /api/meeting-notes/{id}`: the author or an admin, else `403 forbidden`. */
 export async function deleteMeetingNote(id: string): Promise<void> {
   await request<null>(`/api/meeting-notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** `POST /api/invitations` (admin). Rejects with an `ApiError` whose `code` is an `InviteError`. */
+export function inviteMember(githubLogin: string, idempotencyKey: string): Promise<CreatedInvitation> {
+  return request<CreatedInvitation>("/api/invitations", {
+    method: "POST",
+    body: { githubLogin },
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `DELETE /api/invitations/{id}` (admin). */
+export async function revokeInvitation(id: string, idempotencyKey: string): Promise<void> {
+  await request<null>(`/api/invitations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `DELETE /api/members/{id}` (admin). Rejects with an `ApiError` whose `code` is a `RemoveError`. */
+export async function removeMember(id: string, idempotencyKey: string): Promise<void> {
+  await request<null>(`/api/members/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `POST /api/invitations/preview`. Needs a sign-in, no membership. Rejects with an `ApiError` (`code` a `JoinError`). */
+export function previewInvitation(token: string): Promise<InvitationPreview> {
+  return apiPost<InvitationPreview>("/api/invitations/preview", { token });
+}
+
+/** `POST /api/invitations/accept`. Repeating a successful accept returns the same result. */
+export function acceptInvitation(token: string): Promise<JoinedTenant> {
+  return apiPost<JoinedTenant>("/api/invitations/accept", { token });
+}
+
+/** The address an invitee opens. The token sits in the fragment so it never reaches the static host. */
+export function inviteLink(token: string): string {
+  return `${window.location.origin}/join#${token}`;
 }
 
 /** Issue lists, sprint counts and the overview are what an issue write changes. */

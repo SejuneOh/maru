@@ -20,6 +20,9 @@ export const GATE_EVENT = "workboard:gate";
 
 export const LOGIN_PATH = "/login";
 
+/** Invite links: `/join#<token>`. */
+export const JOIN_PATH = "/join";
+
 let client: SupabaseClient | null = null;
 
 export function supabase(): SupabaseClient | null {

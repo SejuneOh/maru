@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef } from "react";
 import { ApiError, type Loadable, setDevIdentity, useApi } from "@/lib/api";
-import { GATE_EVENT, LOGIN_PATH, authEnabled, isLeaving, loginHref, signOut, useSession } from "@/lib/auth";
+import { GATE_EVENT, JOIN_PATH, LOGIN_PATH, authEnabled, isLeaving, loginHref, signOut, useSession } from "@/lib/auth";
 import { MeProvider, SessionProvider, useSignedIn } from "@/lib/me";
 import type { Me } from "@/lib/types";
 import { AppShell } from "./AppShell";
@@ -12,9 +12,15 @@ import { Loading } from "./Feedback";
 
 type GateState = "checking" | "signedOut" | "resolving" | "chooseTenant" | "noMembership" | "error" | "ready";
 
-/** `/login` and the OAuth callback render on their own; everything else waits for the gate. */
+/** `/login`, the OAuth callback and `/join` (no membership yet) render on their own; everything else waits for the gate. */
 export function isPublicPath(pathname: string) {
-  return pathname === LOGIN_PATH || pathname.startsWith(`${LOGIN_PATH}/`) || pathname.startsWith("/auth/");
+  return (
+    pathname === LOGIN_PATH ||
+    pathname.startsWith(`${LOGIN_PATH}/`) ||
+    pathname.startsWith("/auth/") ||
+    pathname === JOIN_PATH ||
+    pathname.startsWith(`${JOIN_PATH}/`)
+  );
 }
 
 /** The API turned the person away: the session (or dev user) is gone or no longer valid. */
