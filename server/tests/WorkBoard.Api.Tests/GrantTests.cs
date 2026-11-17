@@ -20,6 +20,10 @@ public class GrantTests : IClassFixture<WebApplicationFactory<Program>>
         { "github_connections", "update github_connections set account_login = 'x'" },
         { "members", "update members set display_name = 'x'" },
         { "members", "delete from members" },
+        { "members", "update members set role = 'admin'" },
+        { "invitations", "update invitations set token_hash = token_hash" },
+        { "invitations", "update invitations set accepted_at = now()" },
+        { "invitations", "delete from invitations" },
         { "repositories", "update repositories set archived = true" },
         { "issues", "update issues set title = 'x'" },
         { "issues", "delete from issues" },
@@ -46,6 +50,8 @@ public class GrantTests : IClassFixture<WebApplicationFactory<Program>>
         "update meeting_notes set title = title",
         "update meeting_attendees set note_id = note_id",
         "update meeting_action_items set text = text",
+        "update members set left_at = left_at",
+        "update invitations set revoked_at = revoked_at",
     };
 
     private async Task<(NpgsqlConnection Conn, NpgsqlTransaction Tx)> OpenAsync()

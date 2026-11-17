@@ -57,7 +57,7 @@ public static class NewIssueEndpoints
              order by l.name
             """)).ToLookup(l => l.RepositoryId);
         var members = await s.QueryAsync<NewIssueAssignee>("""
-            select github_user_id, github_login, display_name, avatar_url from members where removed_at is null order by github_login
+            select github_user_id, github_login, display_name, avatar_url from members where removed_at is null and left_at is null order by github_login
             """);
         return new NewIssueOptions(
             repos.Select(r => new NewIssueRepository(r.Id, r.Name, r.FullName, r.Archived,
