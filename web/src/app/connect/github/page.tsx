@@ -4,15 +4,16 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { GitHubMark } from "@/components/Auth";
-import { ConnectionRow, githubInstallUrl } from "@/components/Connections";
+import { ConnectionRequestPanel, ConnectionRow, githubInstallUrl } from "@/components/Connections";
 import { PageHeader } from "@/components/ui";
-import { ApiError, apiGet, apiPost } from "@/lib/api";
+import { ApiError, apiGet, apiPost, createConnectionRequest } from "@/lib/api";
 import { type Dict, useT } from "@/lib/i18n";
-import type { ConnectGithubError, ConnectGithubRequest, GithubConnection } from "@/lib/types";
+import type { ConnectGithubError, ConnectGithubRequest, ConnectionRequest, GithubConnection } from "@/lib/types";
 
 type Reason = keyof Dict["connect"]["errors"];
 type State =
   | { kind: "working" }
+  | { kind: "requested"; request: ConnectionRequest }
   | { kind: "done"; connection: GithubConnection }
   | { kind: "failed"; reason: Reason; code: string | null; retry: boolean };
 
@@ -31,6 +32,17 @@ function connect(body: ConnectGithubRequest): Promise<GithubConnection> {
     pending.set(body.code, p);
   }
   return p;
+}
+
+/** One request-recording call for the life of the page; the server answers a repeat with the open request anyway. */
+let recording: Promise<ConnectionRequest> | null = null;
+
+function recordRequest(): Promise<ConnectionRequest> {
+  recording ??= createConnectionRequest().catch((e: unknown) => {
+    recording = null;
+    throw e;
+  });
+  return recording;
 }
 
 /**
@@ -52,8 +64,11 @@ const KNOWN: ReadonlySet<string> = new Set<Exclude<ConnectGithubError, "unauthen
   "admin_only",
   "not_your_account",
   "not_your_installation",
+  "not_org_owner",
+  "not_org_member",
   "account_connected",
-  "organization_not_supported",
+  "org_members_not_granted",
+  "unsupported_account",
   "github_unavailable",
   "github_app_not_configured",
 ]);
@@ -67,9 +82,10 @@ const RESTARTABLE: ReadonlySet<Reason> = new Set<Reason>([
   "invalid_code",
   "not_your_account",
   "not_your_installation",
-  "organization_not_supported",
+  "not_org_owner",
+  "org_members_not_granted",
+  "unsupported_account",
   "missing_params",
-  "setup_request",
 ]);
 
 function reasonOf(e: unknown): State {
@@ -103,6 +119,23 @@ export default function ConnectGithubPage() {
   const [state, setState] = useState<State>({ kind: "working" });
   const title = useRef<HTMLHeadingElement>(null);
 
+  const requesting = input === "request";
+
+  useEffect(() => {
+    if (!requesting) return;
+    let cancelled = false;
+    recordRequest()
+      .then((request) => {
+        if (!cancelled) setState({ kind: "requested", request });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setState(reasonOf(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requesting, attempt]);
+
   useEffect(() => {
     if (code === null || installationId === null) return;
     let cancelled = false;
@@ -124,12 +157,7 @@ export default function ConnectGithubPage() {
     return () => window.clearTimeout(id);
   }, [state.kind, router]);
 
-  const view: State =
-    input === "request"
-      ? { kind: "failed", reason: "setup_request", code: null, retry: false }
-      : input === null
-        ? { kind: "failed", reason: "missing_params", code: null, retry: false }
-        : state;
+  const view: State = input === null ? { kind: "failed", reason: "missing_params", code: null, retry: false } : state;
 
   useEffect(() => {
     title.current?.focus();
@@ -141,22 +169,18 @@ export default function ConnectGithubPage() {
     setAttempt((n) => n + 1);
   };
 
-  const heading =
-    view.kind === "working"
-      ? ct.workingTitle
-      : view.kind === "done"
-        ? ct.doneTitle
-        : view.reason === "setup_request"
-          ? ct.pendingTitle
-          : ct.failedTitle;
-  const lead =
-    view.kind === "working"
-      ? ct.workingLead
-      : view.kind === "done"
-        ? ct.doneLead
-        : view.reason === "setup_request"
-          ? ct.pendingLead
-          : ct.failedLead;
+  const heading = {
+    working: requesting ? ct.requestSaving : ct.workingTitle,
+    requested: t.connections.request.title,
+    done: ct.doneTitle,
+    failed: ct.failedTitle,
+  }[view.kind];
+  const lead = {
+    working: ct.workingLead,
+    requested: t.connections.request.pendingHint,
+    done: ct.doneLead,
+    failed: ct.failedLead,
+  }[view.kind];
 
   return (
     <div className="flex max-w-[720px] flex-col gap-6">
@@ -175,8 +199,22 @@ export default function ConnectGithubPage() {
         {view.kind === "working" && (
           <p role="status" className="flex items-center gap-2.5 px-5 py-5 text-ui text-muted">
             <GitHubMark />
-            {ct.workingTitle}
+            {requesting ? ct.requestSaving : ct.workingTitle}
           </p>
+        )}
+
+        {view.kind === "requested" && (
+          <div className="flex flex-col gap-4 p-5">
+            <ConnectionRequestPanel
+              request={view.request}
+              isAdmin
+              primary
+              onConnected={(connection) => setState({ kind: "done", connection })}
+            />
+            <Link href="/settings" className="link self-start text-ui">
+              {ct.back}
+            </Link>
+          </div>
         )}
 
         {view.kind === "done" && (
