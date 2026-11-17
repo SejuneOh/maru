@@ -8,7 +8,10 @@ public sealed record Project(Guid Id, string Name, string? Color, IReadOnlyList<
 
 public static class ProjectsEndpoints
 {
-    public static void MapProjects(this RouteGroupBuilder api) =>
+    public static void MapProjects(this RouteGroupBuilder api)
+    {
+        api.MapGet("/projects/done-by-week", async (TenantDb db, CancellationToken ct) =>
+            Results.Ok(await db.ReadAsync(DoneByWeekQuery.BuildAsync, ct)));
         api.MapGet("/projects", async (TenantDb db, CancellationToken ct) =>
         {
             var (projects, repos) = await db.ReadAsync(async s => (
@@ -23,6 +26,7 @@ public static class ProjectsEndpoints
             var byProject = repos.ToLookup(r => r.ProjectId, r => new RepositoryRef(r.RepositoryId, r.Name));
             return projects.Select(p => new Project(p.Id, p.Name, p.Color, byProject[p.Id].ToList())).ToList();
         });
+    }
 
     private sealed class ProjectRow
     {

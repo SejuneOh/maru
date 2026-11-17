@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Fragment } from "react";
+import { RemainingTrend } from "@/components/Charts";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { useIssuePanel } from "@/components/useIssuePanel";
 import { ROW_ATTR } from "@/components/useShortcuts";
@@ -704,50 +705,60 @@ function Milestones() {
 
 function Sprint({ sprint }: { sprint: NonNullable<Overview["sprint"]> }) {
   const t = useT();
+  const settings = useSettings();
   const sp = t.overview.sprint;
   const days = sprintCalendar(sprint.startDate, sprint.endDate);
   const todayIndex = days.findIndex((d) => d.today);
   const s = sprint.byStatus;
   return (
-    <Link
-      href={`/projects?sprint=${sprint.id}`}
-      className="block border-t border-rule bg-canvas px-5 pb-5 pt-4 transition-colors duration-[120ms] ease-tool hover:bg-hover focus-visible:-outline-offset-2"
-    >
-      <div className="mb-2 flex items-baseline justify-between gap-2.5">
-        <div className="min-w-0">
-          <span className="text-ui font-semibold">{sprint.name}</span>{" "}
-          <span className="font-mono text-meta text-muted">
-            {sprint.startDate.slice(5).replace("-", ".")}–{sprint.endDate.slice(5).replace("-", ".")}
-          </span>
+    <div className="border-t border-rule bg-canvas">
+      <Link
+        href={`/projects?sprint=${sprint.id}`}
+        className="block px-5 pb-4 pt-4 transition-colors duration-[120ms] ease-tool hover:bg-hover focus-visible:-outline-offset-2"
+      >
+        <div className="mb-2 flex items-baseline justify-between gap-2.5">
+          <div className="min-w-0">
+            <span className="text-ui font-semibold">{sprint.name}</span>{" "}
+            <span className="font-mono text-meta text-muted">
+              {sprint.startDate.slice(5).replace("-", ".")}–{sprint.endDate.slice(5).replace("-", ".")}
+            </span>
+          </div>
+          <div className="whitespace-nowrap font-mono text-small font-medium">
+            {sprint.daysLeft}
+            <small className="ml-0.5 font-sans text-meta font-normal text-muted">{sp.daysLeft(sprint.daysLeft)}</small>
+          </div>
         </div>
-        <div className="whitespace-nowrap font-mono text-small font-medium">
-          {sprint.daysLeft}
-          <small className="ml-0.5 font-sans text-meta font-normal text-muted">{sp.daysLeft(sprint.daysLeft)}</small>
+        {days.length > 0 && (
+          <div
+            className="mb-2.5 grid gap-0.5"
+            style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}
+            role="img"
+            aria-label={todayIndex >= 0 ? sp.dayOf(todayIndex + 1, days.length) : sp.length(days.length)}
+          >
+            {days.map((d) => (
+              <i
+                key={d.key}
+                className={`h-2.5 rounded-[1px] ${d.today ? "bg-ink" : d.past ? "bg-muted opacity-60" : "bg-rule"} ${
+                  d.weekend && !d.today ? "!opacity-40" : ""
+                }`}
+              />
+            ))}
+          </div>
+        )}
+        <ProgressBar counts={s} />
+        <div className="mt-2.5 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-small text-muted">
+          <span>{progressLine(s, t)}</span>
+          <span>{sp.reviewAndProgress(s.inReview, s.inProgress)}</span>
         </div>
-      </div>
-      {days.length > 0 && (
-        <div
-          className="mb-2.5 grid gap-0.5"
-          style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}
-          role="img"
-          aria-label={todayIndex >= 0 ? sp.dayOf(todayIndex + 1, days.length) : sp.length(days.length)}
-        >
-          {days.map((d) => (
-            <i
-              key={d.key}
-              className={`h-2.5 rounded-[1px] ${d.today ? "bg-ink" : d.past ? "bg-muted opacity-60" : "bg-rule"} ${
-                d.weekend && !d.today ? "!opacity-40" : ""
-              }`}
-            />
-          ))}
-        </div>
-      )}
-      <ProgressBar counts={s} />
-      <div className="mt-2.5 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-small text-muted">
-        <span>{progressLine(s, t)}</span>
-        <span>{sp.reviewAndProgress(s.inReview, s.inProgress)}</span>
-      </div>
-    </Link>
+      </Link>
+      <RemainingTrend
+        name={sprint.name}
+        startDate={sprint.startDate}
+        endDate={sprint.endDate}
+        trend={sprint.trend}
+        showWeight={settings.sizeEnabled}
+      />
+    </div>
   );
 }
 

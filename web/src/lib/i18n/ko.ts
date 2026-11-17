@@ -520,6 +520,20 @@ export const ko = {
       dayOf: (day: number, total: number) => `${total}일 중 ${day}일째`,
       length: (total: number) => `${total}일 주기`,
       reviewAndProgress: (inReview: number, inProgress: number) => `리뷰 중 ${inReview} · 진행 중 ${inProgress}`,
+      trendTitle: "남은 일 추이",
+      remaining: "남은 일",
+      unit: (() => "건") as (n: number) => string,
+      ideal: "기준선",
+      byWeight: (pct: number) => `크기로 보면 ${pct}% 남음`,
+      gaps: "기록이 빠진 날은 선을 끊었습니다.",
+      trendEmpty: "아직 기록이 없습니다. 남은 일은 하루 한 번 기록되고, 첫 기록 뒤에 선이 그려집니다.",
+      point: (day: string, remaining: number | null, ideal: number | null) =>
+        [day, remaining === null ? "기록 없음" : `남은 일 ${remaining}건`, ideal === null ? null : `기준선 ${ideal}건`]
+          .filter(Boolean)
+          .join(" · "),
+      tableCaption: (name: string) => `${name} 날짜별 남은 일(건)과 기준선`,
+      day: "날짜",
+      noRecord: "기록 없음",
     },
     actions: {
       title: "회의에서 나온 할 일",
@@ -667,6 +681,13 @@ export const ko = {
     project: "프로젝트",
     filter: "필터",
     notesLink: "이 프로젝트의 회의록 →",
+    weekly: "한 주에 끝낸 일",
+    thisWeek: "이번 주",
+    weeksAgo: (n: number) => `${n}주 전`,
+    unit: (() => "건") as (n: number) => string,
+    weeklyAria: (items: string) => `최근 8주 끝낸 일: ${items}`,
+    weekItem: (week: string, n: number) => `${week} 주 ${n}건`,
+    weeklyError: "주별로 끝낸 일을 불러오지 못했습니다.",
   },
 
   notes: {

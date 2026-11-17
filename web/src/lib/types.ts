@@ -379,7 +379,16 @@ export type Overview = {
     openPullRequests: number;
     latestNote: OverviewNoteRef | null;
   }[];
-  sprint: { id: string; name: string; startDate: string; endDate: string; daysLeft: number; byStatus: StatusCounts } | null;
+  sprint: {
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    daysLeft: number;
+    byStatus: StatusCounts;
+    /** Recorded days only, oldest first; a day the sync missed has no entry. */
+    trend: SprintDay[];
+  } | null;
   milestones: null;
   actionItems: {
     id: string;
@@ -465,3 +474,9 @@ export type SprintWriteError =
   | "invalid_request"
   | "conflict"
   | "not_found";
+
+/** One day of `sprint_daily` (Asia/Seoul). `remaining` = scope - done; cancelled issues are in neither. */
+export type SprintDay = { day: string; scope: number; remaining: number; scopeWeight: number; remainingWeight: number };
+
+/** `GET /api/projects/done-by-week`: `weeks` are Monday dates, oldest first, the last is this week; `done[i]` belongs to `weeks[i]`. */
+export type DoneByWeek = { weeks: string[]; projects: { projectId: string; done: number[] }[] };
