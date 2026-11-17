@@ -43,7 +43,11 @@ public sealed record OverviewProject(
     OverviewProjectRef Project, StatusCounts ByStatus, int OpenPullRequests, NoteRef? LatestNote);
 
 public sealed record OverviewSprint(
-    Guid Id, string Name, string StartDate, string EndDate, int DaysLeft, StatusCounts ByStatus);
+    Guid Id, string Name, string StartDate, string EndDate, int DaysLeft, StatusCounts ByStatus,
+    IReadOnlyList<SprintDay> Trend);
+
+// One recorded day of sprint_daily; remaining = scope - done. Days without a row are absent.
+public sealed record SprintDay(string Day, int Scope, int Remaining, int ScopeWeight, int RemainingWeight);
 
 public sealed record ActionItemIssue(Guid Id, string RepositoryName, int Number, string Status);
 

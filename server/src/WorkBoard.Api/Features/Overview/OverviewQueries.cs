@@ -267,10 +267,19 @@ public static class OverviewQueries
               left join issue_status st on st.issue_id = i.id
              group by sp.id, sp.name, sp.start_date, sp.end_date
             """);
-        return sprint is null
-            ? null
-            : new OverviewSprint(sprint.Id, sprint.Name, sprint.StartDate, sprint.EndDate, sprint.DaysLeft,
-                new StatusCounts(sprint.Todo, sprint.InProgress, sprint.InReview, sprint.Done));
+        if (sprint is null)
+            return null;
+
+        var trend = await s.QueryAsync<SprintDailyRow>("""
+            select day::text as day, scope_count, scope_weight, done_count, done_weight
+              from sprint_daily
+             where sprint_id = @id
+             order by day
+            """, new { id = sprint.Id });
+        return new OverviewSprint(sprint.Id, sprint.Name, sprint.StartDate, sprint.EndDate, sprint.DaysLeft,
+            new StatusCounts(sprint.Todo, sprint.InProgress, sprint.InReview, sprint.Done),
+            trend.Select(d => new SprintDay(d.Day, d.ScopeCount, d.ScopeCount - d.DoneCount,
+                d.ScopeWeight, d.ScopeWeight - d.DoneWeight)).ToList());
     }
 
     // ---- meeting action items ----
@@ -513,6 +522,15 @@ public static class OverviewQueries
         public int InProgress { get; set; }
         public int InReview { get; set; }
         public int Done { get; set; }
+    }
+
+    private sealed class SprintDailyRow
+    {
+        public string Day { get; set; } = "";
+        public int ScopeCount { get; set; }
+        public int ScopeWeight { get; set; }
+        public int DoneCount { get; set; }
+        public int DoneWeight { get; set; }
     }
 
     private sealed class ActivityRow

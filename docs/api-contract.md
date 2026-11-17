@@ -84,6 +84,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/me` | dev user | `Me` |
 | GET | `/api/members` | dev user | `Member[]` |
 | GET | `/api/projects` | dev user | `Project[]` |
+| GET | `/api/projects/done-by-week` | dev user | `DoneByWeek`, see below |
 | GET | `/api/connections` | dev user | `GithubConnection[]`, active first |
 | POST | `/api/connections/github` | dev user, admin | `GithubConnection` (`201` new, `200` existing updated) |
 | GET | `/api/overview` | dev user | `Overview` |
@@ -284,7 +285,7 @@ cancelled, which the undo's status check refuses on its own. Migrations must run
 `seq` of the `carried_over` events that carry-over wrote; "newer than the carry-over" means `seq > event_seq`. Carry-overs made before
 the column existed have `event_seq` null and keep comparing `at` with `created_at`.
 
-Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining-work chart reads it later):
+Daily sprint numbers (`sprint_daily`; read by the overview's `sprint.trend`):
 
 - The sync loop writes one row per sprint and day after every cycle, for tenants with `sprintsEnabled` and sprints whose
   dates contain the day and that are not stored as `closed`. The day is Asia/Seoul. Repeated cycles on one day overwrite that
@@ -296,6 +297,14 @@ Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining
   for issues it already stored whose state changed, or that stayed closed with a different reason (`closed`, `from_value`/`to_value` the
   reasons); `member_id` is null. Board writes that only mirror a response (assignees and similar) record the same member-less event when
   the applied response differs from the stored state or reason. An issue first seen already closed gets no event.
+
+`GET /api/projects/done-by-week` (any member) counts finished issues per project and week for the last 8 weeks:
+`weeks` holds the Monday (`yyyy-MM-dd`, Asia/Seoul) of each week, oldest first, the last one being the current week;
+`projects[].done[i]` is the number of issues of the project's repositories that are closed with a reason other than
+`not_planned` (status `done`; `cancelled` is left out) and whose `closed_at` falls in week `i` (Monday 00:00 to Sunday 24:00 in Asia/Seoul).
+`closed_at` is the latest close, so an issue that was reopened and closed again counts once, in the week of that last close,
+and an issue that is open again counts nowhere. Every project is listed, with zeros when nothing was finished; an issue in two
+projects counts in both. Projects are ordered by name.
 
 `GET /api/milestones` counts exclude `cancelled` issues in `issueCount`; `doneCount` counts status `done`.
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.
@@ -405,6 +414,10 @@ tenant transaction (no cache). Rules:
 - `sprint` is the sprint, not stored as `closed`, whose dates contain today (Asia/Seoul); with overlapping sprints the one with
   the latest start date (then id). `null` when sprints are disabled or none is active. The stored `state` is ignored except `closed`.
   `startDate`/`endDate` are `yyyy-MM-dd`; `daysLeft` counts from today in Asia/Seoul and is never negative.
+- `sprint.trend` is every `sprint_daily` row of that sprint, oldest day first: `remaining = scope_count - done_count`,
+  `remainingWeight = scope_weight - done_weight`. Days the job missed have no entry; nothing is filled in (the chart breaks the
+  line there). Empty until the first row is written. The ideal line is the client's: from the first row's `scope` on its day
+  down to 0 on `endDate`.
 - `milestones` is always `null` until sync provides milestones.
 - `attention.actionItemsWithoutIssue` covers every meeting action item without an issue (no date window);
   `actionItems` covers notes held in the last 14 days whose item has no issue or an unfinished one.
@@ -471,7 +484,7 @@ type Overview = {
     latestNote: { id: string; title: string; heldAt: string } | null;
   }[];
   sprint: { id: string; name: string; startDate: string; endDate: string; daysLeft: number;
-            byStatus: StatusCounts } | null;
+            byStatus: StatusCounts; trend: SprintDay[] } | null;
   milestones: null;
   actionItems: {
     id: string; text: string; assignee: Member | null;
@@ -528,6 +541,8 @@ type GithubConnection = {
 };
 
 type Project = { id: string; name: string; color: string | null; repositories: { id: string; name: string }[] };
+type DoneByWeek = { weeks: string[]; projects: { projectId: string; done: number[] }[] };   // done[i] belongs to weeks[i]
+type SprintDay = { day: string; scope: number; remaining: number; scopeWeight: number; remainingWeight: number };
 
 type Status = "todo" | "in_progress" | "in_review" | "done" | "cancelled";
 type Category = "todo" | "in_progress" | "done";
