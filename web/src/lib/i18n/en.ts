@@ -697,6 +697,10 @@ export const en: Dict = {
       madeSomeDetail: "Each item that failed says why on its own row, with a retry.",
       made: (ref: string) => `Created ${ref}`,
       already: (ref: string) => `Already made as ${ref}`,
+      earlierRepository: [
+        "An earlier attempt went to a repository that is no longer connected, so it cannot be checked for this issue.",
+        "Reconnect that repository in Settings, then make the issue again.",
+      ],
       pending: "Created on GitHub · linked after the next sync",
       elsewhere: "Another request is creating its issue",
       noRepos: "No repository can take new issues.",

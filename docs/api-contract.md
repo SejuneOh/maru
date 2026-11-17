@@ -343,24 +343,32 @@ Turning an action item into a GitHub issue (any member, GitHub write through the
   that is not in the tenant or not connected, is `404 not_found`; an archived repository is `409 repository_archived`.
 - The issue: title = the item's text (cut to 255 characters plus `…` when longer than 256; the whole text then opens the body). Body
   `회의록: [<note title>](<link>) (<held date, yyyy-MM-dd in Asia/Seoul>)` and, with a due date, `마감: <yyyy-MM-dd>` (GitHub has no
-  due date, and no milestone is chosen), then the footer naming the caller as in `POST /api/issues`. The note title is escaped so it
-  stays plain text. Assignee = the item's owner (a member, by GitHub login); `droppedAssignees` lists the owner when GitHub did not assign them.
+  due date, and no milestone is chosen), then the footer naming the caller as in `POST /api/issues`. Typed text in the body (the note
+  title, the whole item text) is made inert: Markdown punctuation is backslash-escaped (no links, images, emphasis or `#` references),
+  `<`, `>`, `&` become HTML entities (no HTML, so no comment that could pass for a create marker), and every `@` is followed by a zero-width
+  joiner (no mention). Assignee = the item's owner (a member, by GitHub login); `droppedAssignees` lists the owner when GitHub did not assign them.
   No labels and no board fields are set.
 - Link: `<Web:BaseUrl>/notes/view?id=<noteId>`. `Web:BaseUrl` is a setting (the public address of the web app, for example
-  `https://board.example.com`; a path is kept). Without it the request's `Origin` header is used (browsers send it on these calls);
-  with neither, or when it is not an `http(s)` address, the body names the note without a link.
+  `https://board.example.com`; a path is kept). Without it the request's `Origin` header is used only when it is one of
+  `Web:AllowedOrigins` (the same list the CORS policy allows; default `http://localhost:3000`). Otherwise, or when the address is not
+  `http(s)`, the body names the note without a link.
 - Answers: `201 ActionItemIssueResult` with `created: true` when this request made the link (by creating the issue, or by finding the
   one an earlier attempt created). `200` with `created: false` when the item already had its issue (any key, any member; nothing is sent
   to GitHub, also for a resend of the request that created it). `202 PendingActionItemIssue` when GitHub created the issue but saving it
-  locally failed: the item remembers the repository and number (`MeetingActionItem.pendingIssue`), shows the issue as soon as a sync mirrors
-  it, and the next request for the item links it (`200`) or answers `202` again, without calling GitHub. Errors: those of `POST /api/issues`
-  (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
+  locally failed: the item remembers the repository and number (`MeetingActionItem.pendingIssue`). The mirror links the item in the same
+  transaction that stores that issue (a sync run or any later board write in the repository), and clears the claim; until then the item
+  counts as having no issue everywhere (overview, note list counts, linked notes of the issue). A request for a pending item links it if the
+  mirror has the issue (`200`) or answers `202` again, without calling GitHub; its `htmlUrl` is null and `repository` empty when the
+  repository is no longer in the mirror. Errors: those of `POST /api/issues` (`github_write_not_granted`, `assignee_not_collaborator`,
+  `github_unavailable`, `request_in_progress`, `idempotency_key_reused`), and `409 earlier_repository_unavailable` (below).
 - One issue per item, whatever the keys: while GitHub is called the item row holds a claim (the request's key, the time, the time of the
-  first claim, the repository), taken under the item's row lock after the key's own reservation. A request with another key while a claim
+  first claim, and every repository a create was sent to since the first claim), taken under the item's row lock after the key's own
+  reservation. The requested repository joins that list before GitHub is called and none leaves it until the claim ends. A request with another key while a claim
   younger than 2 minutes exists is `409 request_in_progress` and calls nothing. GitHub refusing before creating (`403`, `404`, `422`) frees
   the item; an unknown outcome (`502` that may have had an effect, `504`, a crash) keeps the claim. A request that finds a claim of its own
-  key, or one older than 2 minutes, first lists the issues (as in `POST /api/issues`) of the claim's repository and, if different, the requested
-  one, created since the first claim minus 5 minutes, and links the issue carrying the item's marker instead of creating. The marker is
+  key, or one older than 2 minutes, first lists the issues (as in `POST /api/issues`) of every repository in the claim and the requested one,
+  created since the first claim minus 5 minutes, and links the issue carrying the item's marker instead of creating. If one of those
+  repositories is no longer connected, nothing is looked up or created: `409 earlier_repository_unavailable` (reconnect it; the item stays held). The marker is
   `<!-- work-board:create:<id> -->` with `<id>` hashed from tenant and item only, so every key and member shares it. A lookup that cannot be
   read is `504 github_unavailable`: nothing is created and the claim stays. Other limits as in `POST /api/issues` (marker removed by editing,
   `GitHub:App:Slug` needed for lookups).
@@ -621,7 +629,7 @@ type MeetingActionItem = {
 
 type ActionItemIssueRequest = { repositoryId: string };
 type ActionItemIssueResult = { actionItem: MeetingActionItem; created: boolean; droppedAssignees: number[] };
-type PendingActionItemIssue = { actionItemId: string; repository: string; number: number; htmlUrl: string; mirrorPending: true };
+type PendingActionItemIssue = { actionItemId: string; repository: string; number: number; htmlUrl: string | null; mirrorPending: true };
 
 type MeetingNoteRequest = {
   id?: string;                                          // POST only: client-generated, makes a resent POST safe

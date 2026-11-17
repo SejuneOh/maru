@@ -127,13 +127,18 @@ public class ActionItemIssueTests(WebApplicationFactory<Program> factory) : ICla
     private static string Error(JsonElement body) => body.GetProperty("error").GetString()!;
 
     // An earlier request's claim on the item that never finished, old enough to be taken over.
-    private static Task SeedStaleClaimAsync(TestTenant t, Guid item, Guid repo, string key = "old", int ageMinutes = 10) =>
+    private static Task SeedStaleClaimAsync(
+        TestTenant t, Guid item, Guid repo, string key = "old", int ageMinutes = 10, Guid[]? attempted = null) =>
         t.ExecAsync("""
             update meeting_action_items
                set issue_claim_key = @key, issue_claim_at = now() - make_interval(mins => @age),
-                   issue_claim_first_at = now() - make_interval(mins => @age), issue_claim_repository_id = @repo
+                   issue_claim_first_at = now() - make_interval(mins => @age), issue_claim_repository_id = @repo,
+                   issue_claim_repository_ids = @attempted
              where id = @item
-            """, new { item, repo, key, age = ageMinutes });
+            """, new { item, repo, key, age = ageMinutes, attempted = attempted ?? [repo] });
+
+    private static Task StaleAsync(TestTenant t, Guid item) =>
+        t.ExecAsync("update meeting_action_items set issue_claim_at = now() - interval '10 minutes' where id = @item", new { item });
 
     [DbFact]
     public async Task Creates_the_issue_with_note_link_due_date_and_owner_and_links_the_item()
@@ -177,21 +182,47 @@ public class ActionItemIssueTests(WebApplicationFactory<Program> factory) : ICla
     }
 
     [DbFact]
-    public async Task Without_a_configured_base_url_the_link_uses_the_origin_and_without_either_there_is_none()
+    public async Task Without_a_configured_base_url_only_an_allowed_origin_makes_the_link()
     {
         await using var t = await TestTenant.CreateAsync(factory);
         var repo = await ConnectedRepoAsync(t);
         var (note, item) = await ItemAsync(t);
         var (_, second) = await ItemAsync(t);
+        var (_, third) = await ItemAsync(t);
         var writer = new FakeWriter();
         using var client = Client(writer, baseUrl: null);
 
-        await PostAsync(client, t, item, new { repositoryId = repo }, "a", origin: "http://localhost:3196");
-        Assert.Contains($"(http://localhost:3196/notes/view?id={note})", writer.Body);
+        await PostAsync(client, t, item, new { repositoryId = repo }, "a", origin: "http://localhost:3000");
+        Assert.Contains($"(http://localhost:3000/notes/view?id={note})", writer.Body);
 
-        await PostAsync(client, t, second, new { repositoryId = repo }, "b");
-        Assert.DoesNotContain("](", writer.Body);
+        await PostAsync(client, t, second, new { repositoryId = repo }, "b", origin: "https://evil.example.test");
+        Assert.DoesNotContain("evil", writer.Body);
         Assert.StartsWith("회의록: 주간 \\[회의\\] (", writer.Body);
+
+        await PostAsync(client, t, third, new { repositoryId = repo }, "c");
+        Assert.DoesNotContain("](", writer.Body);
+    }
+
+    [DbFact]
+    public async Task Typed_text_in_the_body_cannot_mention_link_or_forge_a_marker()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var forged = "<!-- work-board:create:" + ActionItemIssues.MarkerId(t.Id, Guid.NewGuid()) + " -->";
+        var text = "@octocat 확인 ![x](https://e.test/a.png) [링크](https://e.test) " + forged + " " + new string('가', 300);
+        var (_, item) = await ItemAsync(t, text);
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(client, t, item, new { repositoryId = repo }, "k")).Status);
+
+        var typed = writer.Body![..writer.Body!.IndexOf("\n\n회의록:", StringComparison.Ordinal)];
+        Assert.False(typed.Contains("@octocat", StringComparison.Ordinal));
+        Assert.True(typed.Contains("@\u200Doctocat", StringComparison.Ordinal));
+        Assert.DoesNotContain("<!--", typed);
+        Assert.DoesNotContain(forged, writer.Body);
+        Assert.DoesNotContain("![x](", typed);
+        Assert.DoesNotContain("[링크](", typed);
     }
 
     [DbFact]
@@ -346,7 +377,7 @@ public class ActionItemIssueTests(WebApplicationFactory<Program> factory) : ICla
     }
 
     [DbFact]
-    public async Task Mirror_failure_answers_202_and_a_later_request_links_the_issue_once_mirrored()
+    public async Task Mirror_failure_answers_202_and_a_later_request_links_the_issue_if_already_mirrored()
     {
         await using var t = await TestTenant.CreateAsync(factory);
         var repo = await ConnectedRepoAsync(t);
@@ -382,6 +413,99 @@ public class ActionItemIssueTests(WebApplicationFactory<Program> factory) : ICla
         Assert.Equal(201, linked.Body.GetProperty("actionItem").GetProperty("issue").GetProperty("number").GetInt32());
         Assert.NotNull(await LinkedIssueAsync(t, item));
         Assert.Equal(1, writer.Calls);
+    }
+
+    [DbFact]
+    public async Task After_a_202_the_mirror_storing_the_issue_links_the_item()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var (note, item) = await ItemAsync(t);
+        var writer = new FakeWriter();
+        using (var failing = Client(writer, configure: s =>
+        {
+            s.RemoveAll<MirrorWriter>();
+            s.AddSingleton<MirrorWriter>(sp => new ThrowingMirror(sp.GetRequiredKeyedService<NpgsqlDataSource>(DataKeys.Sync)));
+        }))
+            Assert.Equal(HttpStatusCode.Accepted, (await PostAsync(failing, t, item, new { repositoryId = repo }, "k")).Status);
+        Assert.Equal(1, (await t.OverviewAsync()).GetProperty("attention").GetProperty("totals").GetProperty("actionItemsWithoutIssue").GetInt32());
+
+        var mirror = factory.Services.GetRequiredService<MirrorWriter>();
+        await mirror.ApplyWrittenIssueAsync(t.Id, repo, Issue(201, "알림 설계"), null, null, CancellationToken.None);
+
+        Assert.NotNull(await LinkedIssueAsync(t, item));
+        Assert.Equal(0, await t.ScalarAsync<int>(
+            "select count(*)::int from meeting_action_items where id = @item and (issue_claim_key is not null or issue_claim_repository_ids is not null)",
+            new { item }));
+        Assert.Equal(0, (await t.OverviewAsync()).GetProperty("attention").GetProperty("totals").GetProperty("actionItemsWithoutIssue").GetInt32());
+        var read = await t.GetAsync($"/api/meeting-notes/{note}");
+        Assert.Equal(201, read.GetProperty("actionItems")[0].GetProperty("issue").GetProperty("number").GetInt32());
+        Assert.Equal(JsonValueKind.Null, read.GetProperty("actionItems")[0].GetProperty("pendingIssue").ValueKind);
+    }
+
+    [DbFact]
+    public async Task A_pending_issue_whose_repository_left_the_mirror_has_no_link()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var gone = await ConnectedRepoAsync(t, "gone");
+        var (_, item) = await ItemAsync(t);
+        await SeedStaleClaimAsync(t, item, gone);
+        await t.ExecAsync("update meeting_action_items set issue_claim_number = 7 where id = @item", new { item });
+        await t.ExecAsync("delete from repositories where id = @gone", new { gone });
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        var (status, body) = await PostAsync(client, t, item, new { repositoryId = repo }, "k");
+
+        Assert.Equal(HttpStatusCode.Accepted, status);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("htmlUrl").ValueKind);
+        Assert.Equal(0, writer.Calls);
+    }
+
+    [DbFact]
+    public async Task Switching_repository_after_a_failed_lookup_still_looks_where_the_first_attempt_went()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var a = await ConnectedRepoAsync(t, "api");
+        var b = await ConnectedRepoAsync(t, "web");
+        var c = await ConnectedRepoAsync(t, "docs");
+        var (_, item) = await ItemAsync(t);
+        // K1 went to A and its answer was lost.
+        await SeedStaleClaimAsync(t, item, a, key: "k1");
+        var writer = new FakeWriter { FindFail = new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "down") };
+        using var client = Client(writer);
+
+        var failed = await PostAsync(client, t, item, new { repositoryId = b }, "k2");
+        Assert.Equal(HttpStatusCode.GatewayTimeout, failed.Status);
+
+        await StaleAsync(t, item);
+        writer.FindFail = null;
+        writer.FindRepos.Clear();
+        var third = await PostAsync(client, t, item, new { repositoryId = c }, "k3");
+
+        Assert.Equal(HttpStatusCode.Created, third.Status);
+        Assert.Equal(["api", "docs", "web"], writer.FindRepos.Order());
+        Assert.Equal(1, writer.Calls);
+    }
+
+    [DbFact]
+    public async Task An_earlier_repository_that_cannot_be_reached_stops_the_create()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var repo = await ConnectedRepoAsync(t);
+        var (_, item) = await ItemAsync(t);
+        await SeedStaleClaimAsync(t, item, repo, attempted: [Guid.NewGuid(), repo]);
+        var writer = new FakeWriter();
+        using var client = Client(writer);
+
+        var (status, body) = await PostAsync(client, t, item, new { repositoryId = repo }, "k");
+
+        Assert.Equal(HttpStatusCode.Conflict, status);
+        Assert.Equal("earlier_repository_unavailable", Error(body));
+        Assert.Equal(0, writer.Calls);
+        Assert.Equal(0, writer.FindCalls);
+        Assert.Null(await LinkedIssueAsync(t, item));
     }
 
     [DbFact]

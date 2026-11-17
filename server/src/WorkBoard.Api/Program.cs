@@ -31,8 +31,9 @@ builder.Services.AddWorkBoardData(builder.Configuration);
 builder.Services.AddWorkBoardAuth(builder.Configuration);
 builder.Services.AddGitHubApp(builder.Configuration);
 builder.Services.AddWorkBoardSync(builder.Configuration);
+var webOrigins = builder.Configuration.GetSection(WebOptions.Section).Get<WebOptions>()?.Origins ?? WebOptions.DefaultAllowedOrigins;
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
-    .WithOrigins("http://localhost:3000")
+    .WithOrigins(webOrigins)
     .AllowAnyHeader()
     .AllowAnyMethod()));
 

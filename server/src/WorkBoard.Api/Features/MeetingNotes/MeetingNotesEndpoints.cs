@@ -188,7 +188,7 @@ public static class MeetingNotesEndpoints
     internal static async Task<ActionItemDto?> GetActionItemAsync(TenantSession s, Guid id) =>
         (await ActionItemsAsync(s, "a.id = @id", new { id })).SingleOrDefault();
 
-    // An item whose issue GitHub created but the mirror lacked shows that issue once a sync has brought it.
+    // An item whose issue GitHub created but the mirror lacked shows it as pending until the mirror stores it (PendingLink).
     private static async Task<List<ActionItemDto>> ActionItemsAsync(TenantSession s, string where, object args)
     {
         var rows = await s.QueryAsync<ActionItemRow>($"""
@@ -201,9 +201,7 @@ public static class MeetingNotesEndpoints
               from meeting_action_items a
               left join members m on m.id = a.assignee_member_id
               left join repositories cr on cr.id = a.issue_claim_repository_id and a.issue_claim_number is not null
-              left join issues i on i.id = coalesce(a.issue_id,
-                  (select ci.id from issues ci
-                    where ci.repository_id = a.issue_claim_repository_id and ci.number = a.issue_claim_number))
+              left join issues i on i.id = a.issue_id
               left join repositories r on r.id = i.repository_id
               left join issue_status st on st.issue_id = i.id
              where {where}

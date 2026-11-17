@@ -276,7 +276,8 @@ export type PendingActionItemIssue = {
   actionItemId: string;
   repository: string;
   number: number;
-  htmlUrl: string;
+  /** Null (and `repository` empty) when the repository is no longer in the mirror. */
+  htmlUrl: string | null;
   mirrorPending: true;
 };
 

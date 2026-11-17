@@ -31,8 +31,14 @@ type ErrorLines = ReturnType<typeof useT>["newIssue"]["errors"];
  * same key. A 502 was stored under its key and would only be replayed; the server holds the item until its outcome is
  * known, so a new key is safe. 4xx answers are refusals before anything was created.
  */
-function failureOf(e: unknown, errors: ErrorLines, sent: { key: string; repositoryId: string }): { lines: string[]; retry: Retry } {
+function failureOf(
+  e: unknown,
+  errors: ErrorLines,
+  earlierRepository: string[],
+  sent: { key: string; repositoryId: string },
+): { lines: string[]; retry: Retry } {
   if (!(e instanceof ApiError)) return { lines: errors.network, retry: sent };
+  if (e.code === "earlier_repository_unavailable") return { lines: earlierRepository, retry: null };
   if (e.code === "request_in_progress") return { lines: errors.request_in_progress, retry: sent };
   if (e.code === "github_unavailable") return e.status === 504 ? { lines: errors.timeout, retry: sent } : { lines: errors.github_unavailable, retry: "new" };
   if (
@@ -107,7 +113,7 @@ export function ActionItemList({ note, className = "" }: { note: MeetingNote; cl
       writeLastRepo(sent.repositoryId);
       window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
       if (out.kind === "pending") {
-        setRow(item.id, { kind: "pending", ref: `${out.issue.repository} #${out.issue.number}` });
+        setRow(item.id, { kind: "pending", ref: `${out.issue.repository} #${out.issue.number}`.trim() });
         return true;
       }
       const linked = out.result.actionItem;
@@ -126,7 +132,7 @@ export function ActionItemList({ note, className = "" }: { note: MeetingNote; cl
       }
       return true;
     } catch (e) {
-      setRow(item.id, { kind: "failed", ...failureOf(e, t.newIssue.errors, sent) });
+      setRow(item.id, { kind: "failed", ...failureOf(e, t.newIssue.errors, ti.earlierRepository, sent) });
       return false;
     }
   };

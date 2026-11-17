@@ -706,6 +706,10 @@ export const ko = {
       madeSomeDetail: "만들지 못한 할 일은 그 줄에 이유와 다시 시도가 있습니다.",
       made: (ref: string) => `${ref} 만듦`,
       already: (ref: string) => `이미 ${ref}로 만들어져 있었습니다`,
+      earlierRepository: [
+        "앞서 이 할 일을 보낸 저장소의 GitHub 연결이 끊겨, 그곳에 이미 만들어졌는지 확인할 수 없습니다.",
+        "설정에서 그 저장소를 다시 연결한 뒤 다시 만드세요.",
+      ],
       pending: "GitHub에 만듦 · 다음 동기화 뒤에 이어짐",
       elsewhere: "다른 요청이 이슈를 만드는 중",
       noRepos: "이슈를 만들 수 있는 저장소가 없습니다.",

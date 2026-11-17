@@ -15,14 +15,22 @@ public sealed record ActionItemIssueRequest(Guid? RepositoryId);
 public sealed record ActionItemIssueResult(ActionItemDto ActionItem, bool Created, IReadOnlyList<long> DroppedAssignees);
 
 // 202 body: GitHub has the issue but the mirror does not yet; the item shows it once a sync brings it.
-public sealed record PendingActionItemIssue(Guid ActionItemId, string Repository, int Number, string HtmlUrl, bool MirrorPending);
+// Repository is empty and HtmlUrl null when the repository is no longer in the mirror.
+public sealed record PendingActionItemIssue(Guid ActionItemId, string Repository, int Number, string? HtmlUrl, bool MirrorPending);
 
 public sealed class WebOptions
 {
     public const string Section = "Web";
 
+    public static readonly string[] DefaultAllowedOrigins = ["http://localhost:3000"];
+
     // Public address of the web app (scheme and host, optional path), used for links written into GitHub.
     public string? BaseUrl { get; set; }
+
+    // Origins the web app is served from: the CORS policy, and the fallback for links when BaseUrl is not set.
+    public string[]? AllowedOrigins { get; set; }
+
+    public string[] Origins => AllowedOrigins is { Length: > 0 } list ? list : DefaultAllowedOrigins;
 }
 
 // Creates the GitHub issue for one meeting action item, at most once per item. The item row holds a claim while a
@@ -34,6 +42,7 @@ public sealed class ActionItemIssues(
     IOptions<WebOptions> web)
 {
     public const int TitleMaxLength = NewIssueEndpoints.TitleMaxLength;
+    public const string EarlierRepositoryUnavailable = "earlier_repository_unavailable";
 
     // SQL on meeting_action_items aliased `a`: a create is running now (claimed, no number yet, not stale).
     public static readonly string ActiveClaim =
@@ -50,6 +59,7 @@ public sealed class ActionItemIssues(
         public string? ClaimKey { get; set; }
         public DateTime? ClaimFirstAt { get; set; }
         public Guid? ClaimRepositoryId { get; set; }
+        public Guid[]? ClaimRepositoryIds { get; set; }
         public int? ClaimNumber { get; set; }
         public bool ClaimActive { get; set; }
         public string NoteTitle { get; set; } = "";
@@ -101,12 +111,16 @@ public sealed class ActionItemIssues(
                     return new ExternalOutcome(await LinkPendingAsync(id, CancellationToken.None), false);
             }
 
+            // An earlier repository that cannot be reached any more may hold the issue: creating now could duplicate it.
             var lookups = new List<EarlierAttempt>();
             foreach (var earlier in ((Claimed)claim).Lookups)
                 if (earlier.Target.RepositoryId == target.RepositoryId)
                     lookups.Add(earlier with { Target = target });
                 else if (await targets.ResolveAsync(earlier.Target.RepositoryId, callCt) is { } other)
                     lookups.Insert(0, earlier with { Target = other });
+                else
+                    return new ExternalOutcome(new WriteResult(StatusCodes.Status409Conflict,
+                        new ErrorBody(EarlierRepositoryUnavailable)), false);
 
             FoundOrCreated result;
             try
@@ -148,19 +162,22 @@ public sealed class ActionItemIssues(
         if (item.ClaimActive && item.ClaimKey != key)
             return new WriteResult(StatusCodes.Status409Conflict, new ErrorBody(ApiErrors.RequestInProgress));
 
-        // A claim still here (stale, or this key's own earlier attempt) may have reached GitHub.
+        // A claim still here (stale, or this key's own earlier attempt) may have reached GitHub in any repository it
+        // was sent to. The requested one joins that list before the call and none leaves it until the claim ends.
         List<EarlierAttempt> lookups = [];
         if (item.ClaimKey is not null)
         {
             var since = new DateTimeOffset(DateTime.SpecifyKind(item.ClaimFirstAt!.Value, DateTimeKind.Utc));
-            lookups.Add(new EarlierAttempt(Placeholder(item.ClaimRepositoryId!.Value), since));
-            if (item.ClaimRepositoryId != repositoryId)
-                lookups.Add(new EarlierAttempt(Placeholder(repositoryId), since));
+            foreach (var repo in (item.ClaimRepositoryIds ?? []).Append(repositoryId).Distinct())
+                lookups.Add(new EarlierAttempt(Placeholder(repo), since));
         }
         await s.ExecuteAsync("""
             update meeting_action_items
                set issue_claim_key = @key, issue_claim_at = now(),
-                   issue_claim_first_at = coalesce(issue_claim_first_at, now()), issue_claim_repository_id = @repositoryId
+                   issue_claim_first_at = coalesce(issue_claim_first_at, now()), issue_claim_repository_id = @repositoryId,
+                   issue_claim_repository_ids = case when @repositoryId = any(coalesce(issue_claim_repository_ids, '{}'))
+                                                     then issue_claim_repository_ids
+                                                     else array_append(coalesce(issue_claim_repository_ids, '{}'), @repositoryId) end
              where id = @id
             """, new { id, key, repositoryId });
         return new Claimed(lookups);
@@ -173,7 +190,7 @@ public sealed class ActionItemIssues(
         var linked = await s.ExecuteAsync("""
             update meeting_action_items
                set issue_id = @issueId, issue_claim_key = null, issue_claim_at = null, issue_claim_first_at = null,
-                   issue_claim_repository_id = null, issue_claim_number = null
+                   issue_claim_repository_id = null, issue_claim_repository_ids = null, issue_claim_number = null
              where id = @id and issue_id is null
             """, new { id, issueId });
         if (linked == 1)
@@ -190,7 +207,8 @@ public sealed class ActionItemIssues(
     private Task ReleaseAsync(Guid id, string key) =>
         db.WriteAsync(s => s.ExecuteAsync("""
             update meeting_action_items
-               set issue_claim_key = null, issue_claim_at = null, issue_claim_first_at = null, issue_claim_repository_id = null
+               set issue_claim_key = null, issue_claim_at = null, issue_claim_first_at = null, issue_claim_repository_id = null,
+                   issue_claim_repository_ids = null
              where id = @id and issue_claim_key = @key and issue_claim_number is null
             """, new { id, key }), CancellationToken.None);
 
@@ -199,11 +217,22 @@ public sealed class ActionItemIssues(
     {
         try
         {
-            await db.WriteAsync(s => s.ExecuteAsync("""
-                update meeting_action_items
-                   set issue_claim_number = @number, issue_claim_repository_id = @repositoryId
-                 where id = @id and issue_id is null and issue_claim_key = @key
-                """, new { id, key, number = result.Issue.Number, repositoryId = result.Target.RepositoryId }), CancellationToken.None);
+            await db.WriteAsync(async s =>
+            {
+                await s.ExecuteAsync("""
+                    update meeting_action_items
+                       set issue_claim_number = @number, issue_claim_repository_id = @repositoryId
+                     where id = @id and issue_id is null and issue_claim_key = @key
+                    """, new { id, key, number = result.Issue.Number, repositoryId = result.Target.RepositoryId });
+                // A sync may have mirrored the issue between the failed save and now.
+                return await s.ExecuteAsync($"""
+                    update meeting_action_items a
+                       set issue_id = i.id, {PendingLink.ClearClaim}
+                      from issues i
+                     where a.id = @id and a.issue_id is null and a.issue_claim_number is not null
+                       and i.repository_id = a.issue_claim_repository_id and i.number = a.issue_claim_number
+                    """, new { id });
+            }, CancellationToken.None);
         }
         catch (Exception e)
         {
@@ -226,11 +255,8 @@ public sealed class ActionItemIssues(
                 """, new { id });
             if (pending?.IssueId is { } issueId)
             {
-                await s.ExecuteAsync("""
-                    update meeting_action_items
-                       set issue_id = @issueId, issue_claim_key = null, issue_claim_at = null, issue_claim_first_at = null,
-                           issue_claim_repository_id = null, issue_claim_number = null
-                     where id = @id
+                await s.ExecuteAsync($"""
+                    update meeting_action_items set issue_id = @issueId, {PendingLink.ClearClaim} where id = @id
                     """, new { id, issueId });
                 await audit.WriteAsync(s, "meeting_action_item.issue", "meeting_action_item", id, null,
                     new { issueId, repository = pending.FullName, mirroredLater = true });
@@ -243,9 +269,9 @@ public sealed class ActionItemIssues(
         if (item.Issue is not null)
             return new WriteResult(StatusCodes.Status200OK, new ActionItemIssueResult(item, false, []));
         var number = item.PendingIssue?.Number ?? 0;
-        var fullName = row?.FullName ?? "";
-        return new WriteResult(StatusCodes.Status202Accepted,
-            new PendingActionItemIssue(id, fullName, number, $"https://github.com/{fullName}/issues/{number}", true));
+        var fullName = row?.FullName;
+        return new WriteResult(StatusCodes.Status202Accepted, new PendingActionItemIssue(
+            id, fullName ?? "", number, fullName is null ? null : $"https://github.com/{fullName}/issues/{number}", true));
     }
 
     private async Task<WriteResult> AnswerAsync(Guid id, bool created, IReadOnlyList<long> dropped, CancellationToken ct)
@@ -262,7 +288,8 @@ public sealed class ActionItemIssues(
         s.QuerySingleOrDefaultAsync<ItemRow>($"""
             select a.id, a.note_id, a.text, a.due_date::text as due_date, a.issue_id,
                    a.issue_claim_key as claim_key, a.issue_claim_first_at as claim_first_at,
-                   a.issue_claim_repository_id as claim_repository_id, a.issue_claim_number as claim_number,
+                   a.issue_claim_repository_id as claim_repository_id, a.issue_claim_repository_ids as claim_repository_ids,
+                   a.issue_claim_number as claim_number,
                    {ActiveClaim} as claim_active,
                    n.title as note_title, (n.held_at at time zone '{OverviewQueries.TimeZone}')::date::text as held_on,
                    m.github_user_id as assignee_user_id, m.github_login as assignee_login
@@ -273,10 +300,12 @@ public sealed class ActionItemIssues(
             {(forUpdate ? "for update of a" : "")}
             """, new { id });
 
-    // The configured Web:BaseUrl, else the request's Origin (the web app that sent it); null when neither is a web address.
+    // Web:BaseUrl, else the request's Origin when it is one of Web:AllowedOrigins; null when neither applies.
     private string? NoteLink(Guid noteId, string? origin)
     {
-        var baseUrl = string.IsNullOrWhiteSpace(web.Value.BaseUrl) ? origin : web.Value.BaseUrl;
+        var allowed = origin is not null
+            && web.Value.Origins.Any(o => string.Equals(o.TrimEnd('/'), origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+        var baseUrl = string.IsNullOrWhiteSpace(web.Value.BaseUrl) ? (allowed ? origin : null) : web.Value.BaseUrl;
         if (!Uri.TryCreate(baseUrl?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return null;
         return $"{uri.GetLeftPart(UriPartial.Path).TrimEnd('/')}/notes/view?id={noteId}";
@@ -297,7 +326,7 @@ public sealed class ActionItemIssues(
         var noteTitle = Escape(item.NoteTitle);
         var lines = new List<string>();
         if (title != text)
-            lines.AddRange([text, ""]);
+            lines.AddRange([Escape(text), ""]);
         lines.Add($"회의록: {(link is null ? noteTitle : $"[{noteTitle}]({link})")} ({item.HeldOn})");
         if (item.DueDate is { } due)
             lines.Add($"마감: {due}");
@@ -308,15 +337,24 @@ public sealed class ActionItemIssues(
         return new NewIssue(target, title, string.Join('\n', lines), [], assignees, null, null, null);
     }
 
-    // Keeps a note title from being read as Markdown link syntax or HTML.
-    private static string Escape(string s)
+    // Text a member typed, made inert in the issue body: no Markdown links, images or emphasis, no HTML (so no
+    // comment that could pass for a create marker), and no @mention or #reference that would notify or link.
+    public static string Escape(string s)
     {
         var sb = new System.Text.StringBuilder(s.Length);
         foreach (var c in s)
         {
-            if (c is '\\' or '[' or ']' or '(' or ')' or '<' or '>' or '*' or '_' or '`' or '#' or '!' or '|' or '~')
-                sb.Append('\\');
-            sb.Append(c);
+            switch (c)
+            {
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                case '&': sb.Append("&amp;"); break;
+                case '@': sb.Append("@\u200D"); break;
+                case '\\' or '[' or ']' or '(' or ')' or '*' or '_' or '`' or '#' or '!' or '|' or '~':
+                    sb.Append('\\').Append(c);
+                    break;
+                default: sb.Append(c); break;
+            }
         }
         return sb.ToString();
     }
