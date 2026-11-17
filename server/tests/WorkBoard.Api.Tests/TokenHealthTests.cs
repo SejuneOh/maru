@@ -130,6 +130,8 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         var token = Assert.Single(status.GetProperty("tokens").EnumerateArray());
         Assert.True(token.GetProperty("tokenExpiresSoon").GetBoolean());
         Assert.Equal(soon.T.ConnectionId, token.GetProperty("connectionId").GetGuid());
+        Assert.Equal("owner-" + soon.T.Suffix, token.GetProperty("tokenOwnerLogin").GetString());
+        Assert.False(a.GetProperty("storeBodies").GetBoolean());
     }
 
     [DbFact]

@@ -685,10 +685,11 @@ that fails does not stop the others, except on `RateLimited`, `Unauthorized`, `C
 ```
 { "connected": true, "running": false, "lastSyncedAt": "ISO" | null, "lastResult": "ok" | "failed" | null,
   "lastError": "short text" | null, "rateLimitRemaining": 4990 | null, "nextRunAt": "ISO" | null,
-  "tokens": [ { "connectionId": "uuid", "accountLogin": "acme", "tokenStatus": "active" | "invalid" | "expired" | "revoked" | "token_required",
+  "tokens": [ { "connectionId": "uuid", "accountLogin": "acme", "tokenOwnerLogin": "octocat" | null, "tokenStatus": "active" | "invalid" | "expired" | "revoked" | "token_required",
                 "tokenExpiresAt": "ISO" | null, "tokenExpiresSoon": false, "tokenDaysLeft": 30 | null, "syncPausedUntil": "ISO" | null } ] }
 ```
-`tokens` has one entry per active token connection (see "Token health"); it is empty without any.
+`tokens` has one entry per active token connection (see "Token health"); it is empty without any. `tokenOwnerLogin` is
+null while no token is stored.
 `connected` is false when the tenant has no active connection with an installation; the other fields are then null/false.
 `lastSyncedAt` is the time of the most recent successful repository sync (not the last attempt); `lastResult`, `lastError` and `rateLimitRemaining` come from the most
 recent finished run. `nextRunAt` is null while the periodic loop is off.
@@ -835,6 +836,7 @@ type GithubConnection = {
   tokenLast4: string | null; tokenOwnerLogin: string | null; tokenExpiresAt: string | null;   // token connections only
   tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required" | null; tokenScopes: string[] | null;
   tokenExpiresSoon: boolean; tokenDaysLeft: number | null; syncPausedUntil: string | null;
+  storeBodies: boolean;   // issue and comment text is mirrored; false for token connections, read-only
 };
 
 type ConnectionRequest = { id: string; requestedAt: string; requestedByLogin: string | null; accountLogin: string | null };
