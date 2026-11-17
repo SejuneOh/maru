@@ -27,6 +27,7 @@ export const en: Dict = {
   shell: {
     searchPlaceholder: "Search issues, comments, meeting notes",
     searchLabel: "Search",
+    searchButton: "Search (/)",
     hintSearch: "search",
     hintMove: "move",
     hintOpen: "open",

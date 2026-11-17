@@ -127,19 +127,60 @@ function NewIssueButton({ onClick, className = "" }: { onClick: () => void; clas
   );
 }
 
-const NARROW_QUERY = "(max-width: 1023px)";
-
-/** Below 1024px the top bar has no room, so the sync line moves above the page there. */
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(false);
+function useMedia(query: string): boolean {
+  const [matches, setMatches] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia(NARROW_QUERY);
-    const update = () => setNarrow(mq.matches);
+    const mq = window.matchMedia(query);
+    const update = () => setMatches(mq.matches);
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
-  }, []);
-  return narrow;
+  }, [query]);
+  return matches;
+}
+
+/** Below 1024px the top bar has no room, so the sync line moves above the page there. */
+const useNarrow = () => useMedia("(max-width: 1023px)");
+
+/** Narrowest search field worth showing; below it the field folds into an icon button. */
+const SEARCH_MIN = 240;
+const SEARCH_PART = "data-search-part";
+
+/**
+ * From 1024px: measures what the other top bar items leave over and folds the search field when the rest is under
+ * `SEARCH_MIN`. While the folded field is open the answer is kept, since opening it hides the sync line.
+ */
+function useFoldedSearch(bar: React.RefObject<HTMLDivElement | null>, active: boolean, open: boolean, dep: unknown): boolean {
+  const [folded, setFolded] = useState(false);
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    const row = bar.current;
+    if (!active || !row) {
+      setFolded(false);
+      return;
+    }
+    const ro = new ResizeObserver(() => measure());
+    function measure() {
+      if (!row || openRef.current) return;
+      const items = [...row.children].filter((el) => !el.hasAttribute(SEARCH_PART)) as HTMLElement[];
+      items.forEach((el) => ro.observe(el));
+      const used = items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0);
+      const shown = items.filter((el) => el.getBoundingClientRect().width > 0).length;
+      const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+      setFolded(row.clientWidth - used - gap * shown < SEARCH_MIN);
+    }
+    const mo = new MutationObserver(() => measure());
+    ro.observe(row);
+    mo.observe(row, { childList: true, subtree: true, characterData: true });
+    document.fonts?.ready.then(() => measure());
+    measure();
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [bar, active, dep]);
+  return active && folded;
 }
 
 /** Marks which edges of the tab strip still have tabs past them (`data-more`), so only those edges fade. */
@@ -194,6 +235,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useShortcuts(openSearch, newIssue);
   const tabsRef = useTabFade();
   const narrow = useNarrow();
+  const [tokenAlert, setTokenAlert] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const folded = useFoldedSearch(barRef, !narrow, searchOpen, tokenAlert);
+  const searchShown = folded ? searchOpen : undefined;
 
   return (
     <div className="flex min-h-dvh">
@@ -274,25 +319,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 border-b border-rule bg-(--wb-topbar) px-4 backdrop-blur-md backdrop-saturate-150 min-[640px]:px-6 min-[1024px]:px-10">
-          <div className="flex h-14 items-center gap-3 min-[1024px]:h-[60px]">
+          <div ref={barRef} className="flex h-14 items-center gap-3 min-[1024px]:h-[60px]">
             <Link href="/" className={`flex min-w-0 items-center gap-2.5 min-[1024px]:hidden ${searchOpen ? "max-[639px]:hidden" : ""}`}>
               <OrgMark org={org} size="sm" />
               <span className="truncate text-ui font-semibold max-[639px]:sr-only">{org}</span>
             </Link>
-            <p className="hidden min-w-0 items-center gap-2 whitespace-nowrap text-small text-muted min-[1024px]:flex">
+            <p className="hidden items-center gap-2 whitespace-nowrap text-small text-muted min-[1024px]:flex">
               {org && (
                 <>
-                  <span className="truncate">{org}</span>
+                  <span className="min-w-0 truncate">{org}</span>
                   <span aria-hidden>/</span>
                 </>
               )}
-              <b className="font-semibold text-ink">{screenLabel(pathname, t)}</b>
+              <b className="shrink-0 font-semibold text-ink">{screenLabel(pathname, t)}</b>
             </p>
             <form
               id="site-search"
+              data-search-part
               role="search"
-              className={`ml-auto h-9 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-control bg-surface pl-3 pr-1.5 text-small text-muted shadow-elev-1 focus-within:shadow-[0_0_0_2px_var(--wb-focus)] min-[640px]:flex min-[1024px]:max-w-[340px] ${
-                searchOpen ? "flex" : "hidden"
+              className={`ml-auto h-9 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-control bg-surface pl-3 pr-1.5 text-small text-muted shadow-elev-1 focus-within:shadow-[0_0_0_2px_var(--wb-focus)] min-[1024px]:max-w-[340px] ${
+                searchShown === undefined ? `min-[640px]:flex ${searchOpen ? "flex" : "hidden"}` : searchShown ? "flex min-w-[200px]" : "hidden"
               }`}
               onSubmit={(e) => {
                 e.preventDefault();
@@ -316,15 +362,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </form>
             <button
               type="button"
+              data-search-part
               onClick={openSearch}
-              aria-label={t.shell.searchLabel}
+              aria-label={folded ? t.shell.searchButton : t.shell.searchLabel}
+              aria-keyshortcuts="/"
               aria-expanded={searchOpen}
               aria-controls="site-search"
-              className={`ml-auto h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-control text-ink-soft hover:bg-hover min-[640px]:hidden ${searchOpen ? "hidden" : "grid"}`}
+              className={`ml-auto h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-control text-ink-soft hover:bg-hover ${
+                folded ? (searchOpen ? "hidden" : "grid shadow-elev-1 bg-surface") : `min-[640px]:hidden ${searchOpen ? "hidden" : "grid"}`
+              }`}
             >
               <SearchIcon size={18} />
             </button>
-            {!narrow && <SyncStatus className="flex shrink" />}
+            {!narrow && (
+              <SyncStatus className={folded && searchOpen ? "hidden" : "flex shrink"} onAttention={setTokenAlert} />
+            )}
             <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" />
             <div className={`flex shrink-0 items-center gap-2 ${searchOpen ? "max-[639px]:hidden" : ""}`}>
               <div className="flex items-center gap-2 min-[1024px]:hidden">

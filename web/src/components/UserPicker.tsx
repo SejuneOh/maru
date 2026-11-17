@@ -24,7 +24,7 @@ export function UserPicker({ large = false }: { large?: boolean }) {
 
   return (
     <label className={large ? "flex flex-col gap-2" : "flex items-center gap-2 text-ui"}>
-      <span className={large ? "text-small font-semibold text-ink" : "hidden text-meta text-muted min-[1024px]:inline"}>{t.userPicker.label}</span>
+      <span className={large ? "text-small font-semibold text-ink" : "hidden text-meta text-muted min-[1280px]:inline"}>{t.userPicker.label}</span>
       <select
         className={
           large

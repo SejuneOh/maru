@@ -34,6 +34,7 @@ export const ko = {
   shell: {
     searchPlaceholder: "이슈, 댓글, 회의록 검색",
     searchLabel: "검색",
+    searchButton: "검색 (/)",
     hintSearch: "검색",
     hintMove: "이동",
     hintOpen: "열기",

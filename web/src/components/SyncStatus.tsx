@@ -33,7 +33,7 @@ function tokenShort(h: TokenHealth, t: Dict, fmt: Format): string {
  * "Synced 3 min ago" for the top bar, refreshed every minute (every 5 s while a sync runs) while the tab is visible.
  * Members see nothing until GitHub is connected; admins get a link to settings and a "sync now" button.
  */
-export function SyncStatus({ className = "" }: { className?: string }) {
+export function SyncStatus({ className = "", onAttention }: { className?: string; onAttention?: (on: boolean) => void }) {
   const { data, reload } = useApi<Status>(SYNC_STATUS_PATH);
   const admin = useMe().data?.member.role === "admin";
   const t = useT();
@@ -64,6 +64,9 @@ export function SyncStatus({ className = "" }: { className?: string }) {
     const id = setTimeout(() => setNotice(null), NOTICE_MS);
     return () => clearTimeout(id);
   }, [notice]);
+
+  const alert = data?.tokens.some((h) => urgency(h) < 3) ?? false;
+  useEffect(() => onAttention?.(alert), [alert, onAttention]);
 
   if (!data) return null;
 
@@ -117,7 +120,7 @@ export function SyncStatus({ className = "" }: { className?: string }) {
   const first = attention[0];
 
   return (
-    <div className={`items-center gap-x-2 gap-y-1 text-small max-[1023px]:min-w-0 max-[1023px]:flex-wrap ${className}`}>
+    <div className={`min-w-0 items-center gap-x-2 gap-y-1 text-small max-[1023px]:flex-wrap ${className}`}>
       {first && (
         <Link
           href="/settings"
@@ -132,7 +135,7 @@ export function SyncStatus({ className = "" }: { className?: string }) {
           {attention.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{attention.length - 1}</span>}
         </Link>
       )}
-      <p className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap ${first ? "min-[1024px]:max-[1279px]:sr-only" : ""}`} title={title}>
+      <p className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap ${failed ? "" : "min-[1024px]:max-[1279px]:sr-only"}`} title={title}>
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${data.running ? "animate-pulse bg-ink-soft" : failed ? "bg-ink" : "bg-faint"}`}
