@@ -88,7 +88,7 @@ public sealed class GitHubAppClient(
             list.AddRange(items
                 .Where(i => i.Account is not null)
                 .Select(i => new GitHubAppInstallation(
-                    i.Id, i.Account!.Id, i.Account.Login, i.Account.Type, i.RepositorySelection, i.CreatedAt)));
+                    i.Id, i.Account!.Id, i.Account.Login, i.Account.Type, i.RepositorySelection, i.CreatedAt, i.SuspendedAt)));
             if (items.Count < PageSize)
                 break;
         }
@@ -179,7 +179,8 @@ public sealed class GitHubAppClient(
         long Id,
         AccountResponse? Account,
         [property: JsonPropertyName("repository_selection")] string? RepositorySelection,
-        [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt);
+        [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+        [property: JsonPropertyName("suspended_at")] DateTimeOffset? SuspendedAt);
 
     private sealed record MembershipResponse(string? State, string? Role, UserResponse? User);
 }

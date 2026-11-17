@@ -66,7 +66,7 @@ type CheckState =
   | { kind: "pick"; organizations: OrganizationChoice[] }
   | { kind: "failed"; reason: ErrorReason; code: string | null };
 
-const CHECK_ERRORS: ReadonlySet<string> = new Set<Exclude<ConnectionRequestError, "unauthenticated" | "multiple_organizations">>([
+const CHECK_ERRORS: ReadonlySet<string> = new Set<Exclude<ConnectionRequestError, "unauthenticated" | "multiple_organizations" | "not_org_owner">>([
   "admin_only",
   "no_request",
   "account_connected",
@@ -88,7 +88,8 @@ function failureOf(e: unknown): CheckState {
       const organizations = choicesOf(e.body);
       if (organizations.length > 1) return { kind: "pick", organizations };
     }
-    const reason = e.code && CHECK_ERRORS.has(e.code) ? (e.code as ErrorReason) : "unknown";
+    const reason: ErrorReason =
+      e.code === "not_org_owner" ? "owner_required" : e.code && CHECK_ERRORS.has(e.code) ? (e.code as ErrorReason) : "unknown";
     return { kind: "failed", reason, code: e.code ?? String(e.status) };
   }
   return { kind: "failed", reason: "network", code: null };

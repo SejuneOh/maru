@@ -458,6 +458,47 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
+    public async Task Disconnecting_the_organization_stops_hiding_people_it_removed_and_resuming_restores_it()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var installation = await InstallAsync(t);
+        var accountId = await t.ScalarAsync<long>("select account_id from github_connections where id = @c", new { c = t.ConnectionId });
+        var (login, userId) = await t.AddMemberAsync("leaver");
+        var (client, host) = Host(login: t.ViewerLogin);
+        async Task<JsonValueKind> RemovedAsync()
+        {
+            var list = await client.GetFromJsonAsync<JsonElement>("/api/members");
+            return list.EnumerateArray().Single(m => m.GetProperty("githubLogin").GetString() == login).GetProperty("removedAt").ValueKind;
+        }
+
+        var removal = new
+        {
+            action = "member_removed", installation = new { id = installation }, organization = new { id = accountId },
+            membership = new { user = new { id = userId } },
+        };
+        await PostAsync(client, "organization", removal);
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.String, await RemovedAsync());
+        var repeat = Guid.NewGuid().ToString();
+        await PostAsync(client, "organization", removal, repeat);
+        await DrainAsync(host);
+        Assert.Equal("unchanged", await t.ScalarAsync<string>(
+            "select result from webhook_deliveries where delivery_id = @repeat", new { repeat }));
+
+        await PostAsync(client, "installation", new { action = "suspend", installation = new { id = installation } });
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.Null, await RemovedAsync());
+
+        await PostAsync(client, "installation", new { action = "unsuspend", installation = new { id = installation } });
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.String, await RemovedAsync());
+
+        await PostAsync(client, "installation", new { action = "deleted", installation = new { id = installation } });
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.Null, await RemovedAsync());
+    }
+
+    [DbFact]
     public async Task While_sync_is_disabled_the_endpoint_does_not_queue()
     {
         await using var t = await TestTenant.CreateAsync(_factory);

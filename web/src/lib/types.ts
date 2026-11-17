@@ -147,6 +147,7 @@ export type ConnectionRequestError =
   | "unauthenticated"
   | "admin_only"
   | "no_request"
+  | "not_org_owner"
   | "account_connected"
   | "multiple_organizations"
   | "org_members_not_granted"

@@ -27,6 +27,9 @@ public static class ConnectionRequests
     // GitHub and this server stamp the request and the installation with separate clocks.
     private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(5);
 
+    // An open request older than this counts as gone: reads skip it and writes close it.
+    public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
+
     private const string Select = """
         select r.id, r.requested_at, m.github_login as requested_by_login, r.account_login
           from github_connection_requests r
@@ -38,7 +41,8 @@ public static class ConnectionRequests
         api.MapGet("/connections/github/request", async (TenantDb db, CancellationToken ct) =>
         {
             var row = await db.ReadAsync(
-                s => s.QuerySingleOrDefaultAsync<ConnectionRequest>($"{Select} where r.resolved_at is null"), ct);
+                s => s.QuerySingleOrDefaultAsync<ConnectionRequest>(
+                    $"{Select} where r.resolved_at is null and r.requested_at > now() - @lifetime", new { lifetime = Lifetime }), ct);
             return new ConnectionRequestState(row);
         });
         api.MapPost("/connections/github/request", CreateAsync);
@@ -54,6 +58,7 @@ public static class ConnectionRequests
             return ConnectGithub.Error(StatusCodes.Status403Forbidden, "admin_only");
 
         await using var conn = await sync.OpenConnectionAsync(ct);
+        await ExpireAsync(conn, caller.TenantId, ct);
         var created = await conn.ExecuteAsync(new CommandDefinition("""
             insert into github_connection_requests (tenant_id, requested_by, requester_github_user_id)
             values (@tenantId, @memberId, @userId)
@@ -79,8 +84,15 @@ public static class ConnectionRequests
         return Results.NoContent();
     }
 
-    // Links the one organization installation that was created after the request, is not connected anywhere, and whose
-    // organization the calling admin is an active member of (checked by GitHub user id with that installation's token).
+    private static Task ExpireAsync(NpgsqlConnection conn, Guid tenantId, CancellationToken ct) =>
+        conn.ExecuteAsync(new CommandDefinition("""
+            update github_connection_requests set resolved_at = now()
+             where tenant_id = @tenantId and resolved_at is null and requested_at <= now() - @lifetime
+            """, new { tenantId, lifetime = Lifetime }, cancellationToken: ct));
+
+    // Links the one organization installation that was created after the request, is not suspended or connected
+    // anywhere, and whose organization the calling admin is an active owner of (checked by GitHub user id with that
+    // installation's token). A plain member gets not_org_owner: an owner has to sign in and press "다시 확인".
     private static async Task<IResult> CheckAsync(
         HttpContext http, ICurrentUser user, IOptions<GitHubAppOptions> options, IGitHubAppClient github,
         [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync, ILoggerFactory logs, CancellationToken ct)
@@ -97,6 +109,7 @@ public static class ConnectionRequests
         try
         {
             await using var conn = await sync.OpenConnectionAsync(ct);
+            await ExpireAsync(conn, caller.TenantId, ct);
             var open = await conn.QuerySingleOrDefaultAsync<DateTime?>(new CommandDefinition(
                 "select requested_at from github_connection_requests where tenant_id = @tenantId and resolved_at is null",
                 new { tenantId = caller.TenantId }, cancellationToken: ct));
@@ -107,7 +120,7 @@ public static class ConnectionRequests
             var installations = await github.ListAppInstallationsAsync(ct);
             var since = new DateTimeOffset(DateTime.SpecifyKind(requestedAt, DateTimeKind.Utc)) - ClockSkew;
             var recent = installations
-                .Where(i => ConnectGithub.IsOrganization(i.AccountType) && i.CreatedAt >= since)
+                .Where(i => ConnectGithub.IsOrganization(i.AccountType) && i.SuspendedAt is null && i.CreatedAt >= since)
                 .Where(i => body?.AccountId is not { } want || i.AccountId == want)
                 .ToList();
             taken = (await conn.QueryAsync<long>(new CommandDefinition("""
@@ -116,14 +129,19 @@ public static class ConnectionRequests
                 """, new { ids = recent.Select(i => i.Id).ToArray() }, cancellationToken: ct))).ToArray();
 
             var candidates = new List<GitHubAppInstallation>();
-            var notGranted = false;
-            foreach (var i in recent.Where(i => !taken.Contains(i.Id)))
+            bool notGranted = false, memberOnly = false, ownsTaken = false;
+            foreach (var i in recent)
             {
                 var membership = await github.GetOrganizationMembershipAsync(
                     i.Id, i.AccountLogin, caller.Member.GithubUserId, caller.Member.GithubLogin, ct);
-                if (membership is OrgMembership.Owner or OrgMembership.Member)
+                var isTaken = taken.Contains(i.Id);
+                if (membership == OrgMembership.Owner && isTaken)
+                    ownsTaken = true;
+                else if (membership == OrgMembership.Owner)
                     candidates.Add(i);
-                notGranted |= membership == OrgMembership.NotGranted;
+                else if (membership == OrgMembership.Member && !isTaken)
+                    memberOnly = true;
+                notGranted |= membership == OrgMembership.NotGranted && !isTaken;
             }
 
             if (candidates.Count > 1)
@@ -135,7 +153,9 @@ public static class ConnectionRequests
             {
                 if (notGranted)
                     return ConnectGithub.Error(StatusCodes.Status422UnprocessableEntity, "org_members_not_granted");
-                return taken.Length > 0 && recent.All(i => taken.Contains(i.Id))
+                if (memberOnly)
+                    return ConnectGithub.Error(StatusCodes.Status403Forbidden, "not_org_owner");
+                return ownsTaken
                     ? ConnectGithub.Error(StatusCodes.Status409Conflict, "account_connected")
                     : Results.Json(new ConnectionRequestCheck("pending"));
             }

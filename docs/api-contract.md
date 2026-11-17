@@ -158,13 +158,17 @@ the body; a second call returns the open one with `200`). `DELETE` closes it.
 
 `POST /api/connections/github/request/check` ("다시 확인") looks for the approved installation. Body is optional:
 `{"accountId": <organization id>}` narrows the search after a `multiple_organizations` answer. The server lists the
-App's installations with the App JWT (`GET /app/installations`) and keeps those that are organizations, were created no
-earlier than 5 minutes before the request, and are not actively connected anywhere. For each, it checks with that
-installation's token that the calling admin is an active member (owner or member; the user id must match). Exactly one
-match is linked like a direct install, and the request is closed. Response:
+App's installations with the App JWT (`GET /app/installations`) and keeps those that are organizations, are not
+suspended, were created no earlier than 5 minutes before the request, and are not actively connected anywhere. For each,
+it checks with that installation's token that the calling admin is an active **owner** (the user id must match).
+Exactly one match is linked like a direct install, and the request is closed. A request older than 7 days is expired:
+`GET` returns `null`, and check/create close it first (a create then opens a fresh one). Response:
 `200 {"status": "pending", "connection": null}` when nothing matches yet, or
 `201 {"status": "connected", "connection": GithubConnection}` (`200` when it updated an existing row of the same company).
-Errors: `401`, `403 admin_only`, `404 no_request`, `409 account_connected` (every candidate is connected to a company already),
+Errors: `401`, `403 admin_only`, `403 not_org_owner` (the caller is only a member of an approved organization; an owner
+has to sign in and check), `404 no_request` (none open, or expired), `409 account_connected` (the caller owns an approved
+organization that another company already connected; otherwise such installations are not mentioned and the answer is
+pending),
 `409 {"error": "multiple_organizations", "organizations": [{"accountId": <number>, "login": "<string>"}, ...]}`, `422 org_members_not_granted`
 (a candidate's installation lacks "Members: read"), `502 github_unavailable`, `503 github_app_not_configured`
 (App id or private key missing).
@@ -575,9 +579,9 @@ lease, retries a failure up to 5 times with 30 s steps, and records the outcome 
 | Event | Handling |
 |---|---|
 | `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `milestone`, `label`, `sub_issues` | The payload is not applied. The repository (matched by `repository.id`, so a rename does not drop events) is re-read through `IGitHubSource` since its `last_synced_at - 2 minutes` and applied by `MirrorWriter`, exactly like a periodic run (ordering rule, issue_events, PendingLink, label and milestone lists). Pending events of one repository share one read. Unknown installation, unknown repository (not listed by a sync yet) and `sync_enabled = false` are acknowledged and ignored. |
-| `installation` `deleted`, `suspend` | Active connections with that `installation_id` get `disconnected_at = now()`. Every sync query already skips disconnected connections, so syncing and board writes stop; the connection list shows it as disconnected. |
+| `installation` `deleted`, `suspend` | Active connections with that `installation_id` get `disconnected_at = now()`, and `members.removed_at` of their companies is re-derived from the remaining active connections (the same happens on `unsuspend`). Every sync query already skips disconnected connections, so syncing and board writes stop; the connection list shows it as disconnected. |
 | `installation` `unsuspend` | The most recently disconnected connection of that installation is reactivated unless the account or installation already has an active connection. |
-| `organization` `member_removed`, `member_added` | For the active connection whose `installation_id` matches and whose `account_id` equals `organization.id`: that person's `github_org_members` row of this connection gets `removed_at` set (or cleared; a row is created when missing). `members.removed_at` is then derived for that GitHub user id: null while they are a current member of any active organization connection of the company, otherwise the time GitHub reported them gone. Someone removed from one organization but still in another connected one is not marked. A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
+| `organization` `member_removed`, `member_added` | For the active connection whose `installation_id` matches and whose `account_id` equals `organization.id`: that person's `github_org_members` row of this connection gets `removed_at` set (or cleared; a row is created when missing). `members.removed_at` is then derived for that GitHub user id from active connections only: null while they are a current member of any active organization connection of the company (or no active connection mentions them), otherwise the time GitHub reported them gone. The delivery result is `applied`, `unchanged` or `ignored: unknown_member` (not a member of the company). Someone removed from one organization but still in another connected one is not marked. A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
 | everything else (`installation` `created`, `installation_repositories`, `push`, ...) | `202 ignored`. New repositories appear with the next periodic run. |
 
 ## Shapes

@@ -180,10 +180,13 @@ public sealed class WebhookProcessor(
 
     private static async Task<string> DisconnectAsync(NpgsqlConnection conn, long? installationId, CancellationToken ct)
     {
-        var changed = await conn.ExecuteAsync(new CommandDefinition(
-            "update github_connections set disconnected_at = now() where installation_id = @installationId and disconnected_at is null",
-            new { installationId }, cancellationToken: ct));
-        return changed > 0 ? "disconnected" : "ignored: unknown_installation";
+        var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
+            update github_connections set disconnected_at = now()
+             where installation_id = @installationId and disconnected_at is null
+            returning tenant_id
+            """, new { installationId }, cancellationToken: ct))).AsList();
+        await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
+        return tenants.Count > 0 ? "disconnected" : "ignored: unknown_installation";
     }
 
     // Only a disconnect that happened to this installation id is undone, and only while the account has no newer active connection.
@@ -191,15 +194,17 @@ public sealed class WebhookProcessor(
     {
         try
         {
-            var changed = await conn.ExecuteAsync(new CommandDefinition("""
+            var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
                 update github_connections c set disconnected_at = null
                  where c.id = (select id from github_connections
                                 where installation_id = @installationId and disconnected_at is not null
                                 order by disconnected_at desc limit 1)
                    and not exists (select 1 from github_connections o
                                     where o.disconnected_at is null and (o.installation_id = @installationId or o.account_id = c.account_id))
-                """, new { installationId }, cancellationToken: ct));
-            return changed > 0 ? "reconnected" : "ignored: nothing_to_resume";
+                returning c.tenant_id
+                """, new { installationId }, cancellationToken: ct))).AsList();
+            await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
+            return tenants.Count > 0 ? "reconnected" : "ignored: nothing_to_resume";
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {

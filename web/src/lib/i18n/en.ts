@@ -890,7 +890,7 @@ export const en: Dict = {
     request: {
       label: "Organization install request",
       title: "Approval requested from an owner",
-      lead: "Once an organization owner approves the installation on GitHub, press \"Check again\" to connect it.",
+      lead: "After an organization owner approves the installation on GitHub, that owner signs in to Work board and presses \"Check again\" to connect it. The request stays open for 7 days.",
       meta: (date: string, login: string | null) => (login ? `Requested ${date} by ${login}` : `Requested ${date}`),
       check: "Check again",
       checking: "Checking",
@@ -901,7 +901,7 @@ export const en: Dict = {
       cancelFailed: "Could not cancel the request. Try again in a moment.",
       pick: "More than one organization was approved. Pick the one to connect.",
       pickLabel: (login: string) => `Connect ${login}`,
-      noRequestMember: "It connects once an admin checks again.",
+      noRequestMember: "It connects once an admin who owns the organization presses \"Check again\".",
     },
   },
 
@@ -928,7 +928,8 @@ export const en: Dict = {
       not_org_member: ["The signed-in GitHub account is not a member of this organization.", "Sign in to Work board with an account that belongs to the organization, then connect again."],
       org_members_not_granted: ["The GitHub App cannot read organization members yet.", "The App owner adds the Members read permission and an organization owner accepts it; then try again."],
       unsupported_account: ["This kind of GitHub account cannot be connected.", "Install the app on a personal account or an organization."],
-      no_request: ["There is no open install request.", "Start again with \"Connect GitHub\" in Settings."],
+      no_request: ["There is no open install request.", "Requests expire after 7 days. Start again with \"Connect GitHub\" in Settings."],
+      owner_required: ["Only an organization owner can connect with \"Check again\".", "After an owner approves, the owner has to sign in to the board and press \"Check again\". The owner must be an admin of this company."],
       account_connected: ["This GitHub account is already connected to another company.", "An account can belong to one company only. Ask that company's admin."],
       github_app_not_configured: ["The server has no GitHub App settings.", "A server admin needs to add the GitHub:App settings, then try again."],
       network: ["Could not reach the server.", "Check your connection or the server, then try again."],

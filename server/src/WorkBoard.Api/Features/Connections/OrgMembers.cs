@@ -6,7 +6,8 @@ namespace WorkBoard.Api.Features.Connections;
 
 // github_org_members: who belongs to each connected organization. Runs on the sync role, so every statement filters
 // on tenant_id itself. members.removed_at is derived here: null while the person is a current member of any active
-// organization connection of the company; otherwise it keeps (or takes) the time GitHub reported them gone.
+// organization connection of the company; set (keeping an earlier stamp) when such a connection reports them gone;
+// null again when no active organization connection mentions them, e.g. after that organization is disconnected.
 public static class OrgMembers
 {
     public static async Task<string> ApplyEventAsync(
@@ -21,8 +22,11 @@ public static class OrgMembers
                    updated_at = now()
             """, new { tenantId, connectionId, userId, removed }, tx, cancellationToken: ct));
         var changed = await RecomputeAsync(conn, tx, tenantId, [userId], ct);
+        var known = await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists (select 1 from members where tenant_id = @tenantId and github_user_id = @userId)",
+            new { tenantId, userId }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
-        return changed > 0 ? "applied" : "ignored: unknown_member";
+        return !known ? "ignored: unknown_member" : changed > 0 ? "applied" : "unchanged";
     }
 
     // Replaces the connection's member list with what GitHub returns. Null when the installation lacks "Members: read".
@@ -52,24 +56,36 @@ public static class OrgMembers
         return list.Count;
     }
 
+    // Re-derives members.removed_at for each company, e.g. after one of its connections was disconnected or resumed.
+    public static async Task RecomputeTenantsAsync(NpgsqlConnection conn, IEnumerable<Guid> tenantIds, CancellationToken ct)
+    {
+        foreach (var tenantId in tenantIds.Distinct())
+            await RecomputeAsync(conn, null, tenantId, null, ct);
+    }
+
     // userIds null recomputes every member of the company.
     private static Task<int> RecomputeAsync(
-        NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, long[]? userIds, CancellationToken ct) =>
+        NpgsqlConnection conn, NpgsqlTransaction? tx, Guid tenantId, long[]? userIds, CancellationToken ct) =>
         conn.ExecuteAsync(new CommandDefinition("""
-            with state as (
-              select m.id,
-                     bool_or(o.removed_at is null) as present,
-                     max(o.removed_at) as gone_at
-                from members m
-                join github_org_members o on o.tenant_id = m.tenant_id and o.github_user_id = m.github_user_id
+            with active as (
+              select o.github_user_id, o.removed_at
+                from github_org_members o
                 join github_connections c on c.tenant_id = o.tenant_id and c.id = o.connection_id and c.disconnected_at is null
+               where o.tenant_id = @tenantId
+            ),
+            derived as (
+              select m.id,
+                     case when exists (select 1 from active a where a.github_user_id = m.github_user_id and a.removed_at is null)
+                          then null
+                          else (select max(a.removed_at) from active a where a.github_user_id = m.github_user_id)
+                     end as gone_at
+                from members m
                where m.tenant_id = @tenantId and (@userIds::bigint[] is null or m.github_user_id = any(@userIds))
-               group by m.id
             )
             update members m
-               set removed_at = case when s.present then null else coalesce(m.removed_at, s.gone_at) end
-              from state s
-             where m.tenant_id = @tenantId and m.id = s.id
-               and m.removed_at is distinct from (case when s.present then null else coalesce(m.removed_at, s.gone_at) end)
+               set removed_at = case when d.gone_at is null then null else coalesce(m.removed_at, d.gone_at) end
+              from derived d
+             where m.tenant_id = @tenantId and m.id = d.id
+               and m.removed_at is distinct from (case when d.gone_at is null then null else coalesce(m.removed_at, d.gone_at) end)
             """, new { tenantId, userIds }, tx, cancellationToken: ct));
 }

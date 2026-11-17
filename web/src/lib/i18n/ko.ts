@@ -899,7 +899,7 @@ export const ko = {
     request: {
       label: "조직 설치 요청",
       title: "관리자에게 승인을 요청했습니다",
-      lead: "조직 소유자가 GitHub에서 설치를 승인하면 \"다시 확인\"을 눌러 연결하세요.",
+      lead: "조직 소유자가 GitHub에서 설치를 승인한 뒤, 그 소유자가 업무 보드에 로그인해 \"다시 확인\"을 누르면 연결됩니다. 요청은 7일 동안 유지됩니다.",
       meta: (date: string, login: string | null) => (login ? `${date} · ${login} 님이 요청` : `${date} 요청`),
       check: "다시 확인",
       checking: "확인하는 중",
@@ -910,7 +910,7 @@ export const ko = {
       cancelFailed: "요청을 취소하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
       pick: "승인된 조직이 여러 곳입니다. 연결할 조직을 고르세요.",
       pickLabel: (login: string) => `${login} 연결하기`,
-      noRequestMember: "관리자가 다시 확인하면 연결됩니다.",
+      noRequestMember: "조직 소유자인 관리자가 \"다시 확인\"을 누르면 연결됩니다.",
     },
   },
 
@@ -937,7 +937,8 @@ export const ko = {
       not_org_member: ["로그인한 GitHub 계정이 이 조직의 구성원이 아닙니다.", "조직에 합류한 계정으로 업무 보드에 로그인한 뒤 다시 연결해 주세요."],
       org_members_not_granted: ["GitHub App에 조직 구성원 읽기 권한이 아직 없습니다.", "App 소유자가 Members 읽기 권한을 추가하고, 조직 소유자가 새 권한을 승인한 뒤 다시 시도해 주세요."],
       unsupported_account: ["이 종류의 GitHub 계정은 연결할 수 없습니다.", "개인 계정이나 조직에 설치해 주세요."],
-      no_request: ["열린 설치 요청이 없습니다.", "설정에서 \"GitHub 연결하기\"로 다시 시작해 주세요."],
+      no_request: ["열린 설치 요청이 없습니다.", "요청은 7일 뒤 만료됩니다. 설정에서 \"GitHub 연결하기\"로 다시 시작해 주세요."],
+      owner_required: ["조직 소유자만 \"다시 확인\"으로 연결할 수 있습니다.", "조직 소유자가 승인한 뒤 보드에 로그인해 \"다시 확인\"을 눌러야 합니다. 소유자가 이 회사의 관리자여야 합니다."],
       account_connected: ["이 GitHub 계정은 이미 다른 회사에 연결되어 있습니다.", "한 계정은 한 회사에만 연결할 수 있습니다. 그 회사의 관리자에게 문의해 주세요."],
       github_app_not_configured: ["서버에 GitHub App 설정이 없습니다.", "서버 관리자가 GitHub App 설정(GitHub:App)을 넣은 뒤 다시 시도해 주세요."],
       network: ["서버에 연결하지 못했습니다.", "인터넷 연결이나 서버 상태를 확인하고 다시 시도해 주세요."],

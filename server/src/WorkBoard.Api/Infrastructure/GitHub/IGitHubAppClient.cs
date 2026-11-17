@@ -5,7 +5,8 @@ public sealed record GitHubUser(long Id, string Login);
 public sealed record GitHubInstallation(long AccountId, string AccountLogin, string AccountType, string? RepositorySelection);
 
 public sealed record GitHubAppInstallation(
-    long Id, long AccountId, string AccountLogin, string AccountType, string? RepositorySelection, DateTimeOffset CreatedAt);
+    long Id, long AccountId, string AccountLogin, string AccountType, string? RepositorySelection, DateTimeOffset CreatedAt,
+    DateTimeOffset? SuspendedAt = null);
 
 public enum OrgMembership
 {
