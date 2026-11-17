@@ -17,7 +17,7 @@ public static class MilestonesEndpoints
                        count(i.id) filter (where st.status <> 'cancelled')::int as issue_count,
                        count(i.id) filter (where st.status = 'done')::int as done_count
                   from milestones m
-                  join repositories r on r.id = m.repository_id
+                  join repositories r on r.id = m.repository_id and r.sync_enabled
                   left join issues i on i.milestone_id = m.id
                   left join issue_status st on st.issue_id = i.id
                  group by m.id, r.name

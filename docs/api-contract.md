@@ -99,6 +99,9 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | POST | `/api/connections/github-token` | dev user, admin | `GithubConnection` (`201`), see "Token connections" |
 | PUT | `/api/connections/{id}/github-token` | dev user, admin | `GithubConnection` (`200`), replaces the token |
 | DELETE | `/api/connections/{id}/github-token` | dev user, admin | `204`, disconnects the token connection and deletes the token |
+| GET | `/api/connections/{id}/organization/preview` | dev user, admin | `OrganizationPreview`, see "Organization import" |
+| POST | `/api/connections/{id}/organization/import` | dev user, admin | `ImportResult`, selects repositories, optionally creates projects from teams |
+| PUT | `/api/connections/{id}/organization/repositories` | dev user, admin | `SelectionResult`, replaces the repository selection |
 | GET | `/api/connections/github/request` | dev user | `{ request: ConnectionRequest \| null }`, the company's open organization install request |
 | POST | `/api/connections/github/request` | dev user, admin | `ConnectionRequest` (`201` new, `200` already open) |
 | DELETE | `/api/connections/github/request` | dev user, admin | `204` (closes the open request, if any) |
@@ -183,7 +186,54 @@ Writes through a token connection show the token owner as the GitHub author; the
 the member. The duplicate check after a retried write recognises the token owner's login (the App's `<slug>[bot]`
 for App connections). A write on a token connection without a usable token answers `409 credential_missing`.
 Sync and the new-issue repository list include token connections; the organization's repositories come from
-`GET /orgs/{org}/repos`. Webhooks do not reach token connections, so they rely on the periodic sync.
+`GET /orgs/{org}/repos`, but only repositories selected through "Organization import" are read (see below). Webhooks do not reach token connections, so they rely on the periodic sync.
+
+### Organization import
+
+For an active token connection of an organization (`404 not_found` for anything else, including a connection of another
+company). All three calls are admin only (`403 admin_only`) and use the connection's stored token.
+
+`GET /api/connections/{id}/organization/preview` reads from GitHub (`/orgs/{org}`, `/repos`, `/teams`, `/members`, and
+per repository one label and one milestone request) and returns, without writing anything:
+```
+{ "organization": { "id", "login", "name", "description", "htmlUrl", "avatarUrl" },
+  "repositories": [{ "id": <GitHub repo id>, "name", "fullName", "htmlUrl", "archived", "private", "description",
+                     "selected": bool, "labelCount": n | null, "milestoneCount": n | null }],
+  "teams": [{ "id", "name", "slug", "description", "privacy" }],
+  "members": [{ "id": <GitHub user id>, "login", "avatarUrl", "onBoard": bool }],
+  "counts": { "repositories", "teams", "members", "labels", "milestones", "countedRepositories" },
+  "truncated": { "repositories", "teams", "members", "counts": bool } }
+```
+`selected` is the current selection (`repositories.sync_enabled`); `onBoard` is true for an active board member (not removed, not left) with that
+GitHub id. Lists are capped at 10 pages of 100 (`truncated.*` true when more exist). Labels and milestones are counted
+for the first 30 non-archived repositories only (`labelCount` / `milestoneCount` are null for the others and
+`truncated.counts` is true); `counts.labels` and `counts.milestones` sum those.
+
+`POST /api/connections/{id}/organization/import` body `{"repositories": [<GitHub repo id>, ...], "teamProjects": ["<team slug>", ...]}`
+(`repositories` needs 1 to 1000 ids, `teamProjects` is optional, at most 50). The ids must belong to the organization's
+repositories. The selection replaces the previous one. For each team in `teamProjects` a board project named after the team
+is created and linked to the selected repositories the team can access. A team is skipped (listed in `skippedTeams` with a
+`reason`) when no selected repository is in it (`no_selected_repositories`) or when a project with that name exists
+already (`name_taken`; that project is left untouched, including one an earlier import made). Organization members are written to `github_users` as reference rows
+(login and avatar) and never become board members; access still only comes from invitations. Nothing else is read: no secrets, billing,
+webhooks, security or SSO settings, or organization Projects. Response `200`:
+`{"selected": n, "deselected": n, "projects": [{"id", "name", "repositoryCount"}], "skippedTeams": [{"slug", "reason"}], "membersReferenced": n}`.
+
+`PUT /api/connections/{id}/organization/repositories` body `{"repositories": [...]}` (0 to 1000 ids) replaces the selection
+later. Response `200` `{"selected": n, "deselected": n}` where `deselected` counts repositories that were selected before.
+
+Selection and sync: `repositories.sync_enabled` is the selection. A sync run of a token connection still lists the
+organization's repositories, but inserts unknown ones with `sync_enabled = false` and reads only enabled ones. Token
+connections that existed before this feature start with nothing selected (migration 0024). When a repository moves to
+another connection (e.g. reconnected with the App), `sync_enabled` is reset from the new connection: App enabled, token
+disabled until imported. A deselected repository keeps its
+mirrored rows, stops syncing, and its issues drop out of `issue_status`, so board lists, search, milestones, overview and
+project views no longer show them. Sprint carry-over, its undo guard and `sprint_daily` read `issue_status_all` (same status, no visibility rule), so
+hiding a repository never strands issues in a sprint or changes recorded scope. Selecting it again shows them again and the next run catches up from its last
+`last_synced_at`. Projects keep their links to deselected repositories, which the project views hide.
+Errors: `400 invalid_request`, `403 admin_only`, `404 not_found`, `409 credential_missing` (stored token missing or
+rejected by GitHub), `422 unknown_repository` (also `ids`), `422 unknown_team` (also `slugs`), `429 github_rate_limited`,
+`502 github_unavailable` (also a GitHub timeout). `audit_log` actions: `connection.org_import`, `connection.org_repositories_update`.
 
 When someone who is not an organization owner installs the App, GitHub records an install request and returns to
 `/connect/github?setup_action=request` without an installation id. The web then calls

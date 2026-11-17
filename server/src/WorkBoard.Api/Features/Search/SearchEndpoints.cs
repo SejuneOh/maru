@@ -47,6 +47,7 @@ public static class SearchEndpoints
             select c.issue_id, i.title as issue_title, c.body
               from comments c
               join issues i on i.id = c.issue_id
+              join repositories r on r.id = i.repository_id and r.sync_enabled
              where position(lower(@term) in lower(c.body)) > 0
              order by c.github_created_at desc, c.id
              limit @limit

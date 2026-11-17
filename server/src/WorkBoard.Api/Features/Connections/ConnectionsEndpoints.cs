@@ -46,6 +46,7 @@ public static class ConnectionsEndpoints
     {
         api.MapConnectGithub();
         api.MapConnectGithubToken();
+        api.MapOrganizationImport();
         api.MapConnectionRequests();
         api.MapGet("/connections", async (TenantDb db, CancellationToken ct) =>
         {

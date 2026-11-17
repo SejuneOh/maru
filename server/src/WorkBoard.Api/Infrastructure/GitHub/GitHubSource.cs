@@ -4,10 +4,11 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials) : IGitHubSource
+public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials credentials) : IGitHubSource, IGitHubOrgReader
 {
     private const string ApiBase = "https://api.github.com";
     private const int PageSize = 100;
@@ -230,6 +231,82 @@ public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials
         }
     }
 
+    // ---- organization settings ----------------------------------------------------------------
+
+    private static string Org(GitHubConnectionRef c) =>
+        Uri.EscapeDataString(c.AccountLogin
+            ?? throw new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "The connection has no organization."));
+
+    private async Task<Capped<T>> GetCappedAsync<T>(GitHubConnectionRef connection, string url, CancellationToken ct)
+    {
+        var items = new List<T>();
+        var sep = url.Contains('?') ? '&' : '?';
+        for (var page = 1; page <= IGitHubOrgReader.MaxPages; page++)
+        {
+            var (body, _) = await GetRestAsync<List<T>>(connection, $"{url}{sep}per_page={PageSize}&page={page}", ct);
+            items.AddRange(body);
+            if (body.Count < PageSize)
+                return new Capped<T>(items, false);
+        }
+        return new Capped<T>(items, true);
+    }
+
+    public async Task<OrgInfo> GetOrgInfoAsync(GitHubConnectionRef connection, CancellationToken ct)
+    {
+        var (o, _) = await GetRestAsync<RestOrg>(connection, $"{ApiBase}/orgs/{Org(connection)}", ct);
+        return new OrgInfo(o.Id, o.Login, o.Name, o.Description, o.HtmlUrl, o.AvatarUrl);
+    }
+
+    public async Task<Capped<OrgRepository>> ReadOrgRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct)
+    {
+        var list = await GetCappedAsync<RestRepository>(connection, $"{ApiBase}/orgs/{Org(connection)}/repos?type=all&sort=full_name", ct);
+        return new Capped<OrgRepository>(
+            list.Items.Select(r => new OrgRepository(r.Id, r.Name, r.FullName, r.HtmlUrl, r.Archived, r.Private, r.Description)).ToList(),
+            list.Truncated);
+    }
+
+    public async Task<Capped<OrgTeam>> ReadOrgTeamsAsync(GitHubConnectionRef connection, CancellationToken ct)
+    {
+        var list = await GetCappedAsync<RestTeam>(connection, $"{ApiBase}/orgs/{Org(connection)}/teams", ct);
+        return new Capped<OrgTeam>(
+            list.Items.Select(t => new OrgTeam(t.Id, t.Name, t.Slug, t.Description, t.Privacy)).ToList(), list.Truncated);
+    }
+
+    public async Task<Capped<OrgMemberInfo>> ReadOrgMembersAsync(GitHubConnectionRef connection, CancellationToken ct)
+    {
+        var list = await GetCappedAsync<RestUser>(connection, $"{ApiBase}/orgs/{Org(connection)}/members", ct);
+        return new Capped<OrgMemberInfo>(list.Items.Select(u => new OrgMemberInfo(u.Id, u.Login, u.AvatarUrl)).ToList(), list.Truncated);
+    }
+
+    public async Task<Capped<long>> ReadTeamRepositoryIdsAsync(GitHubConnectionRef connection, string teamSlug, CancellationToken ct)
+    {
+        var list = await GetCappedAsync<RestRepository>(
+            connection, $"{ApiBase}/orgs/{Org(connection)}/teams/{Uri.EscapeDataString(teamSlug)}/repos", ct);
+        return new Capped<long>(list.Items.Select(r => r.Id).ToList(), list.Truncated);
+    }
+
+    public Task<int> CountLabelsAsync(GitHubConnectionRef connection, string repositoryFullName, CancellationToken ct) =>
+        CountAsync(connection, $"{ApiBase}/repos/{EscapeFullName(repositoryFullName)}/labels?per_page=1", ct);
+
+    public Task<int> CountMilestonesAsync(GitHubConnectionRef connection, string repositoryFullName, CancellationToken ct) =>
+        CountAsync(connection, $"{ApiBase}/repos/{EscapeFullName(repositoryFullName)}/milestones?state=all&per_page=1", ct);
+
+    private static string EscapeFullName(string fullName) => string.Join('/', fullName.Split('/').Select(Uri.EscapeDataString));
+
+    [GeneratedRegex("""" <[^>]*[?&]page=(\d+)[^>]*>\s*;\s*rel="last" """", RegexOptions.IgnorePatternWhitespace)]
+    private static partial Regex LastPage();
+
+    // One item per page, so the last page number in the Link header is the count.
+    private async Task<int> CountAsync(GitHubConnectionRef connection, string url, CancellationToken ct)
+    {
+        using var response = await SendAsync(connection, () => new HttpRequestMessage(HttpMethod.Get, url), ct);
+        if (response.Headers.TryGetValues("Link", out var links)
+            && LastPage().Match(string.Join(',', links)) is { Success: true } m
+            && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+            return n;
+        return (await ReadBodyAsync<List<JsonElement>>(response, ct)).Count;
+    }
+
     private async Task<(T Data, RateLimitInfo? Limit)> PostGraphQlAsync<T>(
         GitHubConnectionRef connection, string query, Dictionary<string, object?> variables, CancellationToken ct)
         where T : GqlData
@@ -384,7 +461,16 @@ public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials
         long Id, string Name,
         [property: JsonPropertyName("full_name")] string FullName,
         [property: JsonPropertyName("html_url")] string? HtmlUrl,
-        bool Archived);
+        bool Archived,
+        bool Private = false,
+        string? Description = null);
+
+    private sealed record RestOrg(
+        long Id, string Login, string? Name, string? Description,
+        [property: JsonPropertyName("html_url")] string? HtmlUrl,
+        [property: JsonPropertyName("avatar_url")] string? AvatarUrl);
+
+    private sealed record RestTeam(long Id, string Name, string Slug, string? Description, string? Privacy);
 
     private sealed record RestLabel(
         long Id,

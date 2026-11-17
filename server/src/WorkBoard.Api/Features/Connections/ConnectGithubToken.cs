@@ -303,7 +303,7 @@ public static class ConnectGithubToken
 
     private static string Last4(string token) => token[^4..];
 
-    private static async Task AuditAsync(
+    internal static async Task AuditAsync(
         TenantDb db, IAuditLog audit, ILogger log, string action, Guid? targetId, object after)
     {
         try
@@ -332,7 +332,7 @@ public static class ConnectGithubToken
             : ConnectGithub.Error(failure.Status, failure.Code);
     }
 
-    private static async Task<T?> ReadAsync<T>(HttpContext http, CancellationToken ct) where T : class
+    internal static async Task<T?> ReadAsync<T>(HttpContext http, CancellationToken ct) where T : class
     {
         if (!http.Request.HasJsonContentType())
             return null;

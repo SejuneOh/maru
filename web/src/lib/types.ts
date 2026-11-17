@@ -125,6 +125,83 @@ export type ConnectGithubTokenRequest = { token: string; organization: string };
 /** `PUT /api/connections/{id}/github-token` body. */
 export type ReplaceGithubTokenRequest = { token: string };
 
+/** `GET /api/connections/{id}/organization/preview`. Admin only; token connections of organizations. */
+export type OrganizationPreview = {
+  organization: {
+    id: number;
+    login: string;
+    name: string | null;
+    description: string | null;
+    htmlUrl: string | null;
+    avatarUrl: string | null;
+  };
+  repositories: {
+    /** GitHub repository id, the value to send back in a selection. */
+    id: number;
+    name: string;
+    fullName: string;
+    htmlUrl: string | null;
+    archived: boolean;
+    private: boolean;
+    description: string | null;
+    /** Currently synced. */
+    selected: boolean;
+    /** Null beyond the first 30 non-archived repositories. */
+    labelCount: number | null;
+    milestoneCount: number | null;
+  }[];
+  teams: { id: number; name: string; slug: string; description: string | null; privacy: string | null }[];
+  members: { id: number; login: string; avatarUrl: string | null; onBoard: boolean }[];
+  counts: {
+    repositories: number;
+    teams: number;
+    members: number;
+    labels: number;
+    milestones: number;
+    countedRepositories: number;
+  };
+  /** True when the list hit the page cap; `counts` is true when labels and milestones were counted for a subset. */
+  truncated: { repositories: boolean; teams: boolean; members: boolean; counts: boolean };
+};
+
+/** `POST /api/connections/{id}/organization/import` body. The selection replaces the previous one. */
+export type ImportOrganizationRequest = {
+  /** GitHub repository ids, 1 to 1000. */
+  repositories: number[];
+  /** Team slugs to create board projects from (optional, at most 50). */
+  teamProjects?: string[];
+};
+
+export type ImportedProject = { id: string; name: string; repositoryCount: number };
+
+/** A team that got no project: no selected repository, or a project with that name exists already. */
+export type SkippedTeam = { slug: string; reason: "no_selected_repositories" | "name_taken" };
+
+export type ImportOrganizationResult = {
+  selected: number;
+  /** Repositories that were selected before and are not any more. */
+  deselected: number;
+  projects: ImportedProject[];
+  skippedTeams: SkippedTeam[];
+  membersReferenced: number;
+};
+
+/** `PUT /api/connections/{id}/organization/repositories` body; 0 to 1000 ids. */
+export type UpdateRepositorySelectionRequest = { repositories: number[] };
+
+export type RepositorySelectionResult = { selected: number; deselected: number };
+
+/** Error codes of the organization import endpoints (`error` field). */
+export type OrganizationImportError =
+  | "invalid_request"
+  | "admin_only"
+  | "not_found"
+  | "credential_missing"
+  | "unknown_repository" // also `ids`
+  | "unknown_team" // also `slugs`
+  | "github_rate_limited"
+  | "github_unavailable";
+
 /** Error codes of the token connection endpoints (`error` field). */
 export type ConnectGithubTokenError =
   | "invalid_request"

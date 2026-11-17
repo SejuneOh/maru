@@ -43,7 +43,7 @@ public static class ScheduleQuery
                         then {Today} - (m.due_on at time zone '{OverviewQueries.TimeZone}')::date else 0 end as overdue_days
               from project_repositories pr
               join milestones m on m.repository_id = pr.repository_id
-              join repositories r on r.id = m.repository_id
+              join repositories r on r.id = m.repository_id and r.sync_enabled
               left join issues i on i.milestone_id = m.id
               left join issue_status st on st.issue_id = i.id
              where pr.project_id = @projectId

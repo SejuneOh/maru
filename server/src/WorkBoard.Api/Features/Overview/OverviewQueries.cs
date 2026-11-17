@@ -70,6 +70,7 @@ public static class OverviewQueries
                   from pull_requests p
                   join issue_pull_requests ipr on ipr.pull_request_id = p.id
                   join issues i on i.id = ipr.issue_id
+                  join repositories r on r.id = i.repository_id and r.sync_enabled
                   left join members am on am.github_user_id = p.author_github_id
                  where p.state = 'open' and p.review_requested and i.state = 'open'
                  order by i.id, p.github_updated_at, p.id
@@ -81,6 +82,7 @@ public static class OverviewQueries
             select i.id as issue_id,
                    floor(extract(epoch from now() - i.github_updated_at) / 86400)::int as idle_days
               from issues i
+              join repositories r on r.id = i.repository_id and r.sync_enabled
              where i.state = 'open' and i.github_updated_at < now() - make_interval(days => @staleDays)
              order by i.github_updated_at, i.id
             """, new { staleDays = StaleDays });
@@ -88,6 +90,7 @@ public static class OverviewQueries
         var unassignedRows = await s.QueryAsync<IssueIdRow>("""
             select i.id as issue_id
               from issues i
+              join repositories r on r.id = i.repository_id and r.sync_enabled
              where i.state = 'open' and coalesce(i.issue_type, '') <> 'Epic'
                and not exists (select 1 from issue_assignees ia where ia.issue_id = i.id)
              order by i.github_updated_at, i.id
@@ -118,13 +121,13 @@ public static class OverviewQueries
         var refs = await LoadRefsAsync(s, shown);
 
         return new Attention(
-            urgent.Take(GroupLimit).Select(r => new UrgentItem(refs[r.IssueId], r.Status == "todo")).ToList(),
-            review.Take(GroupLimit)
+            urgent.Take(GroupLimit).Where(r => refs.ContainsKey(r.IssueId)).Select(r => new UrgentItem(refs[r.IssueId], r.Status == "todo")).ToList(),
+            review.Take(GroupLimit).Where(r => refs.ContainsKey(r.IssueId))
                 .Select(r => new ReviewWaitingItem(
                     refs[r.IssueId], new ReviewPullRequest(r.PrNumber, r.PrTitle, r.AuthorLogin, r.WaitingSince)))
                 .ToList(),
-            stale.Take(GroupLimit).Select(r => new StaleItem(refs[r.IssueId], r.IdleDays)).ToList(),
-            unassigned.Take(GroupLimit).Select(r => refs[r.IssueId]).ToList(),
+            stale.Take(GroupLimit).Where(r => refs.ContainsKey(r.IssueId)).Select(r => new StaleItem(refs[r.IssueId], r.IdleDays)).ToList(),
+            unassigned.Take(GroupLimit).Where(r => refs.ContainsKey(r.IssueId)).Select(r => refs[r.IssueId]).ToList(),
             actionRows.Take(GroupLimit)
                 .Select(a => new ActionItemWithoutIssue(a.Id, a.Text, a.ToMember(), new NoteRef(a.NoteId, a.NoteTitle, a.HeldAt)))
                 .ToList(),
@@ -209,7 +212,7 @@ public static class OverviewQueries
         var repos = (await s.QueryAsync<ProjectRepoRow>("""
             select pr.project_id, r.name
               from project_repositories pr
-              join repositories r on r.id = pr.repository_id
+              join repositories r on r.id = pr.repository_id and r.sync_enabled
              order by r.name
             """)).ToLookup(r => r.ProjectId, r => r.Name);
         var byStatus = (await s.QueryAsync<ProjectStatusRow>("""
@@ -227,6 +230,7 @@ public static class OverviewQueries
             select pr.project_id, count(*)::int as open_pull_requests
               from project_repositories pr
               join pull_requests p on p.repository_id = pr.repository_id
+              join repositories r on r.id = pr.repository_id and r.sync_enabled
              where p.state = 'open'
              group by pr.project_id
             """)).ToDictionary(r => r.ProjectId, r => r.OpenPullRequests);
@@ -324,7 +328,7 @@ public static class OverviewQueries
                      null::uuid as note_id, null::text as note_title, left(c.body, 80) as snippet
                 from comments c
                 join issues i on i.id = c.issue_id
-                join repositories r on r.id = i.repository_id
+                join repositories r on r.id = i.repository_id and r.sync_enabled
                 left join members am on am.github_user_id = c.author_github_id
                where c.github_created_at >= now() - make_interval(days => @days)
               union all
@@ -336,7 +340,7 @@ public static class OverviewQueries
                      r.name, p.number, p.title,
                      null, null, null
                 from pull_requests p
-                join repositories r on r.id = p.repository_id
+                join repositories r on r.id = p.repository_id and r.sync_enabled
                 left join members am on am.github_user_id = p.author_github_id
                where p.state in ('open', 'merged') and p.github_updated_at >= now() - make_interval(days => @days)
               union all
@@ -345,7 +349,7 @@ public static class OverviewQueries
                      null, null, null,
                      null, null, null
                 from issues i
-                join repositories r on r.id = i.repository_id
+                join repositories r on r.id = i.repository_id and r.sync_enabled
                where i.state = 'closed' and i.closed_at >= now() - make_interval(days => @days)
               union all
               select 'meeting_note', n.held_at, am.github_login, am.display_name,

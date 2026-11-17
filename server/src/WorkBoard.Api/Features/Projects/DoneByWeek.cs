@@ -29,6 +29,7 @@ public static class DoneByWeekQuery
                    count(distinct i.id)::int as done
               from project_repositories pr
               join issues i on i.repository_id = pr.repository_id
+              join repositories r on r.id = pr.repository_id and r.sync_enabled
              where i.state = 'closed'
                and i.state_reason is distinct from 'not_planned'
                and i.closed_at >= (cast(@from as date)::timestamp at time zone 'Asia/Seoul')
