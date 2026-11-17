@@ -60,6 +60,9 @@ export type InviteError =
 /** `DELETE /api/members/{id}` and `DELETE /api/invitations/{id}` errors. */
 export type RemoveError = "not_found" | "last_admin" | "admin_only";
 
+/** `PATCH /api/members/{id}` errors (`error` field). */
+export type ChangeRoleError = "invalid_request" | "not_found" | "last_admin" | "admin_only";
+
 /** `POST /api/invitations/preview` 200. Only returned to the invited GitHub account. */
 export type InvitationPreview = {
   tenant: { id: string; name: string };
@@ -102,7 +105,26 @@ export type GithubConnection = {
   repositorySelection: "all" | "selected" | null;
   createdAt: string;
   disconnectedAt: string | null;
+  /** Current organization members; null for personal accounts or when the members could not be read. */
+  orgMemberCount: number | null;
 };
+
+/** The company's open organization install request (GitHub `setup_action=request`). */
+export type ConnectionRequest = {
+  id: string;
+  requestedAt: string;
+  requestedByLogin: string | null;
+  accountLogin: string | null;
+};
+
+export type ConnectionRequestState = { request: ConnectionRequest | null };
+
+export type ConnectionRequestCheck =
+  | { status: "pending"; connection: null }
+  | { status: "connected"; connection: GithubConnection };
+
+/** Body of `409 multiple_organizations` from the request check. */
+export type OrganizationChoice = { accountId: number; login: string };
 
 export type ConnectGithubRequest = {
   code: string;
@@ -116,8 +138,22 @@ export type ConnectGithubError =
   | "admin_only"
   | "not_your_account"
   | "not_your_installation"
+  | "not_org_owner"
+  | "not_org_member"
   | "account_connected"
-  | "organization_not_supported"
+  | "org_members_not_granted"
+  | "unsupported_account"
+  | "github_unavailable"
+  | "github_app_not_configured";
+
+export type ConnectionRequestError =
+  | "unauthenticated"
+  | "admin_only"
+  | "no_request"
+  | "not_org_owner"
+  | "account_connected"
+  | "multiple_organizations"
+  | "org_members_not_granted"
   | "github_unavailable"
   | "github_app_not_configured";
 

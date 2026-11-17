@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using WorkBoard.Api.Features.Connections;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
 using WorkBoard.Api.Infrastructure.Sync;
@@ -173,20 +174,19 @@ public sealed class WebhookProcessor(
             return "ignored: unknown_installation";
         if (row.SubjectUserId is null || connection.AccountId != row.AccountId)
             return "ignored: other_account";
-        var changed = await conn.ExecuteAsync(new CommandDefinition(
-            row.Action == "member_removed"
-                ? "update members set removed_at = now() where tenant_id = @tenantId and github_user_id = @userId and removed_at is null"
-                : "update members set removed_at = null where tenant_id = @tenantId and github_user_id = @userId and removed_at is not null",
-            new { tenantId = connection.TenantId, userId = row.SubjectUserId }, cancellationToken: ct));
-        return changed > 0 ? "applied" : "ignored: unknown_member";
+        return await OrgMembers.ApplyEventAsync(
+            conn, connection.TenantId, connection.Id, row.SubjectUserId.Value, row.Action == "member_removed", ct);
     }
 
     private static async Task<string> DisconnectAsync(NpgsqlConnection conn, long? installationId, CancellationToken ct)
     {
-        var changed = await conn.ExecuteAsync(new CommandDefinition(
-            "update github_connections set disconnected_at = now() where installation_id = @installationId and disconnected_at is null",
-            new { installationId }, cancellationToken: ct));
-        return changed > 0 ? "disconnected" : "ignored: unknown_installation";
+        var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
+            update github_connections set disconnected_at = now()
+             where installation_id = @installationId and disconnected_at is null
+            returning tenant_id
+            """, new { installationId }, cancellationToken: ct))).AsList();
+        await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
+        return tenants.Count > 0 ? "disconnected" : "ignored: unknown_installation";
     }
 
     // Only a disconnect that happened to this installation id is undone, and only while the account has no newer active connection.
@@ -194,15 +194,17 @@ public sealed class WebhookProcessor(
     {
         try
         {
-            var changed = await conn.ExecuteAsync(new CommandDefinition("""
+            var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
                 update github_connections c set disconnected_at = null
                  where c.id = (select id from github_connections
                                 where installation_id = @installationId and disconnected_at is not null
                                 order by disconnected_at desc limit 1)
                    and not exists (select 1 from github_connections o
                                     where o.disconnected_at is null and (o.installation_id = @installationId or o.account_id = c.account_id))
-                """, new { installationId }, cancellationToken: ct));
-            return changed > 0 ? "reconnected" : "ignored: nothing_to_resume";
+                returning c.tenant_id
+                """, new { installationId }, cancellationToken: ct))).AsList();
+            await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
+            return tenants.Count > 0 ? "reconnected" : "ignored: nothing_to_resume";
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {

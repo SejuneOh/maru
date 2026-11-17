@@ -29,6 +29,8 @@ internal sealed record CreateInvitationRequest(string? GithubLogin);
 
 internal sealed record TokenRequest(string? Token);
 
+internal sealed record ChangeRoleRequest(string? Role);
+
 public static class Invitations
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
@@ -58,6 +60,7 @@ public static class Invitations
         api.MapPost("/invitations", CreateAsync);
         api.MapDelete("/invitations/{id:guid}", RevokeAsync);
         api.MapDelete("/members/{id:guid}", RemoveMemberAsync);
+        api.MapPatch("/members/{id:guid}", ChangeRoleAsync);
     }
 
     // Join endpoints: the caller is signed in but not yet a member, so these are not behind CurrentMemberFilter.
@@ -235,6 +238,52 @@ public static class Invitations
                 new { target.GithubUserId, target.GithubLogin, target.Role }, null);
             return new WriteResult(StatusCodes.Status204NoContent);
         });
+
+    // Locks every active admin like removal, so two admins demoting each other leave one admin.
+    private static async Task<IResult> ChangeRoleAsync(
+        Guid id, HttpContext http, ICurrentUser user, TenantDb db, IAuditLog audit, CancellationToken ct)
+    {
+        if (user.Identity.Member.Role != "admin")
+            return ApiErrors.AdminOnlyResult();
+        var bytes = await RequestBodies.ReadAsync(http, MaxBodyBytes, ct);
+        string? role = null;
+        try
+        {
+            if (bytes is { Length: > 0 })
+                role = JsonSerializer.Deserialize<ChangeRoleRequest>(bytes, JsonSerializerOptions.Web)?.Role;
+        }
+        catch (JsonException)
+        {
+        }
+        if (bytes is null || role is not ("admin" or "member"))
+            return ApiErrors.BadRequest();
+
+        var key = http.Request.Headers[Idempotency.HeaderName].ToString();
+        var hash = Idempotency.HashRequest(
+            user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+        return await db.WriteAsync(s => Idempotency.RunAsync(s, user, key, hash, async () =>
+        {
+            var admins = await s.QueryAsync<Guid>(
+                "select id from members where left_at is null and role = 'admin' order by id for update");
+            if (!admins.Contains(user.Identity.Member.Id))
+                return WriteError(StatusCodes.Status403Forbidden, ApiErrors.AdminOnly);
+            var target = await s.QuerySingleOrDefaultAsync<MemberRow>(
+                $"select {MemberRow.Columns}, m.removed_at from members m where m.id = @id and m.left_at is null for update",
+                new { id });
+            if (target is null)
+                return WriteError(StatusCodes.Status404NotFound, ApiErrors.NotFound);
+            if (target.Role == role)
+                return new WriteResult(StatusCodes.Status200OK, target.ToMember());
+            if (role == "member" && admins.Count(a => a != id) == 0)
+                return WriteError(StatusCodes.Status409Conflict, LastAdmin);
+
+            await s.ExecuteAsync("update members set role = @role where id = @id", new { role, id });
+            await audit.WriteAsync(s, "member.role", "member", id,
+                new { target.GithubUserId, target.GithubLogin, target.Role }, new { Role = role });
+            target.Role = role;
+            return new WriteResult(StatusCodes.Status200OK, target.ToMember());
+        }), ct);
+    }
 
     private static async Task<IResult> AdminWriteAsync(
         HttpContext http, ICurrentUser user, TenantDb db, CancellationToken ct, Func<TenantSession, Task<WriteResult>> work)

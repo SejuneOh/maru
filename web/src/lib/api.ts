@@ -8,12 +8,15 @@ import type {
   AssignedIssue,
   BoardChangeRequest,
   BoardIssue,
+  ConnectionRequest,
+  ConnectionRequestCheck,
   CreateIssueRequest,
   CreatedInvitation,
   CreatedIssue,
   InvitationPreview,
   JoinedTenant,
   MeetingNote,
+  Member,
   MeetingNoteRequest,
   Milestone,
   PendingActionItemIssue,
@@ -133,6 +136,23 @@ export function apiGet<T>(path: string): Promise<T> {
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "POST", body });
+}
+
+export const CONNECTION_REQUEST_PATH = "/api/connections/github/request";
+
+/** `POST /api/connections/github/request` (admin): records the organization install request GitHub returned. */
+export function createConnectionRequest(): Promise<ConnectionRequest> {
+  return request<ConnectionRequest>(CONNECTION_REQUEST_PATH, { method: "POST" });
+}
+
+/** `POST .../request/check` (admin). Rejects with an `ApiError` whose `code` is a `ConnectionRequestError`. */
+export function checkConnectionRequest(accountId?: number): Promise<ConnectionRequestCheck> {
+  return apiPost<ConnectionRequestCheck>(`${CONNECTION_REQUEST_PATH}/check`, accountId === undefined ? {} : { accountId });
+}
+
+/** `DELETE /api/connections/github/request` (admin). */
+export async function cancelConnectionRequest(): Promise<void> {
+  await request<null>(CONNECTION_REQUEST_PATH, { method: "DELETE" });
 }
 
 export const MILESTONES_PATH = "/api/milestones";
@@ -302,6 +322,15 @@ export async function revokeInvitation(id: string, idempotencyKey: string): Prom
 export async function removeMember(id: string, idempotencyKey: string): Promise<void> {
   await request<null>(`/api/members/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `PATCH /api/members/{id}` (admin). Rejects with an `ApiError` whose `code` is a `ChangeRoleError`. */
+export function setMemberRole(id: string, role: Member["role"], idempotencyKey: string): Promise<Member> {
+  return request<Member>(`/api/members/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { role },
     headers: { "Idempotency-Key": idempotencyKey },
   });
 }

@@ -1,14 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { GitHubMark } from "@/components/Auth";
-import { ConnectionRow, ROW_LINE, githubInstallUrl } from "@/components/Connections";
+import { ConnectionRequestPanel, ConnectionRow, ROW_LINE, githubInstallUrl } from "@/components/Connections";
 import { TeamCard } from "@/components/TeamCard";
 import { Card, Count, PageHeader } from "@/components/ui";
-import { type Loadable, useApi } from "@/lib/api";
+import { CONNECTION_REQUEST_PATH, type Loadable, useApi } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
-import type { GithubConnection, Project } from "@/lib/types";
+import type { ConnectionRequestState, GithubConnection, Project } from "@/lib/types";
 
 export default function SettingsPage() {
   const me = useMe();
@@ -79,6 +80,14 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
   const t = useT();
   const ct = t.connections;
   const list = connections.data;
+  const pending = useApi<ConnectionRequestState>(CONNECTION_REQUEST_PATH);
+  const request = pending.data?.request ?? null;
+  const [connected, setConnected] = useState<string | null>(null);
+  const onConnected = (c: GithubConnection) => {
+    setConnected(c.accountLogin);
+    connections.reload();
+    pending.reload();
+  };
   const action =
     isAdmin && githubInstallUrl ? (
       <a href={githubInstallUrl} className="btn btn-primary">
@@ -99,6 +108,26 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
         </div>
         {action && <div className="ml-auto shrink-0">{action}</div>}
       </div>
+      {request && (
+        <div className="px-5 pb-4 pt-2">
+          <ConnectionRequestPanel
+            key={request.id}
+            request={request}
+            isAdmin={isAdmin}
+            onConnected={onConnected}
+            onCancelled={pending.reload}
+          />
+        </div>
+      )}
+      <div role="status" className="empty:hidden px-5 pb-3 pt-1">
+        {connected && !request && (
+          <p className="flex items-center gap-2.5 text-ui">
+            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-ink" />
+            <span className="font-medium text-ink">{ct.request.connected}</span>
+            <span className="font-mono text-small text-ink-soft">{connected}</span>
+          </p>
+        )}
+      </div>
       {connections.error ? (
         <div className="px-5 pb-5">
           <ErrorBox error={connections.error} />
@@ -106,9 +135,11 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
       ) : !list ? (
         <Loading />
       ) : list.length === 0 ? (
-        <div className="px-5 pb-5">
-          <Empty>{isAdmin ? ct.none : ct.noneMember}</Empty>
-        </div>
+        !request && (
+          <div className="px-5 pb-5">
+            <Empty>{isAdmin ? ct.none : ct.noneMember}</Empty>
+          </div>
+        )
       ) : (
         <ul aria-label={ct.listLabel}>
           {list.map((c) => (
