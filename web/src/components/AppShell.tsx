@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { authEnabled } from "@/lib/auth";
 import { type Dict, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
@@ -142,6 +142,9 @@ function useMedia(query: string): boolean {
 /** Below 1024px the top bar has no room, so the sync line moves above the page there. */
 const useNarrow = () => useMedia("(max-width: 1023px)");
 
+/** The pages are prerendered, where layout effects do not run. */
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 /** Narrowest search field worth showing; below it the field folds into an icon button. */
 const SEARCH_MIN = 240;
 const SEARCH_PART = "data-search-part";
@@ -149,26 +152,46 @@ const SEARCH_PART = "data-search-part";
 /**
  * From 1024px: measures what the other top bar items leave over and folds the search field when the rest is under
  * `SEARCH_MIN`. While the folded field is open the answer is kept, since opening it hides the sync line.
+ * `tight` is set when the bar still overflows with the field folded; it holds until the bar gets wider than it was
+ * then, so dropping the optional text cannot flip it straight back.
  */
-function useFoldedSearch(bar: React.RefObject<HTMLDivElement | null>, active: boolean, open: boolean, dep: unknown): boolean {
+function useFoldedSearch(
+  bar: React.RefObject<HTMLDivElement | null>,
+  active: boolean,
+  open: boolean,
+  dep: unknown,
+): { folded: boolean; tight: boolean } {
   const [folded, setFolded] = useState(false);
+  const [tight, setTight] = useState(false);
+  const tightAt = useRef<number | null>(null);
   const openRef = useRef(open);
   openRef.current = open;
-  useEffect(() => {
+  // Layout effect: the first answer lands before paint, so a squeezed field never shows for a frame.
+  useIsomorphicLayoutEffect(() => {
     const row = bar.current;
+    tightAt.current = null;
+    setTight(false);
     if (!active || !row) {
       setFolded(false);
       return;
     }
+    let disposed = false;
     const ro = new ResizeObserver(() => measure());
     function measure() {
-      if (!row || openRef.current) return;
+      if (disposed || !row || openRef.current) return;
       const items = [...row.children].filter((el) => !el.hasAttribute(SEARCH_PART)) as HTMLElement[];
       items.forEach((el) => ro.observe(el));
       const used = items.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0);
       const shown = items.filter((el) => el.getBoundingClientRect().width > 0).length;
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
       setFolded(row.clientWidth - used - gap * shown < SEARCH_MIN);
+      if (tightAt.current === null && row.scrollWidth > row.clientWidth + 1) {
+        tightAt.current = row.clientWidth;
+        setTight(true);
+      } else if (tightAt.current !== null && row.clientWidth > tightAt.current + 1) {
+        tightAt.current = null;
+        setTight(false);
+      }
     }
     const mo = new MutationObserver(() => measure());
     ro.observe(row);
@@ -176,11 +199,12 @@ function useFoldedSearch(bar: React.RefObject<HTMLDivElement | null>, active: bo
     document.fonts?.ready.then(() => measure());
     measure();
     return () => {
+      disposed = true;
       ro.disconnect();
       mo.disconnect();
     };
   }, [bar, active, dep]);
-  return active && folded;
+  return { folded: active && folded, tight: active && tight };
 }
 
 /** Marks which edges of the tab strip still have tabs past them (`data-more`), so only those edges fade. */
@@ -218,6 +242,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [q, setQ] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
   const me = useMe();
   const org = me.data?.tenant.name ?? "";
   const sprintsOn = me.data?.settings.sprintsEnabled ?? false;
@@ -237,7 +262,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const narrow = useNarrow();
   const [tokenAlert, setTokenAlert] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
-  const folded = useFoldedSearch(barRef, !narrow, searchOpen, tokenAlert);
+  const { folded, tight } = useFoldedSearch(barRef, !narrow, searchOpen, tokenAlert);
   const searchShown = folded ? searchOpen : undefined;
 
   return (
@@ -324,14 +349,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <OrgMark org={org} size="sm" />
               <span className="truncate text-ui font-semibold max-[639px]:sr-only">{org}</span>
             </Link>
-            <p className="hidden items-center gap-2 whitespace-nowrap text-small text-muted min-[1024px]:flex">
+            {/* A grid whose first column may reach 0, so the company name truncates first and the screen name stays whole. */}
+            <p
+              className={`hidden min-w-min grid-flow-col items-center gap-2 whitespace-nowrap text-small text-muted min-[1024px]:grid ${
+                org ? "grid-cols-[minmax(0,auto)_auto_auto]" : ""
+              }`}
+            >
               {org && (
                 <>
-                  <span className="min-w-0 truncate">{org}</span>
+                  <span className="truncate">{org}</span>
                   <span aria-hidden>/</span>
                 </>
               )}
-              <b className="shrink-0 font-semibold text-ink">{screenLabel(pathname, t)}</b>
+              <b className="font-semibold text-ink">{screenLabel(pathname, t)}</b>
             </p>
             <form
               id="site-search"
@@ -352,7 +382,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-                onBlur={() => q === "" && setSearchOpen(false)}
+                onBlur={(e) => {
+                  if (q !== "") return;
+                  setSearchOpen(false);
+                  // Esc or a click on nothing would leave focus on the page body; the button that opened the field takes it.
+                  if (!e.relatedTarget && document.hasFocus()) requestAnimationFrame(() => searchButtonRef.current?.focus());
+                }}
                 placeholder={t.shell.searchPlaceholder}
                 aria-label={t.shell.searchLabel}
                 aria-keyshortcuts="/"
@@ -363,6 +398,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               data-search-part
+              ref={searchButtonRef}
               onClick={openSearch}
               aria-label={folded ? t.shell.searchButton : t.shell.searchLabel}
               aria-keyshortcuts="/"
@@ -375,7 +411,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <SearchIcon size={18} />
             </button>
             {!narrow && (
-              <SyncStatus className={folded && searchOpen ? "hidden" : "flex shrink"} onAttention={setTokenAlert} />
+              <SyncStatus className={folded && searchOpen ? "hidden" : "flex shrink-0"} onAttention={setTokenAlert} compact={tight} />
             )}
             <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" />
             <div className={`flex shrink-0 items-center gap-2 ${searchOpen ? "max-[639px]:hidden" : ""}`}>

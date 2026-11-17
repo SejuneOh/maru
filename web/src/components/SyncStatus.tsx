@@ -33,7 +33,16 @@ function tokenShort(h: TokenHealth, t: Dict, fmt: Format): string {
  * "Synced 3 min ago" for the top bar, refreshed every minute (every 5 s while a sync runs) while the tab is visible.
  * Members see nothing until GitHub is connected; admins get a link to settings and a "sync now" button.
  */
-export function SyncStatus({ className = "", onAttention }: { className?: string; onAttention?: (on: boolean) => void }) {
+export function SyncStatus({
+  className = "",
+  onAttention,
+  compact = false,
+}: {
+  className?: string;
+  onAttention?: (on: boolean) => void;
+  /** The top bar is out of room: keep the token mark, drop its text. */
+  compact?: boolean;
+}) {
   const { data, reload } = useApi<Status>(SYNC_STATUS_PATH);
   const admin = useMe().data?.member.role === "admin";
   const t = useT();
@@ -120,27 +129,33 @@ export function SyncStatus({ className = "", onAttention }: { className?: string
   const first = attention[0];
 
   return (
-    <div className={`min-w-0 items-center gap-x-2 gap-y-1 text-small max-[1023px]:flex-wrap ${className}`}>
+    <div className={`items-center gap-x-2 gap-y-1 text-small max-[1023px]:min-w-0 max-[1023px]:flex-wrap ${className}`}>
       {first && (
         <Link
           href="/settings"
           title={attention.map((h) => tokenSummary(h, t, fmt)).join("\n")}
-          className="flex min-w-0 shrink items-center gap-2 overflow-hidden rounded-control hover:bg-hover max-[1023px]:basis-full min-[1024px]:max-[1279px]:min-w-fit"
+          className="flex items-center gap-2 rounded-control px-1 py-0.5 hover:bg-hover max-[1023px]:min-w-0 max-[1023px]:basis-full max-[1023px]:overflow-hidden"
         >
           <span className="shrink-0">
             <TokenMarks health={first} detailClassName="min-[1024px]:hidden" />
           </span>
           <span className="min-w-0 truncate text-muted min-[1024px]:hidden">{tokenSummary(first, t, fmt)}</span>
-          <span className="min-w-0 max-w-[10rem] truncate text-muted max-[1279px]:hidden">{tokenShort(first, t, fmt)}</span>
+          {!compact && <span className="min-w-0 max-w-[8rem] truncate text-muted max-[1279px]:hidden">{tokenShort(first, t, fmt)}</span>}
           {attention.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{attention.length - 1}</span>}
         </Link>
       )}
-      <p className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap ${failed ? "" : "min-[1024px]:max-[1279px]:sr-only"}`} title={title}>
+      <p className="flex shrink-0 items-center gap-1.5 whitespace-nowrap" title={notice || data.running || failed ? title : (title ?? label)}>
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${data.running ? "animate-pulse bg-ink-soft" : failed ? "bg-ink" : "bg-faint"}`}
         />
-        <span className={failed && !notice ? "font-medium text-ink" : "text-muted"}>{notice ?? label}</span>
+        <span
+          className={`${failed && !notice ? "font-medium text-ink" : "text-muted"} ${
+            notice || data.running || failed ? "" : "min-[1024px]:max-[1279px]:sr-only"
+          }`}
+        >
+          {notice ?? label}
+        </span>
         {failed && !notice && <span className="max-w-[16rem] truncate text-muted max-[1279px]:sr-only">· {reason}</span>}
       </p>
       <span aria-live="polite" className="sr-only">

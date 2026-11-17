@@ -227,6 +227,11 @@ html[data-lang-pending] body {
   border-radius: 4px;
 }
 
+/* The search box draws its own ring around the whole field. */
+[role="search"] input:focus-visible {
+  outline: none;
+}
+
 @layer components {
   /* Attention mark: the only place the accent appears. */
   .flag {
