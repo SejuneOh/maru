@@ -24,9 +24,17 @@ export default function MeetingNotesPage() {
 
   return (
     <div className="flex max-w-[900px] flex-col gap-6">
-      <PageHeader meta={projectName ? nt.metaProject(projectName) : nt.meta} title={nt.title}>
-        {notes.data ? (unlinked > 0 ? nt.unlinked(unlinked) : nt.allLinked) : nt.intro}
-      </PageHeader>
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <PageHeader meta={projectName ? nt.metaProject(projectName) : nt.meta} title={nt.title}>
+          {notes.data ? (unlinked > 0 ? nt.unlinked(unlinked) : nt.allLinked) : nt.intro}
+        </PageHeader>
+        <Link href="/notes/view?new=1" className="btn h-9 gap-1.5 px-3 text-small">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+          </svg>
+          {nt.newNote}
+        </Link>
+      </div>
       {projectId && (
         <Link href="/notes" className="link -mt-3 self-start text-small text-ink-soft">
           {nt.allProjects}

@@ -2,6 +2,7 @@
 
 import { type Session, type SupabaseClient, createClient } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
+import { clearAllNoteDrafts } from "./noteDrafts";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -128,6 +129,7 @@ async function exchange(search: URLSearchParams): Promise<string> {
 
 export async function signOut() {
   write(local, TENANT_KEY, null);
+  clearAllNoteDrafts();
   await supabase()?.auth.signOut({ scope: "local" });
 }
 

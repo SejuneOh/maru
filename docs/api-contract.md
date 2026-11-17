@@ -105,6 +105,9 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/milestones` | dev user | `Milestone[]`, open first, then `dueOn` ascending (nulls last) |
 | GET | `/api/meeting-notes` | dev user | `MeetingNoteSummary[]` |
 | GET | `/api/meeting-notes/{id}` | dev user | `MeetingNote` or 404 |
+| POST | `/api/meeting-notes` | dev user | `201 MeetingNote` (`200` for a repeat with the same `id`) |
+| PATCH | `/api/meeting-notes/{id}` | dev user | `MeetingNote` |
+| DELETE | `/api/meeting-notes/{id}` | dev user, author or admin | `204` |
 | GET | `/api/search?q=` | dev user | `SearchResult` |
 
 `POST /api/tenants` creates a company for a signed-in person (bearer token, or `X-Dev-User` with a known
@@ -297,6 +300,40 @@ Daily sprint numbers (`sprint_daily`, table only, no endpoint yet; the remaining
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.
 
 `GET /api/meeting-notes` accepts optional `projectId`. Sort: `heldAt` descending.
+
+Meeting note writes (UI word: 회의록). Board-only data: nothing is sent to GitHub. Every write accepts `Idempotency-Key`
+(optional; the web sends one per request so a resend after a dropped connection is not applied twice) and runs in one
+transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting_note.update`, `meeting_note.delete`;
+`before`/`after` hold title, date, project, decisions, attendee ids and action items, and only the length of the body).
+
+- `POST /api/meeting-notes` body `MeetingNoteRequest` (`application/json`, max 512 KB). Required: `title` (trimmed, 1..200,
+  no control or invisible format characters) and `heldAt` (ISO date-time with offset). Optional: `projectId` (null = none),
+  `bodyMd` (max 60000 characters, default empty), `decisions` (max 50; each trimmed, empty ones dropped, max 500 characters),
+  `attendeeIds` (member ids, max 100, duplicates ignored), `actionItems` (max 100, in display order; `text` trimmed 1..500,
+  `assigneeId` a member id or null, `dueDate` `yyyy-MM-dd` or null; `id` must be absent). The caller becomes `createdBy`.
+  Response `201 MeetingNote`.
+  `id` (optional, a uuid the client generates, not all zeros) makes creation safe to repeat: if a note with that id already exists and the
+  caller wrote it, the response is `200` with that note **as stored** (the body of the repeat is not applied; save changes
+  with `PATCH`). A note with that id written by someone else, or in another tenant, is `409 id_taken`. The web always sends
+  an `id`, so a POST whose answer was lost can be resent (even with newer text) without creating a second note. A note
+  nobody changed since its creation has `updatedAt` equal to `createdAt`; when a repeat returns a note whose `updatedAt` is
+  later, someone else edited it and the web shows the conflict view instead of saving over it.
+- `PATCH /api/meeting-notes/{id}` replaces the whole note: send every field of `MeetingNoteRequest` (`bodyMd`, `decisions`,
+  `attendeeIds`, `actionItems` must be present, empty lists allowed) plus `expectedUpdatedAt`, the `updatedAt` of the copy
+  you edited. A different value is `409 conflict` (someone saved in between; reload and let the person choose). Any member may edit.
+  Action items keep their id: send `id` for an item that already exists (its text, assignee, due date and position change; its
+  issue link stays) and no `id` for a new one. An existing item left out of the list is deleted, **unless it is linked to an
+  issue**: then the whole request is `409 action_item_linked` with `actionItemIds` listing those items and nothing changes. An `id`
+  that is not an item of this note, or repeated, is `400 invalid_request`. `updatedAt` changes on every successful save.
+- `DELETE /api/meeting-notes/{id}` (no body) deletes the note with its attendees and action items (linked issues stay). Only the
+  note's author (`createdBy`) or an admin; anyone else gets `403 forbidden`. A note whose author is gone can be deleted by an admin only.
+  Response `204`.
+- Order of checks: the body (`400 invalid_request`), then the note (`404`; for POST with `id` the repeat / `409 id_taken`
+  check), then `expectedUpdatedAt` (`409 conflict`), then attendees, assignees, project and action-item ids (`400 invalid_request`),
+  then linked items (`409 action_item_linked`). So a stale PATCH that also names a removed member answers `409 conflict`.
+- Errors: `400 invalid_request` (any rule above, a body that is not JSON, an attendee, assignee or project that is not in the
+  caller's tenant, PATCH without `expectedUpdatedAt`), `404 not_found`, `409 conflict`, `409 action_item_linked`, `409 id_taken`, `403 forbidden`,
+  plus `409 idempotency_key_reused` / `400` for a bad key as with other writes.
 
 `GET /api/search` matches `q` (case-insensitive substring, min 2 chars) against issue titles,
 comment bodies and meeting note titles/bodies. Up to 20 results per group.
@@ -532,9 +569,20 @@ type MeetingNoteSummary = {
 type MeetingNote = {
   id: string; title: string; heldAt: string; bodyMd: string;
   project: { id: string; name: string } | null;
+  decisions: string[];                                  // 결정한 것, in order
   attendees: Member[];
-  actionItems: { id: string; text: string; assignee: Member | null;
-                 issue: { id: string; number: number; repositoryName: string; status: Status } | null }[];
+  actionItems: { id: string; text: string; assignee: Member | null; dueDate: string | null;   // yyyy-MM-dd
+                 issue: { id: string; number: number; repositoryName: string; status: Status } | null }[];  // in order
+  createdBy: Member | null;                             // null for seeded notes or a removed author
+  createdAt: string; updatedAt: string;                 // send updatedAt back as expectedUpdatedAt
+};
+
+type MeetingNoteRequest = {
+  id?: string;                                          // POST only: client-generated, makes a resent POST safe
+  title: string; heldAt: string; projectId?: string | null; bodyMd?: string; decisions?: string[];
+  attendeeIds?: string[];
+  actionItems?: { id?: string; text: string; assigneeId?: string | null; dueDate?: string | null }[];
+  expectedUpdatedAt?: string;                           // PATCH only, required there
 };
 
 type SearchResult = {

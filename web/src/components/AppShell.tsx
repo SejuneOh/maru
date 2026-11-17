@@ -10,6 +10,7 @@ import { AccountMenu } from "./Auth";
 import { BoardNotice, StatusKeys } from "./BoardNotice";
 import { IssuePanel } from "./IssuePanel";
 import { LangToggle } from "./LangToggle";
+import { confirmLeave } from "@/lib/leaveGuard";
 import { SyncStatus } from "./SyncStatus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Kbd } from "./ui";
@@ -295,7 +296,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               }`}
               onSubmit={(e) => {
                 e.preventDefault();
-                if (q.trim().length >= 2) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+                if (q.trim().length >= 2 && confirmLeave()) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
               }}
             >
               <SearchIcon />

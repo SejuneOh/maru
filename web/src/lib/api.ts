@@ -9,6 +9,8 @@ import type {
   BoardIssue,
   CreateIssueRequest,
   CreatedIssue,
+  MeetingNote,
+  MeetingNoteRequest,
   Milestone,
   PendingIssue,
   PostedComment,
@@ -90,7 +92,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-type ReqInit = { method?: string; body?: unknown; headers?: Record<string, string> };
+type ReqInit = { method?: string; body?: unknown; headers?: Record<string, string>; keepalive?: boolean };
 
 async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
   return (await send<T>(path, init)).data;
@@ -103,6 +105,7 @@ async function send<T>(path: string, init: ReqInit = {}): Promise<{ status: numb
     method: init.method ?? "GET",
     headers,
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    keepalive: init.keepalive,
   });
   if (!res.ok) {
     const { code, body } = await readBody(res);
@@ -116,7 +119,7 @@ async function send<T>(path: string, init: ReqInit = {}): Promise<{ status: numb
     if (refused && path !== "/api/me") setTimeout(() => window.dispatchEvent(new Event(GATE_EVENT)), 0);
     throw new ApiError(res.status, `${res.status} ${res.statusText}`, code, body);
   }
-  return { status: res.status, data: (await res.json()) as T };
+  return { status: res.status, data: (res.status === 204 ? null : await res.json()) as T };
 }
 
 export function apiGet<T>(path: string): Promise<T> {
@@ -218,6 +221,37 @@ export function saveSprint(
         headers: { "Idempotency-Key": idempotencyKey },
       })
     : request<Sprint>("/api/sprints", { method: "POST", body: form, headers: { "Idempotency-Key": idempotencyKey } });
+}
+
+/**
+ * `POST /api/meeting-notes` (with the client-generated `req.id`) until the note exists, then `PATCH` with
+ * `expectedUpdatedAt`. `created` is false when a POST found the note already there (200): it returns the stored
+ * copy, not the body sent. `keepalive` lets a save started as the tab hides finish after it closes; browsers cap
+ * such a body at 64 KB. Rejects with an `ApiError` whose `code` is a `MeetingNoteWriteError`, or a `TypeError`.
+ */
+export async function saveMeetingNote(
+  req: MeetingNoteRequest,
+  idempotencyKey: string,
+  existingId: string | null,
+  keepalive = false,
+): Promise<{ note: MeetingNote; created: boolean }> {
+  const headers = { "Idempotency-Key": idempotencyKey };
+  if (existingId) {
+    const note = await request<MeetingNote>(`/api/meeting-notes/${encodeURIComponent(existingId)}`, {
+      method: "PATCH",
+      body: req,
+      headers,
+      keepalive,
+    });
+    return { note, created: true };
+  }
+  const res = await send<MeetingNote>("/api/meeting-notes", { method: "POST", body: req, headers, keepalive });
+  return { note: res.data, created: res.status === 201 };
+}
+
+/** `DELETE /api/meeting-notes/{id}`: the author or an admin, else `403 forbidden`. */
+export async function deleteMeetingNote(id: string): Promise<void> {
+  await request<null>(`/api/meeting-notes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** Issue lists, sprint counts and the overview are what an issue write changes. */
