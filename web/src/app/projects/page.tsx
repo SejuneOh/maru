@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { WeeklyDone } from "@/components/Charts";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
+import { Schedule } from "@/components/Schedule";
 import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader, ProgressBar, SectionHead, progressLine } from "@/components/ui";
 import { useApi } from "@/lib/api";
@@ -38,8 +39,9 @@ export default function ProjectsBoardPage() {
   // Progress counts every issue of a project, not only the last 7 days of done work.
   const all = useApi<BoardIssue[]>(issuesQuery(NO_FILTERS, { scope: "all" }));
   const allIssues = useEditedIssues(all.data);
+  const onSchedule = params.get("view") === "schedule" && selectedId !== null;
   const board = useApi<BoardIssue[]>(
-    selectedId || hasFilters(filters) ? issuesQuery(filters, selectedId ? { projectId: selectedId } : {}) : null,
+    !onSchedule && (selectedId || hasFilters(filters)) ? issuesQuery(filters, selectedId ? { projectId: selectedId } : {}) : null,
   );
   const boardEdited = useEditedIssues(board.data);
   const notes = useApi<MeetingNoteSummary[]>("/api/meeting-notes");
@@ -73,8 +75,17 @@ export default function ProjectsBoardPage() {
     if (id) next.set("project", id);
     else next.delete("project");
     next.delete("issue");
+    if (!id) next.delete("view");
     const qs = next.toString();
     router.push(qs ? `/projects?${qs}` : "/projects", { scroll: false });
+  };
+  const scheduleView = selected !== null && params.get("view") === "schedule";
+  const viewHref = (schedule: boolean) => {
+    const next = new URLSearchParams(params.toString());
+    if (schedule) next.set("view", "schedule");
+    else next.delete("view");
+    next.delete("issue");
+    return `/projects?${next.toString()}`;
   };
   const sprintName = (id: string) => allIssues.find((i) => i.sprint?.id === id)?.sprint?.name;
   const memberName = (login: string) => {
@@ -165,15 +176,38 @@ export default function ProjectsBoardPage() {
               )
             }
           />
-          <FilterChips filters={filters} sprintName={sprintName} personName={memberName} />
-          {board.error ? (
-            <ErrorBox error={board.error} />
-          ) : !boardIssues ? (
-            <Loading />
-          ) : boardIssues.length === 0 ? (
-            <Empty>{t.board.noMatch}</Empty>
+          {selected && (
+            <nav aria-label={pt.views} className="flex gap-5 border-b border-rule">
+              {[false, true].map((schedule) => (
+                <Link
+                  key={String(schedule)}
+                  href={viewHref(schedule)}
+                  scroll={false}
+                  aria-current={schedule === scheduleView ? "page" : undefined}
+                  className={`shrink-0 pb-2.5 pt-1 text-ui ${
+                    schedule === scheduleView ? "font-semibold text-ink shadow-[inset_0_-2px_0_var(--wb-ink)]" : "font-medium text-muted hover:text-ink"
+                  }`}
+                >
+                  {schedule ? pt.viewSchedule : pt.viewBoard}
+                </Link>
+              ))}
+            </nav>
+          )}
+          {scheduleView ? (
+            <Schedule projectId={selected!.id} />
           ) : (
-            <StatusColumns scope="projects" issues={boardIssues} statuses={filters.statuses.length ? filters.statuses : STATUS_ORDER} />
+            <>
+              <FilterChips filters={filters} sprintName={sprintName} personName={memberName} />
+              {board.error ? (
+                <ErrorBox error={board.error} />
+              ) : !boardIssues ? (
+                <Loading />
+              ) : boardIssues.length === 0 ? (
+                <Empty>{t.board.noMatch}</Empty>
+              ) : (
+                <StatusColumns scope="projects" issues={boardIssues} statuses={filters.statuses.length ? filters.statuses : STATUS_ORDER} />
+              )}
+            </>
           )}
         </section>
       )}
