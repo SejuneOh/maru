@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
 import type {
+  ActionItemIssueResult,
   AddCommentRequest,
   AssignedIssue,
   BoardChangeRequest,
@@ -12,6 +13,7 @@ import type {
   MeetingNote,
   MeetingNoteRequest,
   Milestone,
+  PendingActionItemIssue,
   PendingIssue,
   PostedComment,
   SetAssigneesRequest,
@@ -165,6 +167,28 @@ export async function createIssue(req: CreateIssueRequest, idempotencyKey: strin
     headers: { "Idempotency-Key": idempotencyKey },
   });
   return res.status === 202 ? { kind: "pending", issue: res.data as PendingIssue } : { kind: "created", issue: res.data as CreatedIssue };
+}
+
+export type ActionItemIssueOutcome =
+  | { kind: "linked"; result: ActionItemIssueResult }
+  | { kind: "pending"; issue: PendingActionItemIssue };
+
+/**
+ * `POST /api/meeting-action-items/{id}/issue`. The server makes at most one issue per item whatever the key; resend the
+ * same key after an answer that never came. Rejects with an `ApiError` (`code` as for `createIssue`), or a `TypeError`.
+ */
+export async function createActionItemIssue(
+  itemId: string,
+  repositoryId: string,
+  idempotencyKey: string,
+): Promise<ActionItemIssueOutcome> {
+  const res = await send<ActionItemIssueResult | PendingActionItemIssue>(
+    `/api/meeting-action-items/${encodeURIComponent(itemId)}/issue`,
+    { method: "POST", body: { repositoryId }, headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return res.status === 202
+    ? { kind: "pending", issue: res.data as PendingActionItemIssue }
+    : { kind: "linked", result: res.data as ActionItemIssueResult };
 }
 
 /** `PATCH /api/issues/{id}/board`. Rejects with an `ApiError` whose `code` is a `BoardChangeError`, or a `TypeError` when offline. */

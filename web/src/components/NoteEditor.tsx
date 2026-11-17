@@ -25,6 +25,7 @@ import {
   emptyForm,
   formOf,
   isBlank,
+  isHeld,
   localDate,
   onDate,
   rebaseOnto,
@@ -249,7 +250,8 @@ export function NoteEditor({
         items: f.items.map((r): ItemRow => {
           const sid = savedIds.get(r.key);
           const fresh = note.actionItems.find((a) => a.id === (r.id ?? sid));
-          return sid && r.id === null ? { ...r, id: sid, issue: fresh?.issue ?? null } : fresh ? { ...r, issue: fresh.issue } : r;
+          const linked = fresh ? { issue: fresh.issue, held: isHeld(fresh) } : { issue: null, held: false };
+          return sid && r.id === null ? { ...r, id: sid, ...linked } : fresh ? { ...r, ...linked } : r;
         }),
       });
       markSaved(snapshotOf(withIds(sent)));
@@ -433,7 +435,7 @@ export function NoteEditor({
 
   const remove = async () => {
     if (!createdRef.current) return;
-    const items = formRef.current.items.filter((r) => r.id).map((r) => ({ issue: r.issue }));
+    const items = formRef.current.items.filter((r) => r.id).map((r) => ({ issue: r.held ? true : null }));
     if (timer.current) clearTimeout(timer.current);
     const gone = await confirmAndDelete(
       { id: noteIdRef.current, title: formRef.current.title.trim() || nt.newNote, actionItems: items },
@@ -464,7 +466,7 @@ export function NoteEditor({
     });
   const addItem = (after?: string) =>
     change((f) => {
-      const row: ItemRow = { key: rowKey(), id: null, text: "", assigneeId: null, dueDate: null, issue: null };
+      const row: ItemRow = { key: rowKey(), id: null, text: "", assigneeId: null, dueDate: null, issue: null, held: false };
       const at = after ? f.items.findIndex((r) => r.key === after) + 1 : f.items.length;
       setFocusKey(row.key);
       return { ...f, items: [...f.items.slice(0, at), row, ...f.items.slice(at)] };
@@ -746,8 +748,8 @@ export function NoteEditor({
                   />
                   <div className="col-start-2 row-start-1 flex items-center min-[640px]:col-start-4">
                     <RemoveButton
-                      label={r.issue ? e.linkedLocked : e.removeItem(i + 1)}
-                      disabled={!!r.issue}
+                      label={r.held ? e.linkedLocked : e.removeItem(i + 1)}
+                      disabled={r.held}
                       onClick={() => change((f) => ({ ...f, items: f.items.filter((x) => x.key !== r.key) }))}
                     />
                   </div>
