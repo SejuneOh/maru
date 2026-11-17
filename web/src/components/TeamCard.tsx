@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { ApiError, inviteLink, inviteMember, newIdempotencyKey, removeMember, revokeInvitation, useApi } from "@/lib/api";
+import {
+  ApiError,
+  inviteLink,
+  inviteMember,
+  newIdempotencyKey,
+  removeMember,
+  revokeInvitation,
+  setMemberRole,
+  useApi,
+} from "@/lib/api";
 import { GATE_EVENT } from "@/lib/auth";
 import { type Dict, useFormat, useT } from "@/lib/i18n";
 import type { Invitation, Member } from "@/lib/types";
@@ -31,6 +40,8 @@ export function TeamCard({ me }: { me: Member }) {
   const [link, setLink] = useState<{ login: string; url: string } | null>(null);
   const [notice, setNotice] = useState<TeamError | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [demoting, setDemoting] = useState<Member | null>(null);
+  const [promoting, setPromoting] = useState<string | null>(null);
   const [busyInvite, setBusyInvite] = useState<string | null>(null);
 
   const admins = members.data?.filter((m) => m.role === "admin").length ?? 0;
@@ -53,6 +64,19 @@ export function TeamCard({ me }: { me: Member }) {
       members.reload();
     } finally {
       setBusyInvite(null);
+    }
+  };
+
+  const promote = async (m: Member) => {
+    setPromoting(m.id);
+    setNotice(null);
+    try {
+      await setMemberRole(m.id, "admin", newIdempotencyKey());
+    } catch (e) {
+      setNotice(errorOf(e, ["not_found", "admin_only"]));
+    } finally {
+      setPromoting(null);
+      members.reload();
     }
   };
 
@@ -128,7 +152,17 @@ export function TeamCard({ me }: { me: Member }) {
       ) : (
         <ul aria-label={tt.members} className="pb-2">
           {members.data.map((m) => (
-            <MemberRow key={m.id} member={m} self={m.id === me.id} locked={m.id === me.id && soleAdmin} onRemove={() => setRemoving(m)} />
+            <MemberRow
+              key={m.id}
+              member={m}
+              self={m.id === me.id}
+              locked={m.id === me.id && soleAdmin}
+              soleAdmin={m.role === "admin" && admins <= 1}
+              promoting={promoting === m.id}
+              onRemove={() => setRemoving(m)}
+              onPromote={() => void promote(m)}
+              onDemote={() => setDemoting(m)}
+            />
           ))}
         </ul>
       )}
@@ -137,11 +171,26 @@ export function TeamCard({ me }: { me: Member }) {
         <RemoveDialog
           member={removing}
           self={removing.id === me.id}
+          action="remove"
           onClose={() => setRemoving(null)}
           onDone={(self) => {
             setRemoving(null);
             members.reload();
             invitations.reload();
+            if (self) window.dispatchEvent(new Event(GATE_EVENT));
+          }}
+        />
+      )}
+
+      {demoting && (
+        <RemoveDialog
+          member={demoting}
+          self={demoting.id === me.id}
+          action="demote"
+          onClose={() => setDemoting(null)}
+          onDone={(self) => {
+            setDemoting(null);
+            members.reload();
             if (self) window.dispatchEvent(new Event(GATE_EVENT));
           }}
         />
@@ -335,7 +384,25 @@ function InvitationRow({
   );
 }
 
-function MemberRow({ member, self, locked, onRemove }: { member: Member; self: boolean; locked: boolean; onRemove: () => void }) {
+function MemberRow({
+  member,
+  self,
+  locked,
+  soleAdmin,
+  promoting,
+  onRemove,
+  onPromote,
+  onDemote,
+}: {
+  member: Member;
+  self: boolean;
+  locked: boolean;
+  soleAdmin: boolean;
+  promoting: boolean;
+  onRemove: () => void;
+  onPromote: () => void;
+  onDemote: () => void;
+}) {
   const t = useT();
   const tt = t.team;
   const fmt = useFormat();
@@ -361,16 +428,41 @@ function MemberRow({ member, self, locked, onRemove }: { member: Member; self: b
           </p>
         )}
       </div>
-      <button
-        type="button"
-        className={SMALL_BTN}
-        onClick={onRemove}
-        disabled={locked}
-        aria-describedby={locked ? hintId : undefined}
-        aria-label={tt.removeLabel(name)}
-      >
-        {self ? tt.confirm.leave : tt.remove}
-      </button>
+      <div className="flex shrink-0 items-center gap-2">
+        {member.role === "admin" ? (
+          <button
+            type="button"
+            className={SMALL_BTN}
+            onClick={onDemote}
+            disabled={soleAdmin}
+            aria-describedby={soleAdmin && locked ? hintId : undefined}
+            aria-label={tt.demoteLabel(name)}
+          >
+            {tt.demote}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={SMALL_BTN}
+            onClick={onPromote}
+            disabled={promoting}
+            aria-busy={promoting}
+            aria-label={tt.promoteLabel(name)}
+          >
+            {promoting ? `${tt.promoting}…` : tt.promote}
+          </button>
+        )}
+        <button
+          type="button"
+          className={SMALL_BTN}
+          onClick={onRemove}
+          disabled={locked}
+          aria-describedby={locked ? hintId : undefined}
+          aria-label={tt.removeLabel(name)}
+        >
+          {self ? tt.confirm.leave : tt.remove}
+        </button>
+      </div>
     </li>
   );
 }
@@ -379,11 +471,13 @@ function MemberRow({ member, self, locked, onRemove }: { member: Member; self: b
 function RemoveDialog({
   member,
   self,
+  action,
   onClose,
   onDone,
 }: {
   member: Member;
   self: boolean;
+  action: "remove" | "demote";
   onClose: () => void;
   onDone: (self: boolean) => void;
 }) {
@@ -396,6 +490,7 @@ function RemoveDialog({
   const key = useRef(newIdempotencyKey());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TeamError | null>(null);
+  const demote = action === "demote";
 
   useEffect(() => {
     const d = dialog.current;
@@ -410,11 +505,13 @@ function RemoveDialog({
     setBusy(true);
     setError(null);
     try {
-      await removeMember(member.id, key.current);
+      if (action === "remove") await removeMember(member.id, key.current);
+      else await setMemberRole(member.id, "member", key.current);
       onDone(self);
     } catch (e) {
       if (e instanceof ApiError) key.current = newIdempotencyKey();
-      const reason = errorOf(e, ["last_admin", "not_found", "admin_only"]);
+      const found = errorOf(e, ["last_admin", "not_found", "admin_only"]);
+      const reason: TeamError = found === "last_admin" && action === "demote" ? "last_admin_role" : found;
       if (reason === "not_found") onDone(false);
       else setError(reason);
       setBusy(false);
@@ -437,10 +534,16 @@ function RemoveDialog({
     >
       <div className="p-6 max-[639px]:p-5">
         <h2 id={`${id}-title`} className="text-title font-semibold">
-          {self ? tt.confirm.titleSelf : tt.confirm.title(fmt.person(member))}
+          {demote
+            ? self
+              ? tt.demoteConfirm.titleSelf
+              : tt.demoteConfirm.title(fmt.person(member))
+            : self
+              ? tt.confirm.titleSelf
+              : tt.confirm.title(fmt.person(member))}
         </h2>
         <p id={`${id}-body`} className="mt-3 text-body text-ink-soft">
-          {self ? tt.confirm.bodySelf : tt.confirm.body}
+          {demote ? (self ? tt.demoteConfirm.bodySelf : tt.demoteConfirm.body) : self ? tt.confirm.bodySelf : tt.confirm.body}
         </p>
         {error && (
           <p role="alert" className="mt-4 border-l-2 border-ink-soft pl-3 text-small text-ink">
@@ -452,7 +555,15 @@ function RemoveDialog({
             {tt.confirm.cancel}
           </button>
           <button type="button" className="btn btn-primary" onClick={() => void confirm()} disabled={busy} aria-busy={busy}>
-            {busy ? `${tt.confirm.removing}…` : self ? tt.confirm.leave : tt.confirm.remove}
+            {demote
+              ? busy
+                ? `${tt.demoteConfirm.working}…`
+                : tt.demoteConfirm.confirm
+              : busy
+                ? `${tt.confirm.removing}…`
+                : self
+                  ? tt.confirm.leave
+                  : tt.confirm.remove}
           </button>
         </div>
       </div>

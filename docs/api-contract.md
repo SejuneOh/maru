@@ -84,6 +84,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/me` | dev user | `Me` |
 | GET | `/api/members` | dev user | `Member[]`, current members only (`removedAt` is set for people who left the connected organization) |
 | DELETE | `/api/members/{id}` | dev user, admin | `204`, see "Invitations and removal" |
+| PATCH | `/api/members/{id}` | dev user, admin | `Member`, role change, see "Invitations and removal" |
 | GET | `/api/invitations` | dev user, admin | `Invitation[]`, open (not accepted or revoked) newest first, expired included |
 | POST | `/api/invitations` | dev user, admin | `201 CreatedInvitation` |
 | DELETE | `/api/invitations/{id}` | dev user, admin | `204` |
@@ -488,6 +489,14 @@ tenant transaction (no cache). Rules:
   open with review requested, other open); closed-unmerged PRs are skipped. `actor` is null when the author is not a member.
 
 ## Invitations and removal
+
+`PATCH /api/members/{id}` body `{"role": "admin" | "member"}` promotes or demotes a current member (`left_at` null) of
+the caller's company. `Idempotency-Key` is optional, as for the other member writes. The transaction locks every active
+admin row (`for update`, the same lock as removal), so two admins demoting each other leave one admin. Demoting the
+last active admin, including yourself, is `409 last_admin`; an admin can step down while another admin remains. Setting
+the role a member already has is `200` without a change. A change writes `audit_log` `member.role` (before: GitHub id,
+login, role; after: role). Errors: `400 invalid_request` (role missing or not one of the two), `403 admin_only`,
+`404 not_found` (no such current member in this company, including another company's member id), `409 last_admin`.
 
 An admin invites a person by GitHub login; the person joins by opening the link and signing in with that GitHub
 account. Rules:

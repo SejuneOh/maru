@@ -398,4 +398,115 @@ public class InvitationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Null(await other.ScalarAsync<DateTime?>("select revoked_at from invitations where id = @invitationId", new { invitationId }));
         Assert.Null(await other.ScalarAsync<DateTime?>("select left_at from members where id = @otherViewer", new { otherViewer }));
     }
+
+    private static Task<HttpResponseMessage> SetRoleAsync(HttpClient c, Guid id, string role) =>
+        c.PatchAsJsonAsync($"/api/members/{id}", new { role });
+
+    private static Task<Guid> IdAsync(TestTenant t, string login) =>
+        t.ScalarAsync<Guid>("select id from members where github_login = @login", new { login });
+
+    private static Task<string> RoleAsync(TestTenant t, Guid id) =>
+        t.ScalarAsync<string>("select role from members where id = @id", new { id });
+
+    [DbFact]
+    public async Task Admin_promotes_and_demotes_a_member_and_both_are_audited()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var viewerId = await IdAsync(t, t.ViewerLogin);
+
+        var promoted = await SetRoleAsync(admin, viewerId, "admin");
+
+        Assert.Equal(HttpStatusCode.OK, promoted.StatusCode);
+        Assert.Equal("admin", (await promoted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("role").GetString());
+        Assert.Equal("admin", await RoleAsync(t, viewerId));
+        var me = await Client(t.ViewerLogin).GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal("admin", me.GetProperty("member").GetProperty("role").GetString());
+
+        var demoted = await SetRoleAsync(admin, viewerId, "member");
+
+        Assert.Equal(HttpStatusCode.OK, demoted.StatusCode);
+        Assert.Equal("member", await RoleAsync(t, viewerId));
+        Assert.Equal(2, await t.ScalarAsync<int>(
+            "select count(*)::int from audit_log where tenant_id = @tid and action = 'member.role' and target_id = @viewerId",
+            new { tid = t.Id, viewerId }));
+    }
+
+    [DbFact]
+    public async Task Role_change_rejects_non_admins_unknown_roles_and_other_tenants_members()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        await using var other = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var viewerId = await IdAsync(t, t.ViewerLogin);
+        var (_, outsiderUserId) = await t.AddMemberAsync("peer");
+        var peerId = await t.ScalarAsync<Guid>(
+            "select id from members where tenant_id = @tid and github_user_id = @outsiderUserId", new { tid = t.Id, outsiderUserId });
+        var foreignId = await IdAsync(other, other.ViewerLogin);
+
+        var byMember = await SetRoleAsync(Client(t.ViewerLogin), peerId, "admin");
+        var badRole = await SetRoleAsync(admin, viewerId, "owner");
+        var foreign = await SetRoleAsync(admin, foreignId, "admin");
+
+        Assert.Equal(HttpStatusCode.Forbidden, byMember.StatusCode);
+        Assert.Equal("admin_only", await ErrorAsync(byMember));
+        Assert.Equal(HttpStatusCode.BadRequest, badRole.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
+        Assert.Equal("member", await RoleAsync(t, peerId));
+        Assert.Equal("member", await RoleAsync(other, foreignId));
+    }
+
+    [DbFact]
+    public async Task Removed_member_cannot_be_promoted()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var viewerId = await IdAsync(t, t.ViewerLogin);
+        await t.ExecAsync("update members set left_at = now() where id = @viewerId", new { viewerId });
+
+        var response = await SetRoleAsync(admin, viewerId, "admin");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("member", await RoleAsync(t, viewerId));
+    }
+
+    [DbFact]
+    public async Task Last_admin_cannot_demote_themselves_but_can_when_another_admin_exists()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var firstLogin = await AdminAsync(t, "first");
+        var first = Client(firstLogin);
+        var firstId = await IdAsync(t, firstLogin);
+
+        var refused = await SetRoleAsync(first, firstId, "member");
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("last_admin", await ErrorAsync(refused));
+        Assert.Equal("admin", await RoleAsync(t, firstId));
+
+        await AdminAsync(t, "second");
+        var allowed = await SetRoleAsync(first, firstId, "member");
+
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.Equal("member", await RoleAsync(t, firstId));
+    }
+
+    [DbFact]
+    public async Task Two_admins_demoting_each_other_at_once_leave_one_admin()
+    {
+        for (var round = 0; round < 5; round++)
+        {
+            await using var t = await TestTenant.CreateAsync(_factory);
+            var aLogin = await AdminAsync(t, "a");
+            var bLogin = await AdminAsync(t, "b");
+            var (aId, bId) = (await IdAsync(t, aLogin), await IdAsync(t, bLogin));
+            var (a, b) = (Client(aLogin), Client(bLogin));
+
+            var results = await Task.WhenAll(SetRoleAsync(a, bId, "member"), SetRoleAsync(b, aId, "member"));
+
+            Assert.Equal(1, await t.ScalarAsync<int>(
+                "select count(*)::int from members where tenant_id = @tid and role = 'admin' and left_at is null", new { tid = t.Id }));
+            Assert.Single(results, r => r.StatusCode == HttpStatusCode.OK);
+        }
+    }
 }

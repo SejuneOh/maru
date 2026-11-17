@@ -16,6 +16,7 @@ import type {
   InvitationPreview,
   JoinedTenant,
   MeetingNote,
+  Member,
   MeetingNoteRequest,
   Milestone,
   PendingActionItemIssue,
@@ -321,6 +322,15 @@ export async function revokeInvitation(id: string, idempotencyKey: string): Prom
 export async function removeMember(id: string, idempotencyKey: string): Promise<void> {
   await request<null>(`/api/members/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** `PATCH /api/members/{id}` (admin). Rejects with an `ApiError` whose `code` is a `ChangeRoleError`. */
+export function setMemberRole(id: string, role: Member["role"], idempotencyKey: string): Promise<Member> {
+  return request<Member>(`/api/members/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { role },
     headers: { "Idempotency-Key": idempotencyKey },
   });
 }
