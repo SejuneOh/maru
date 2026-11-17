@@ -480,3 +480,40 @@ export type SprintDay = { day: string; scope: number; remaining: number; scopeWe
 
 /** `GET /api/projects/done-by-week`: `weeks` are Monday dates, oldest first, the last is this week; `done[i]` belongs to `weeks[i]`. */
 export type DoneByWeek = { weeks: string[]; projects: { projectId: string; done: number[] }[] };
+
+/** `GET /api/projects/{id}/schedule`. Dates are yyyy-MM-dd in Asia/Seoul; `overdueDays` is 0 unless past its date and not finished. */
+export type ProjectSchedule = {
+  projectId: string;
+  today: string;
+  sprintsEnabled: boolean;
+  /** The project's repositories' milestones: open ones, and closed ones from the last 60 days. Undated last. */
+  milestones: ScheduleMilestone[];
+  /** Sprints that have not ended, and ended ones with this project's work (last 60 days, or still unfinished). By start date. */
+  sprints: ScheduleSprint[];
+};
+
+export type ScheduleMilestone = {
+  id: string;
+  repository: { id: string; name: string };
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  dueDate: string | null;
+  htmlUrl: string | null;
+  issueCount: number;
+  doneCount: number;
+  overdueDays: number;
+};
+
+/** Counts cover only the project's issues in the sprint; cancelled left out of `issueCount`. */
+export type ScheduleSprint = {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  state: "planned" | "active" | "closed";
+  issueCount: number;
+  doneCount: number;
+  unfinishedCount: number;
+  overdueDays: number;
+};

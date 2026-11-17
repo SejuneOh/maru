@@ -85,6 +85,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/members` | dev user | `Member[]` |
 | GET | `/api/projects` | dev user | `Project[]` |
 | GET | `/api/projects/done-by-week` | dev user | `DoneByWeek`, see below |
+| GET | `/api/projects/{id}/schedule` | dev user | `ProjectSchedule` or 404, see below |
 | GET | `/api/connections` | dev user | `GithubConnection[]`, active first |
 | POST | `/api/connections/github` | dev user, admin | `GithubConnection` (`201` new, `200` existing updated) |
 | GET | `/api/overview` | dev user | `Overview` |
@@ -305,6 +306,23 @@ Daily sprint numbers (`sprint_daily`; read by the overview's `sprint.trend`):
 `closed_at` is the latest close, so an issue that was reopened and closed again counts once, in the week of that last close,
 and an issue that is open again counts nowhere. Every project is listed, with zeros when nothing was finished; an issue in two
 projects counts in both. Projects are ordered by name.
+
+`GET /api/projects/{id}/schedule` (any member) returns one project's milestones and sprints for the schedule tab.
+A project the caller's tenant does not have is `404 not_found`. `today` and every date are `yyyy-MM-dd` in Asia/Seoul.
+
+- Milestones: those of the project's repositories (a milestone belongs to one repository, so a repository shared by two
+  projects shows its milestones in both). Open ones are all listed; closed ones only while their `closed_at` (or, without
+  it, `due_on`) is within the last 60 days. `dueDate` is `due_on` converted to the Seoul calendar day, `null` when GitHub
+  has no due date. Counts as in `GET /api/milestones` (all issues of the milestone, `cancelled` left out of `issueCount`).
+  Sorted by due date (undated last), then number.
+- Sprints: empty when the tenant has `sprintsEnabled` off (`sprintsEnabled: false`). Sprints are tenant-wide, so counts
+  cover only this project's issues in the sprint (`cancelled` left out of `issueCount`; `unfinishedCount` = status not
+  `done`/`cancelled`). Listed: every sprint that has not ended (`active`, `planned`), plus ended ones that hold work of this
+  project and either ended within the last 60 days or still have unfinished work. `state` follows `GET /api/sprints`.
+  Sorted by start date.
+- `overdueDays` is `today - date` in days when the row is past its date and not finished, else 0: an open milestone whose
+  `dueDate` is before today; a sprint whose `endDate` is before today with `unfinishedCount > 0` (carrying the work over
+  to another sprint clears it). Closed milestones are never overdue.
 
 `GET /api/milestones` counts exclude `cancelled` issues in `issueCount`; `doneCount` counts status `done`.
 `color` of a label is 6 hex characters without `#`, as GitHub sends it.
@@ -542,6 +560,14 @@ type GithubConnection = {
 
 type Project = { id: string; name: string; color: string | null; repositories: { id: string; name: string }[] };
 type DoneByWeek = { weeks: string[]; projects: { projectId: string; done: number[] }[] };   // done[i] belongs to weeks[i]
+type ProjectSchedule = {
+  projectId: string; today: string; sprintsEnabled: boolean;
+  milestones: { id: string; repository: { id: string; name: string }; number: number; title: string;
+                state: "open" | "closed"; dueDate: string | null; htmlUrl: string | null;
+                issueCount: number; doneCount: number; overdueDays: number }[];
+  sprints: { id: string; name: string; startDate: string; endDate: string; state: "planned" | "active" | "closed";
+             issueCount: number; doneCount: number; unfinishedCount: number; overdueDays: number }[];
+};
 type SprintDay = { day: string; scope: number; remaining: number; scopeWeight: number; remainingWeight: number };
 
 type Status = "todo" | "in_progress" | "in_review" | "done" | "cancelled";
