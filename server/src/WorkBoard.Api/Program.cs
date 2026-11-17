@@ -76,6 +76,7 @@ authed.MapBacklog();
 authed.MapMilestones();
 authed.MapOverview();
 authed.MapMeetingNotes();
+authed.MapActionItemIssues();
 authed.MapSearch();
 authed.MapSync();
 

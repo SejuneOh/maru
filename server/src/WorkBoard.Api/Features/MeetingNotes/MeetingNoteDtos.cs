@@ -12,9 +12,17 @@ public sealed record MeetingNoteSummary(
     int ActionItemCount,
     int LinkedActionItemCount);
 
-public sealed record ActionItemIssue(Guid Id, int Number, string RepositoryName, string Status);
+// State is the mirrored GitHub state (open, closed); Status the derived board status.
+public sealed record ActionItemIssue(Guid Id, int Number, string RepositoryName, string Status, string State, string? HtmlUrl);
 
-public sealed record ActionItemDto(Guid Id, string Text, Member? Assignee, DateOnly? DueDate, ActionItemIssue? Issue);
+// An issue GitHub created for the item that is not in the mirror yet.
+public sealed record ActionItemPendingIssue(string RepositoryName, int Number);
+
+// CreatingIssue: a request is creating the issue right now. Items with any of Issue, PendingIssue, CreatingIssue
+// cannot be removed from the note.
+public sealed record ActionItemDto(
+    Guid Id, string Text, Member? Assignee, DateOnly? DueDate, ActionItemIssue? Issue,
+    ActionItemPendingIssue? PendingIssue = null, bool CreatingIssue = false);
 
 public sealed record MeetingNote(
     Guid Id,

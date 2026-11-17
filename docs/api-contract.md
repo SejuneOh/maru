@@ -108,6 +108,7 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | POST | `/api/meeting-notes` | dev user | `201 MeetingNote` (`200` for a repeat with the same `id`) |
 | PATCH | `/api/meeting-notes/{id}` | dev user | `MeetingNote` |
 | DELETE | `/api/meeting-notes/{id}` | dev user, author or admin | `204` |
+| POST | `/api/meeting-action-items/{id}/issue` | dev user | `201`/`200 ActionItemIssueResult` or `202 PendingActionItemIssue`, see below |
 | GET | `/api/search?q=` | dev user | `SearchResult` |
 
 `POST /api/tenants` creates a company for a signed-in person (bearer token, or `X-Dev-User` with a known
@@ -334,6 +335,40 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
 - Errors: `400 invalid_request` (any rule above, a body that is not JSON, an attendee, assignee or project that is not in the
   caller's tenant, PATCH without `expectedUpdatedAt`), `404 not_found`, `409 conflict`, `409 action_item_linked`, `409 id_taken`, `403 forbidden`,
   plus `409 idempotency_key_reused` / `400` for a bad key as with other writes.
+
+Turning an action item into a GitHub issue (any member, GitHub write through the App, UI word: 이슈로 만들기):
+
+- `POST /api/meeting-action-items/{id}/issue` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`).
+  Body `{"repositoryId": "<uuid>"}` (`application/json`), else `400 invalid_request`. An item of another tenant, or a repository
+  that is not in the tenant or not connected, is `404 not_found`; an archived repository is `409 repository_archived`.
+- The issue: title = the item's text (cut to 255 characters plus `…` when longer than 256; the whole text then opens the body). Body
+  `회의록: [<note title>](<link>) (<held date, yyyy-MM-dd in Asia/Seoul>)` and, with a due date, `마감: <yyyy-MM-dd>` (GitHub has no
+  due date, and no milestone is chosen), then the footer naming the caller as in `POST /api/issues`. The note title is escaped so it
+  stays plain text. Assignee = the item's owner (a member, by GitHub login); `droppedAssignees` lists the owner when GitHub did not assign them.
+  No labels and no board fields are set.
+- Link: `<Web:BaseUrl>/notes/view?id=<noteId>`. `Web:BaseUrl` is a setting (the public address of the web app, for example
+  `https://board.example.com`; a path is kept). Without it the request's `Origin` header is used (browsers send it on these calls);
+  with neither, or when it is not an `http(s)` address, the body names the note without a link.
+- Answers: `201 ActionItemIssueResult` with `created: true` when this request made the link (by creating the issue, or by finding the
+  one an earlier attempt created). `200` with `created: false` when the item already had its issue (any key, any member; nothing is sent
+  to GitHub, also for a resend of the request that created it). `202 PendingActionItemIssue` when GitHub created the issue but saving it
+  locally failed: the item remembers the repository and number (`MeetingActionItem.pendingIssue`), shows the issue as soon as a sync mirrors
+  it, and the next request for the item links it (`200`) or answers `202` again, without calling GitHub. Errors: those of `POST /api/issues`
+  (`github_write_not_granted`, `assignee_not_collaborator`, `github_unavailable`, `request_in_progress`, `idempotency_key_reused`).
+- One issue per item, whatever the keys: while GitHub is called the item row holds a claim (the request's key, the time, the time of the
+  first claim, the repository), taken under the item's row lock after the key's own reservation. A request with another key while a claim
+  younger than 2 minutes exists is `409 request_in_progress` and calls nothing. GitHub refusing before creating (`403`, `404`, `422`) frees
+  the item; an unknown outcome (`502` that may have had an effect, `504`, a crash) keeps the claim. A request that finds a claim of its own
+  key, or one older than 2 minutes, first lists the issues (as in `POST /api/issues`) of the claim's repository and, if different, the requested
+  one, created since the first claim minus 5 minutes, and links the issue carrying the item's marker instead of creating. The marker is
+  `<!-- work-board:create:<id> -->` with `<id>` hashed from tenant and item only, so every key and member shares it. A lookup that cannot be
+  read is `504 github_unavailable`: nothing is created and the claim stays. Other limits as in `POST /api/issues` (marker removed by editing,
+  `GitHub:App:Slug` needed for lookups).
+- Writes the `issue.create` audit row of `POST /api/issues`, plus `meeting_action_item.issue` (`after`: `issueId`, `repository`, `number`,
+  `foundEarlier`). The note's `updatedAt` does not change, so an editor open on the note keeps saving.
+- `PATCH /api/meeting-notes/{id}` treats an item with `pendingIssue` or `creatingIssue` like a linked item (`409 action_item_linked` when left
+  out). An item whose create ended with an unknown outcome can be removed once its claim is older than 2 minutes; if GitHub did create that
+  issue, it stays unlinked.
 
 `GET /api/search` matches `q` (case-insensitive substring, min 2 chars) against issue titles,
 comment bodies and meeting note titles/bodies. Up to 20 results per group.
@@ -571,11 +606,22 @@ type MeetingNote = {
   project: { id: string; name: string } | null;
   decisions: string[];                                  // 결정한 것, in order
   attendees: Member[];
-  actionItems: { id: string; text: string; assignee: Member | null; dueDate: string | null;   // yyyy-MM-dd
-                 issue: { id: string; number: number; repositoryName: string; status: Status } | null }[];  // in order
+  actionItems: MeetingActionItem[];                     // in order
   createdBy: Member | null;                             // null for seeded notes or a removed author
   createdAt: string; updatedAt: string;                 // send updatedAt back as expectedUpdatedAt
 };
+
+type MeetingActionItem = {
+  id: string; text: string; assignee: Member | null; dueDate: string | null;   // yyyy-MM-dd
+  issue: { id: string; number: number; repositoryName: string; status: Status;
+           state: "open" | "closed"; htmlUrl: string | null } | null;        // state as mirrored from GitHub
+  pendingIssue: { repositoryName: string; number: number } | null;           // created on GitHub, not mirrored yet
+  creatingIssue: boolean;                                                     // a create request is running now
+};
+
+type ActionItemIssueRequest = { repositoryId: string };
+type ActionItemIssueResult = { actionItem: MeetingActionItem; created: boolean; droppedAssignees: number[] };
+type PendingActionItemIssue = { actionItemId: string; repository: string; number: number; htmlUrl: string; mirrorPending: true };
 
 type MeetingNoteRequest = {
   id?: string;                                          // POST only: client-generated, makes a resent POST safe

@@ -13,7 +13,9 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
 
     private sealed record NoteHead(Guid Id, Guid? CreatedBy, DateTime UpdatedAt);
 
-    private sealed record ExistingItem(Guid Id, Guid? IssueId);
+    // Linked: has an issue, GitHub created one that is not mirrored yet, or a create is running. An item whose create
+    // died with an unknown outcome can be removed once its claim is stale.
+    private sealed record ExistingItem(Guid Id, bool Linked);
 
     private static WriteResult Error(int status, string code) => new(status, new ErrorBody(code));
 
@@ -61,13 +63,16 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
             return Invalid();
 
         var existing = await s.QueryAsync<ExistingItem>(
-            "select id, issue_id from meeting_action_items where note_id = @id", new { id });
+            $"""
+            select id, (issue_id is not null or issue_claim_number is not null or {ActionItemIssues.ActiveClaim}) as linked
+              from meeting_action_items a where note_id = @id for update
+            """, new { id });
         var existingIds = existing.Select(e => e.Id).ToHashSet();
         if (v.ActionItems.Any(i => i.Id is { } itemId && !existingIds.Contains(itemId)))
             return Invalid();
         var kept = v.ActionItems.Where(i => i.Id is not null).Select(i => i.Id!.Value).ToHashSet();
         var removed = existing.Where(e => !kept.Contains(e.Id)).ToList();
-        var linked = removed.Where(e => e.IssueId is not null).Select(e => e.Id).Order().ToArray();
+        var linked = removed.Where(e => e.Linked).Select(e => e.Id).Order().ToArray();
         if (linked.Length > 0)
             return new WriteResult(StatusCodes.Status409Conflict, new { error = ActionItemLinked, actionItemIds = linked });
 
@@ -180,6 +185,6 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
         bodyLength = n.BodyMd.Length,
         n.Decisions,
         attendeeIds = n.Attendees.Select(a => a.Id),
-        actionItems = n.ActionItems.Select(a => new { a.Id, a.Text, assigneeId = a.Assignee?.Id, a.DueDate, issueId = a.Issue?.Id }),
+        actionItems = n.ActionItems.Select(a => new { a.Id, a.Text, assigneeId = a.Assignee?.Id, a.DueDate, issueId = a.Issue?.Id, pendingIssue = a.PendingIssue }),
     };
 }
