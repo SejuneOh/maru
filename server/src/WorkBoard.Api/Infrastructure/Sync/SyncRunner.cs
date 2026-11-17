@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Dapper;
 using Npgsql;
+using WorkBoard.Api.Infrastructure.Credentials;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
 
@@ -41,7 +42,7 @@ public sealed class SyncRunner(
             }
             catch (Exception e)
             {
-                logger.LogError(e, "Sync for tenant {TenantId} crashed", tenantId);
+                logger.LogError("Sync for tenant {TenantId} crashed: {Error}", tenantId, Describe(e));
             }
             finally
             {
@@ -61,12 +62,15 @@ public sealed class SyncRunner(
 
     private sealed record ConnectionRow(Guid Id, long InstallationId);
 
+    private static GitHubConnectionRef Ref(Guid tenantId, ConnectionRow c) =>
+        new(tenantId, c.Id, GitHubAuthKind.App, c.InstallationId);
+
     public sealed record RepoRow(Guid Id, string FullName, DateTime? LastSyncedAt);
 
     // Reads what changed in one repository since its last sync and applies it through the MirrorWriter.
     // Shared by the periodic run and the webhook worker.
     public async Task<(MirrorResult Result, int? RateLimitRemaining)> SyncRepositoryAsync(
-        IGitHubSource source, MirrorWriter writer, Guid tenantId, Guid connectionId, long installationId, RepoRow repo,
+        IGitHubSource source, MirrorWriter writer, GitHubConnectionRef connection, RepoRow repo,
         CancellationToken ct)
     {
         var startedAt = time.GetUtcNow();
@@ -75,9 +79,9 @@ public sealed class SyncRunner(
             ? new DateTimeOffset(DateTime.SpecifyKind(last, DateTimeKind.Utc)) - Overlap
             : null;
         var snapshot = await source.ReadRepositoryAsync(
-            installationId, repo.FullName[..slash], repo.FullName[(slash + 1)..], since, ct);
-        var result = await writer.ApplyAsync(tenantId, connectionId, snapshot, ct);
-        await MarkSyncedAsync(tenantId, repo.Id, startedAt, since, result);
+            connection, repo.FullName[..slash], repo.FullName[(slash + 1)..], since, ct);
+        var result = await writer.ApplyAsync(connection.TenantId, connection.ConnectionId, snapshot, ct);
+        await MarkSyncedAsync(connection.TenantId, repo.Id, startedAt, since, result);
         return (result, snapshot.RateLimit?.Remaining);
     }
 
@@ -110,7 +114,7 @@ public sealed class SyncRunner(
             var source = scope.ServiceProvider.GetRequiredService<IGitHubSource>();
             var writer = scope.ServiceProvider.GetRequiredService<MirrorWriter>();
 
-            var list = await source.ListRepositoriesAsync(connection.InstallationId, ct);
+            var list = await source.ListRepositoriesAsync(Ref(tenantId, connection), ct);
             remaining = list.RateLimit?.Remaining ?? remaining;
             await writer.UpsertRepositoriesAsync(tenantId, connection.Id, list.Repositories, ct);
 
@@ -120,7 +124,7 @@ public sealed class SyncRunner(
                 try
                 {
                     var (result, left) = await SyncRepositoryAsync(
-                        source, writer, tenantId, connection.Id, connection.InstallationId, repo, ct);
+                        source, writer, Ref(tenantId, connection), repo, ct);
                     remaining = left ?? remaining;
                     issues += result.Issues;
                     pullRequests += result.PullRequests;
@@ -128,7 +132,7 @@ public sealed class SyncRunner(
                 }
                 catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
-                    logger.LogWarning(e, "Sync of {Repository} failed", repo.FullName);
+                    logger.LogWarning("Sync of {Repository} failed: {Error}", repo.FullName, Describe(e));
                     errors.Add($"{repo.FullName}: {Describe(e)}");
                     if (e is GitHubSourceException { Kind: GitHubSourceErrorKind.RateLimited or GitHubSourceErrorKind.Unauthorized })
                         break;
@@ -141,20 +145,21 @@ public sealed class SyncRunner(
         }
         catch (Exception e)
         {
-            logger.LogWarning(e, "Sync of connection {ConnectionId} failed", connection.Id);
+            logger.LogWarning("Sync of connection {ConnectionId} failed: {Error}", connection.Id, Describe(e));
             errors.Add(Describe(e));
         }
 
         await FinishRunAsync(runId, errors, issues, pullRequests, comments, remaining);
     }
 
-    private static string Describe(Exception e) => e switch
+    private static string Describe(Exception e) => TokenMasker.Apply(e switch
     {
         GitHubSourceException g => $"{g.Kind}: {g.Message}",
         GitHubAppKeyException g => g.Message,
+        CredentialKeyException g => g.Message,
         HttpRequestException or TaskCanceledException => "github_unavailable",
         _ => "unexpected_error",
-    };
+    })!;
 
     private async Task<Guid> StartRunAsync(Guid tenantId, Guid connectionId)
     {
@@ -193,7 +198,7 @@ public sealed class SyncRunner(
     private async Task FinishRunAsync(
         Guid runId, List<string> errors, int issues, int pullRequests, int comments, int? remaining)
     {
-        var error = errors.Count == 0 ? null : string.Join("; ", errors);
+        var error = errors.Count == 0 ? null : TokenMasker.Apply(string.Join("; ", errors));
         if (error is { Length: > MaxErrorLength })
             error = error[..MaxErrorLength];
         await using var conn = await sync.OpenConnectionAsync();

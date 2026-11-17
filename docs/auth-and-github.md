@@ -128,7 +128,7 @@
 
 - 응답은 읽기와 같은 `SourceIssue`, `SourceComment`로 돌려줍니다. 호출한 쪽이 `MirrorWriter.ApplyWrittenIssueAsync` / `ApplyWrittenCommentAsync`로 바로 넘기면 다음 동기화를 기다리지 않고 보드에 보입니다. 저장된 `github_updated_at`보다 오래된 응답은 무시하고(자식 행과 이벤트 포함), 응답에 없는 부모 이슈 연결은 건드리지 않습니다.
 - 닫기와 다시 열기 호출만 `IssueStateChange`를 넘기며, 그 이벤트(`closed`는 to_value = state_reason, 또는 `reopened`)를 같은 트랜잭션에서 호출한 사람 이름으로 `issue_events`에 남깁니다. 저장된 상태가 이미 같거나 응답이 더 오래돼도 남기고, 다른 쓰기는 상태가 달라 보여도 남기지 않습니다.
-- 대상 저장소는 `IGitHubWriteTargets.ResolveAsync`로 확인합니다. 호출자 회사의 저장소이고, 연결이 끊기지 않았고, App 설치 id가 있어야 합니다. 아니면 null(`404 not_found`로 답함).
+- 대상 저장소는 `IGitHubWriteTargets.ResolveAsync`로 확인합니다. 호출자 회사의 저장소이고, 연결이 끊기지 않았고, App 설치 id가 있거나 토큰 연결이어야 합니다. 아니면 null(`404 not_found`로 답함).
 - 실패는 `GitHubWriteException`: 403 → 메시지가 권한 부족(`Resource not accessible by integration` 등)이면 `github_write_not_granted`, 속도 제한(2차 포함) 문구이거나 그 밖의 403(보관된 저장소 등)이면 502 `github_unavailable`, 422 → `assignee_not_collaborator` 또는 `invalid_request`, 404 → `not_found`, 5xx와 속도 제한 → 502 `github_unavailable`, 응답 없음(네트워크, 30초 타임아웃) → 504 `github_unavailable`. `GitHubWriteErrors.ToResult/ToOutcome`이 응답으로 바꿉니다. 메시지에는 상태 코드만 들어가고 토큰과 응답 내용은 없습니다. 응답 없음 예외는 `Idempotency.RunExternalAsync`에 그대로 던지면 키를 예약 상태로 두고 504를 돌려줍니다.
 - 담당자: GitHub는 push 권한이 없는 사용자를 조용히 빼는 경우가 있으므로, 호출한 쪽이 응답의 `Assignees`가 요청과 같은지 확인합니다.
 
@@ -140,3 +140,29 @@
 2. Repository permissions의 **Issues**를 `Read-only`에서 **Read and write**로 바꾸고 **Save changes**
 3. 설치한 계정(개인이면 본인, 조직이면 조직 소유자)에게 권한 변경 요청이 갑니다. Settings → Applications → Installed GitHub Apps → work-board(또는 조직의 Installed GitHub Apps) 화면 위의 안내에서 **Review request** → **Accept new permissions**
 4. 승인 뒤 설치 토큰은 새 권한으로 발급됩니다. 캐시된 토큰이 있으면 최대 1시간 안에 바뀌고, 서버를 다시 띄우면 바로 바뀝니다.
+
+## 연결별 GitHub 자격 증명
+
+연결(`github_connections`)은 `auth_kind`로 GitHub에 닿는 방법을 가립니다. 기존 행은 모두 `app`(설치 토큰)이고, `token`은 사용자가 등록한 토큰을 저장해 씁니다(등록 API는 별도 이슈). `store_bodies`는 이슈와 댓글 본문을 미러에 쓸지 정하며 기본값은 켜짐입니다. 토큰 연결을 만드는 코드가 끕니다. 꺼져 있으면 동기화와 보드 쓰기 모두 `issues.body`를 null, `comments.body`를 빈 문자열로 저장하고, 다음 갱신 때 이미 저장된 본문도 같은 값으로 덮입니다.
+
+- `IGitHubCredentials`가 `GitHubConnectionRef`(테넌트, 연결, 종류, 설치 id)를 받아 토큰을 돌려줍니다. `IGitHubSource`와 `IGitHubWriter`는 설치 id 대신 이 참조를 받습니다. App 연결은 지금까지처럼 설치 토큰을 씁니다.
+- 토큰은 `github_credentials`에 AES-256-GCM으로 저장합니다(`ciphertext`는 암호문 뒤에 16바이트 태그). 연관 데이터(AAD)에 테넌트 id와 연결 id가 들어가므로 다른 연결로 옮긴 행은 열리지 않습니다.
+- 복호화는 `CredentialStore`(`workboard_sync` 연결)에서만 일어납니다. `workboard_app` 역할은 `ciphertext`와 `nonce` 열을 읽을 수 없고(열 단위 grant) 쓸 수도 없습니다. 테이블에는 RLS와 FORCE RLS가 걸려 있습니다.
+- 토큰 모양(`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`)의 문자열은 `TokenMasker`가 `[token]`으로 바꿉니다. `sync_runs.error`, `audit_log`, 동기화 로그에 쓰기 전에 적용합니다.
+
+### 키 파일
+
+DB 밖의 JSON 파일이며 `GitHub:Credentials:KeyFile`(환경 변수 `GitHub__Credentials__KeyFile`)이 가리킵니다. 절대 경로이거나 API 폴더 기준 상대 경로입니다. 파일 모드는 600이어야 하고(그룹·기타 권한이 있으면 API가 읽기를 거부), 저장소 밖에 둡니다. `current` 버전 키로 암호화하고, 목록에 있는 어느 버전으로도 복호화합니다.
+
+```json
+{ "current": 2, "keys": { "1": "<base64 32바이트>", "2": "<base64 32바이트>" } }
+```
+
+개발용 키 파일 만들기(저장소 밖):
+
+```bash
+mkdir -p ~/.config/work-board && umask 077
+printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.config/work-board/credential-keys.json
+```
+
+`appsettings.Local.json`의 `GitHub:Credentials:KeyFile`에 그 경로를 넣습니다. 키 교체는 새 버전 키를 추가하고 `current`를 올린 뒤 `CredentialStore.ReencryptAsync()`로 기존 행을 새 키로 다시 암호화합니다. 옛 버전 키는 그 뒤에 지웁니다. 키를 잃으면 저장된 토큰은 복구할 수 없고 사용자가 다시 등록해야 합니다.

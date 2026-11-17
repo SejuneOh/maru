@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens tokens) : IGitHubSource
+public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials) : IGitHubSource
 {
     private const string ApiBase = "https://api.github.com";
     private const int PageSize = 100;
@@ -55,14 +55,14 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
         }
         """;
 
-    public async Task<RepositoryList> ListRepositoriesAsync(long installationId, CancellationToken ct)
+    public async Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct)
     {
         var repos = new List<SourceRepository>();
         RateLimitInfo? limit = null;
         for (var page = 1; ; page++)
         {
             var (body, rl) = await GetRestAsync<InstallationRepositories>(
-                installationId, $"{ApiBase}/installation/repositories?per_page={PageSize}&page={page}", ct);
+                connection, $"{ApiBase}/installation/repositories?per_page={PageSize}&page={page}", ct);
             limit = rl ?? limit;
             var items = body.Repositories ?? [];
             repos.AddRange(items.Select(ToRepository));
@@ -73,16 +73,16 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
     }
 
     public async Task<RepositorySnapshot> ReadRepositoryAsync(
-        long installationId, string owner, string name, DateTimeOffset? since, CancellationToken ct)
+        GitHubConnectionRef connection, string owner, string name, DateTimeOffset? since, CancellationToken ct)
     {
         var sinceText = since?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
         RateLimitInfo? limit = null;
         SourceRepository? repository = null;
 
         var labelsRest = await GetRestPagesAsync<RestLabel>(
-            installationId, $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/labels", ct);
+            connection, $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/labels", ct);
         var milestonesRest = await GetRestPagesAsync<RestMilestone>(
-            installationId,
+            connection,
             $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/milestones?state=all&sort=due_on",
             ct);
         limit = labelsRest.Limit ?? limit;
@@ -96,7 +96,7 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
         string? cursor = null;
         while (true)
         {
-            var (data, rl) = await PostGraphQlAsync<IssuesData>(installationId, IssuesQuery,
+            var (data, rl) = await PostGraphQlAsync<IssuesData>(connection, IssuesQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor, ["since"] = sinceText }, ct);
             limit = rl ?? limit;
             var repo = RequireRepository(data.Repository);
@@ -113,7 +113,7 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
         var done = false;
         while (!done)
         {
-            var (data, rl) = await PostGraphQlAsync<PullRequestsData>(installationId, PullRequestsQuery,
+            var (data, rl) = await PostGraphQlAsync<PullRequestsData>(connection, PullRequestsQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor }, ct);
             limit = rl ?? limit;
             var repo = RequireRepository(data.Repository);
@@ -138,7 +138,7 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
 
         var commentUrl = $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/issues/comments"
             + $"?sort=updated&direction=asc{(sinceText is null ? "" : "&since=" + sinceText)}";
-        var commentsRest = await GetRestPagesAsync<RestComment>(installationId, commentUrl, ct);
+        var commentsRest = await GetRestPagesAsync<RestComment>(connection, commentUrl, ct);
         limit = commentsRest.Limit ?? limit;
         var comments = commentsRest.Items.Select(ToComment).ToList();
 
@@ -153,11 +153,11 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
 
     // ---- transport ---------------------------------------------------------------------------
 
-    private async Task<HttpResponseMessage> SendAsync(long installationId, Func<HttpRequestMessage> build, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(GitHubConnectionRef connection, Func<HttpRequestMessage> build, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
-            var token = await tokens.GetAsync(installationId, ct);
+            var token = (await credentials.GetAsync(connection, ct)).Token;
             using var request = build();
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -180,7 +180,7 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
             {
                 response.Dispose();
-                tokens.Invalidate(installationId);
+                credentials.Invalidate(connection);
                 continue;
             }
             try
@@ -196,21 +196,21 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
         }
     }
 
-    private async Task<(T Body, RateLimitInfo? Limit)> GetRestAsync<T>(long installationId, string url, CancellationToken ct)
+    private async Task<(T Body, RateLimitInfo? Limit)> GetRestAsync<T>(GitHubConnectionRef connection, string url, CancellationToken ct)
     {
-        using var response = await SendAsync(installationId, () => new HttpRequestMessage(HttpMethod.Get, url), ct);
+        using var response = await SendAsync(connection, () => new HttpRequestMessage(HttpMethod.Get, url), ct);
         return (await ReadBodyAsync<T>(response, ct), GitHubHttp.ReadRateLimit(response));
     }
 
     private async Task<(List<T> Items, RateLimitInfo? Limit)> GetRestPagesAsync<T>(
-        long installationId, string url, CancellationToken ct)
+        GitHubConnectionRef connection, string url, CancellationToken ct)
     {
         var items = new List<T>();
         RateLimitInfo? limit = null;
         var sep = url.Contains('?') ? '&' : '?';
         for (var page = 1; ; page++)
         {
-            var (body, rl) = await GetRestAsync<List<T>>(installationId, $"{url}{sep}per_page={PageSize}&page={page}", ct);
+            var (body, rl) = await GetRestAsync<List<T>>(connection, $"{url}{sep}per_page={PageSize}&page={page}", ct);
             limit = rl ?? limit;
             items.AddRange(body);
             if (body.Count < PageSize)
@@ -219,11 +219,11 @@ public sealed class GitHubSource(HttpClient http, IGitHubInstallationTokens toke
     }
 
     private async Task<(T Data, RateLimitInfo? Limit)> PostGraphQlAsync<T>(
-        long installationId, string query, Dictionary<string, object?> variables, CancellationToken ct)
+        GitHubConnectionRef connection, string query, Dictionary<string, object?> variables, CancellationToken ct)
         where T : GqlData
     {
         var payload = JsonSerializer.Serialize(new { query, variables }, Json);
-        using var response = await SendAsync(installationId, () => new HttpRequestMessage(HttpMethod.Post, $"{ApiBase}/graphql")
+        using var response = await SendAsync(connection, () => new HttpRequestMessage(HttpMethod.Post, $"{ApiBase}/graphql")
         {
             Content = new StringContent(payload, Encoding.UTF8, "application/json"),
         }, ct);

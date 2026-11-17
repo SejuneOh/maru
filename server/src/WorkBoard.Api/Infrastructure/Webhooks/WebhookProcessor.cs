@@ -154,7 +154,8 @@ public sealed class WebhookProcessor(
 
         await using var scope = scopes.CreateAsyncScope();
         var source = scope.ServiceProvider.GetRequiredService<IGitHubSource>();
-        await runner.SyncRepositoryAsync(source, writer, connection.TenantId, connection.Id, installationId.Value, repo, ct);
+        await runner.SyncRepositoryAsync(
+            source, writer, new GitHubConnectionRef(connection.TenantId, connection.Id, GitHubAuthKind.App, installationId.Value), repo, ct);
         return "synced";
     }
 

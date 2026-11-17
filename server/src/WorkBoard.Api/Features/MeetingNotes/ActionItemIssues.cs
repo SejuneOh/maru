@@ -183,7 +183,7 @@ public sealed class ActionItemIssues(
         return new Claimed(lookups);
     }
 
-    private static GitHubWriteTarget Placeholder(Guid repositoryId) => new(repositoryId, new GitHubRepoRef(0, "", ""), false);
+    private static GitHubWriteTarget Placeholder(Guid repositoryId) => new(repositoryId, new GitHubRepoRef(new GitHubConnectionRef(Guid.Empty, Guid.Empty, GitHubAuthKind.App, null), "", ""), false);
 
     private async Task LinkAsync(TenantSession s, Guid id, Guid issueId, FoundOrCreated result)
     {

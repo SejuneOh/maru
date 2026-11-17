@@ -20,6 +20,11 @@ public static class GitHubServiceCollectionExtensions
             c.DefaultRequestHeaders.UserAgent.ParseAdd("work-board");
         });
         services.AddSingleton<IGitHubInstallationTokens, GitHubInstallationTokens>();
+        services.Configure<Credentials.CredentialOptions>(config.GetSection(Credentials.CredentialOptions.Section));
+        services.AddSingleton<Credentials.ICredentialKeys, Credentials.FileCredentialKeys>();
+        services.AddSingleton<Credentials.CredentialCipher>();
+        services.AddSingleton<Credentials.CredentialStore>();
+        services.AddSingleton<IGitHubCredentials, GitHubCredentials>();
         services.AddHttpClient<IGitHubWriter, GitHubWriter>(c =>
         {
             // Below Idempotency.CallTimeout, so the client times out first and takes the same 504 path.

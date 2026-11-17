@@ -24,19 +24,21 @@ public class GitHubWriterTests
         }
     }
 
-    private sealed class FakeTokens : IGitHubInstallationTokens
+    private sealed class FakeTokens : IGitHubCredentials
     {
         public int Invalidations { get; private set; }
         public int Mints { get; private set; }
         public bool Fail { get; set; }
 
-        public Task<string> GetAsync(long installationId, CancellationToken ct) =>
-            Fail ? throw new GitHubSourceException(GitHubSourceErrorKind.Forbidden, "no") : Task.FromResult($"tok-{++Mints}");
+        public Task<GitHubCredential> GetAsync(GitHubConnectionRef connection, CancellationToken ct) =>
+            Fail
+                ? throw new GitHubSourceException(GitHubSourceErrorKind.Forbidden, "no")
+                : Task.FromResult(new GitHubCredential($"tok-{++Mints}", GitHubAuthKind.App));
 
-        public void Invalidate(long installationId) => Invalidations++;
+        public void Invalidate(GitHubConnectionRef connection) => Invalidations++;
     }
 
-    private static readonly GitHubRepoRef Repo = new(42, "octo", "api");
+    private static readonly GitHubRepoRef Repo = new(new GitHubConnectionRef(Guid.Empty, Guid.Empty, GitHubAuthKind.App, 42), "octo", "api");
 
     private static HttpResponseMessage Json(HttpStatusCode code, string json) =>
         new(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };

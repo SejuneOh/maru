@@ -24,13 +24,13 @@ public class SyncEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         public TaskCompletionSource? Gate { get; set; }
         public List<(string Name, DateTimeOffset? Since)> Reads { get; } = [];
 
-        public Task<RepositoryList> ListRepositoriesAsync(long installationId, CancellationToken ct) =>
+        public Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct) =>
             ThrowOnList is { } e
                 ? Task.FromException<RepositoryList>(e)
                 : Task.FromResult(new RepositoryList(Repositories, new RateLimitInfo(4990, null)));
 
         public async Task<RepositorySnapshot> ReadRepositoryAsync(
-            long installationId, string owner, string name, DateTimeOffset? since, CancellationToken ct)
+            GitHubConnectionRef connection, string owner, string name, DateTimeOffset? since, CancellationToken ct)
         {
             lock (Reads)
                 Reads.Add(($"{owner}/{name}", since));
@@ -333,6 +333,24 @@ public class SyncEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var status = await StatusAsync(client);
         Assert.Equal("failed", status.GetProperty("lastResult").GetString());
         Assert.Equal("key unreadable", status.GetProperty("lastError").GetString());
+    }
+
+    [DbFact]
+    public async Task A_token_in_an_error_is_masked_in_the_stored_run()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        await ConnectAsync(t);
+        var (admin, _) = await AdminAsync(t);
+        const string token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+        var fake = new FakeSource { ThrowOnList = new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "rejected " + token) };
+        var client = Client(fake, admin);
+
+        await client.PostAsync("/api/sync/run", null);
+        await WaitIdleAsync(client);
+
+        var error = await t.ScalarAsync<string>("select error from sync_runs where tenant_id = @tid", new { tid = t.Id });
+        Assert.DoesNotContain(token, error);
+        Assert.Contains("[token]", error);
     }
 
     [DbFact]

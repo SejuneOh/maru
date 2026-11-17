@@ -1,4 +1,5 @@
 using System.Text.Json;
+using WorkBoard.Api.Infrastructure.Credentials;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
 
@@ -23,7 +24,7 @@ public sealed class AuditLog(ICurrentUser user) : IAuditLog
             action,
             targetType,
             targetId,
-            before = before is null ? null : JsonSerializer.Serialize(before, JsonSerializerOptions.Web),
-            after = after is null ? null : JsonSerializer.Serialize(after, JsonSerializerOptions.Web),
+            before = before is null ? null : TokenMasker.Apply(JsonSerializer.Serialize(before, JsonSerializerOptions.Web)),
+            after = after is null ? null : TokenMasker.Apply(JsonSerializer.Serialize(after, JsonSerializerOptions.Web)),
         });
 }
