@@ -36,10 +36,13 @@ function tokenShort(h: TokenHealth, t: Dict, fmt: Format): string {
 export function SyncStatus({
   className = "",
   onAttention,
+  onContentChange,
   compact = false,
 }: {
   className?: string;
   onAttention?: (on: boolean) => void;
+  /** Changes whenever the shown text may change width (notice, running, result, tokens), so the shell re-measures. */
+  onContentChange?: (key: string) => void;
   /** The top bar is out of room: keep the token mark, drop its text. */
   compact?: boolean;
 }) {
@@ -76,6 +79,13 @@ export function SyncStatus({
 
   const alert = data?.tokens.some((h) => urgency(h) < 3) ?? false;
   useEffect(() => onAttention?.(alert), [alert, onAttention]);
+  const contentKey = [
+    notice,
+    data?.running,
+    data?.lastResult,
+    data?.tokens.map((h) => `${h.connectionId}:${h.tokenStatus}:${h.tokenExpiresSoon}:${h.syncPausedUntil !== null}`).join(","),
+  ].join("|");
+  useEffect(() => onContentChange?.(contentKey), [contentKey, onContentChange]);
 
   if (!data) return null;
 
@@ -115,12 +125,10 @@ export function SyncStatus({
   const failed = !data.running && data.lastResult === "failed";
   const reason = data.lastError ?? s.unknownReason;
   let label: string;
-  let title: string | undefined;
   if (data.running) label = s.running;
   else if (failed) {
     // lastSyncedAt is the last successful sync, not the failed attempt.
     label = data.lastSyncedAt ? s.failedSince(fmt.relativeTime(data.lastSyncedAt)) : s.failed;
-    title = reason;
   } else if (data.lastSyncedAt) label = s.syncedAgo(fmt.relativeTime(data.lastSyncedAt));
   else label = s.never;
 
@@ -144,19 +152,25 @@ export function SyncStatus({
           {attention.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{attention.length - 1}</span>}
         </Link>
       )}
-      <p className="flex shrink-0 items-center gap-1.5 whitespace-nowrap" title={notice || data.running || failed ? title : (title ?? label)}>
+      {/* Texts are capped in the top bar; the whole sentence stays in `title`, and a notice also in the live region. */}
+      <p
+        className="flex min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap"
+        title={[notice ?? label, failed && !notice ? reason : null].filter(Boolean).join(" · ")}
+      >
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${data.running ? "animate-pulse bg-ink-soft" : failed ? "bg-ink" : "bg-faint"}`}
         />
         <span
-          className={`${failed && !notice ? "font-medium text-ink" : "text-muted"} ${
-            notice || data.running || failed ? "" : "min-[1024px]:max-[1279px]:sr-only"
-          }`}
+          className={`truncate ${compact ? "min-[1024px]:max-w-[8rem]" : "min-[1024px]:max-w-[13rem]"} ${
+            failed && !notice ? "font-medium text-ink" : "text-muted"
+          } ${notice || data.running || failed ? "" : "min-[1024px]:max-[1279px]:sr-only"}`}
         >
           {notice ?? label}
         </span>
-        {failed && !notice && <span className="max-w-[16rem] truncate text-muted max-[1279px]:sr-only">· {reason}</span>}
+        {failed && !notice && (
+          <span className={`max-w-[10rem] truncate text-muted ${compact ? "sr-only" : "max-[1279px]:sr-only"}`}>· {reason}</span>
+        )}
       </p>
       <span aria-live="polite" className="sr-only">
         {notice}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { authEnabled } from "@/lib/auth";
-import { type Dict, useT } from "@/lib/i18n";
+import { type Dict, useI18n, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import { AccountMenu } from "./Auth";
 import { BoardNotice, StatusKeys } from "./BoardNotice";
@@ -114,15 +114,22 @@ function OrgMark({ org, size }: { org: string; size: "sm" | "md" }) {
 }
 
 /** The top bar holds it from 640px; on phones there is no room, so it sits on the sync line above the page. */
-function NewIssueButton({ onClick, className = "" }: { onClick: () => void; className?: string }) {
+/** `compact` keeps only the plus sign (the name stays for screen readers and `title`) when the top bar is out of room. */
+function NewIssueButton({ onClick, className = "", compact = false }: { onClick: () => void; className?: string; compact?: boolean }) {
   const t = useT();
   return (
-    <button type="button" onClick={onClick} aria-keyshortcuts="c" className={`btn shrink-0 gap-1.5 px-3 text-small ${className}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-keyshortcuts="c"
+      title={compact ? `${t.shell.newIssue} (c)` : undefined}
+      className={`btn shrink-0 gap-1.5 text-small ${compact ? "w-9 px-0" : "px-3"} ${className}`}
+    >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden className="shrink-0">
         <path d="M8 3v10M3 8h10" strokeLinecap="round" />
       </svg>
-      {t.shell.newIssue}
-      <Kbd className="max-[1023px]:hidden">c</Kbd>
+      <span className={compact ? "sr-only" : undefined}>{t.shell.newIssue}</span>
+      {!compact && <Kbd className="max-[1023px]:hidden">c</Kbd>}
     </button>
   );
 }
@@ -262,7 +269,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const narrow = useNarrow();
   const [tokenAlert, setTokenAlert] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
-  const { folded, tight } = useFoldedSearch(barRef, !narrow, searchOpen, tokenAlert);
+  const [syncKey, setSyncKey] = useState("");
+  const { lang } = useI18n();
+  const { folded, tight } = useFoldedSearch(barRef, !narrow, searchOpen, `${tokenAlert}|${syncKey}|${lang}`);
+  const escapedRef = useRef(false);
   const searchShown = folded ? searchOpen : undefined;
 
   return (
@@ -381,12 +391,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 type="search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-                onBlur={(e) => {
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape") return;
+                  escapedRef.current = true;
+                  e.currentTarget.blur();
+                }}
+                onBlur={() => {
+                  const escaped = escapedRef.current;
+                  escapedRef.current = false;
                   if (q !== "") return;
                   setSearchOpen(false);
-                  // Esc or a click on nothing would leave focus on the page body; the button that opened the field takes it.
-                  if (!e.relatedTarget && document.hasFocus()) requestAnimationFrame(() => searchButtonRef.current?.focus());
+                  // Esc would leave focus on the page body; the button that opened the field takes it back.
+                  if (escaped) requestAnimationFrame(() => searchButtonRef.current?.focus());
                 }}
                 placeholder={t.shell.searchPlaceholder}
                 aria-label={t.shell.searchLabel}
@@ -411,9 +427,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <SearchIcon size={18} />
             </button>
             {!narrow && (
-              <SyncStatus className={folded && searchOpen ? "hidden" : "flex shrink-0"} onAttention={setTokenAlert} compact={tight} />
+              <SyncStatus
+                className={folded && searchOpen ? "hidden" : "flex shrink-0"}
+                onAttention={setTokenAlert}
+                onContentChange={setSyncKey}
+                compact={tight}
+              />
             )}
-            <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" />
+            <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" compact={tight} />
             <div className={`flex shrink-0 items-center gap-2 ${searchOpen ? "max-[639px]:hidden" : ""}`}>
               <div className="flex items-center gap-2 min-[1024px]:hidden">
                 <LangToggle />
