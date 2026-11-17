@@ -31,8 +31,7 @@ public sealed class SyncWorker(
 
             while (!ct.IsCancellationRequested)
             {
-                if (app.Value.CanReadInstallations)
-                    await RunAllAsync(ct);
+                await RunAllAsync(ct);
                 await sprintDaily.RecordTodayAsync(ct);
                 var interval = await IntervalAsync(ct);
                 runner.NextRunAt = time.GetUtcNow() + interval;
@@ -76,8 +75,10 @@ public sealed class SyncWorker(
         try
         {
             await using var conn = await sync.OpenConnectionAsync(ct);
-            var tenants = (await conn.QueryAsync<Guid>(
-                "select distinct tenant_id from github_connections where disconnected_at is null and installation_id is not null")).AsList();
+            var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
+                select distinct tenant_id from github_connections
+                 where disconnected_at is null and ((installation_id is not null and @appReady) or auth_kind = 'token')
+                """, new { appReady = app.Value.CanReadInstallations }, cancellationToken: ct))).AsList();
             foreach (var tenantId in tenants)
                 if (runner.TryStart(tenantId) is { } running)
                     await running;

@@ -66,7 +66,7 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 | `GitHub__App__PrivateKeyPath` | 내려받은 `.pem` 경로. 절대 경로 또는 API 폴더 기준 상대 경로. `*.pem`은 `.gitignore`에 있음 |
 | `GitHub__App__Slug` | App 주소의 이름. **필수**: API가 `<Slug>[bot]`으로 App이 쓴 댓글·본문을 알아보고(작성자 표시), 중단된 요청을 다시 보낼 때 이미 만든 이슈·댓글을 찾는 데 씀. 비우면 작성자가 봇으로 보이고, 이어받는 재시도는 504로 멈춤. 화면의 설치 링크에도 씀 |
 
-토큰 연결의 저장 토큰을 암호화하는 키는 `GitHub__Credentials__KeyFile`(키 파일 경로, 모드 600, 저장소 밖)로 넣습니다. 개발용 키 파일 만드는 법과 교체 절차는 [docs/auth-and-github.md](docs/auth-and-github.md)의 "연결별 GitHub 자격 증명"에 있습니다. `*.keyring.json`, `credential-keys*.json`은 `.gitignore`에 있습니다.
+토큰 연결의 저장 토큰을 암호화하는 키는 `GitHub__Credentials__KeyFile`(키 파일 경로, 모드 600, 저장소 밖)로 넣습니다. 개발용 키 파일 만드는 법과 교체 절차는 [docs/auth-and-github.md](docs/auth-and-github.md)의 "연결별 GitHub 자격 증명"에 있습니다. `*.keyring.json`, `credential-keys*.json`은 `.gitignore`에 있습니다. 토큰으로 조직을 연결하는 법과 테스트 조직용 fine-grained 토큰 만드는 법은 같은 문서의 "토큰으로 조직 연결"에 있습니다.
 
 ### 웹훅 (실시간 반영)
 

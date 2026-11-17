@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using WorkBoard.Api.Infrastructure.Credentials;
 using WorkBoard.Api.Infrastructure.GitHub;
@@ -14,6 +15,7 @@ public sealed class SyncRunner(
     IServiceScopeFactory scopes,
     [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync,
     IHostApplicationLifetime lifetime,
+    IOptions<GitHubAppOptions> app,
     TimeProvider time,
     ILogger<SyncRunner> logger)
 {
@@ -60,10 +62,10 @@ public sealed class SyncRunner(
             cancellationToken: ct));
     }
 
-    private sealed record ConnectionRow(Guid Id, long InstallationId);
+    private sealed record ConnectionRow(Guid Id, long? InstallationId, string AuthKind, string AccountLogin);
 
     private static GitHubConnectionRef Ref(Guid tenantId, ConnectionRow c) =>
-        new(tenantId, c.Id, GitHubAuthKind.App, c.InstallationId);
+        new(tenantId, c.Id, c.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, c.InstallationId, c.AccountLogin);
 
     public sealed record RepoRow(Guid Id, string FullName, DateTime? LastSyncedAt);
 
@@ -91,10 +93,11 @@ public sealed class SyncRunner(
         await using (var conn = await sync.OpenConnectionAsync(ct))
         {
             connections = (await conn.QueryAsync<ConnectionRow>(new CommandDefinition("""
-                select id, installation_id from github_connections
-                 where tenant_id = @tenantId and disconnected_at is null and installation_id is not null
+                select id, installation_id, auth_kind, account_login from github_connections
+                 where tenant_id = @tenantId and disconnected_at is null
+                   and ((installation_id is not null and @appReady) or auth_kind = 'token')
                  order by created_at
-                """, new { tenantId }, cancellationToken: ct))).AsList();
+                """, new { tenantId, appReady = app.Value.CanReadInstallations }, cancellationToken: ct))).AsList();
         }
 
         foreach (var connection in connections)

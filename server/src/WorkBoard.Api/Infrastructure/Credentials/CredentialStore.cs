@@ -15,23 +15,34 @@ public sealed class CredentialStore(
     // Stores or replaces the connection's credential, active again, with usage and check times cleared.
     public async Task SaveAsync(
         Guid tenantId, Guid connectionId, Guid ownerMemberId, string token,
-        IReadOnlyList<string> scopes, DateTimeOffset? expiresAt, CancellationToken ct = default)
+        IReadOnlyList<string> scopes, DateTimeOffset? expiresAt, CancellationToken ct = default,
+        string? ownerLogin = null)
+    {
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        await SaveAsync(conn, null, tenantId, connectionId, ownerMemberId, token, scopes, expiresAt, ownerLogin, ct);
+    }
+
+    // The same on a caller's connection and transaction, e.g. together with the connection row it belongs to.
+    public async Task SaveAsync(
+        NpgsqlConnection conn, NpgsqlTransaction? tx, Guid tenantId, Guid connectionId, Guid ownerMemberId, string token,
+        IReadOnlyList<string> scopes, DateTimeOffset? expiresAt, string? ownerLogin, CancellationToken ct = default)
     {
         var sealedToken = cipher.Seal(token, tenantId, connectionId);
-        await using var conn = await sync.OpenConnectionAsync(ct);
         await conn.ExecuteAsync(new CommandDefinition("""
-            insert into github_credentials (tenant_id, connection_id, owner_member_id, ciphertext, nonce, key_version, scopes, expires_at)
-            values (@tenantId, @connectionId, @ownerMemberId, @ciphertext, @nonce, @keyVersion, @scopes, @expiresAt)
+            insert into github_credentials (tenant_id, connection_id, owner_member_id, ciphertext, nonce, key_version, scopes, expires_at, last4, owner_login)
+            values (@tenantId, @connectionId, @ownerMemberId, @ciphertext, @nonce, @keyVersion, @scopes, @expiresAt, @last4, @ownerLogin)
             on conflict (connection_id) do update
                set owner_member_id = excluded.owner_member_id, ciphertext = excluded.ciphertext, nonce = excluded.nonce,
                    key_version = excluded.key_version, scopes = excluded.scopes, expires_at = excluded.expires_at,
+                   last4 = excluded.last4, owner_login = excluded.owner_login,
                    status = 'active', last_checked_at = null, last_used_at = null, updated_at = now()
              where github_credentials.tenant_id = excluded.tenant_id
             """, new
         {
             tenantId, connectionId, ownerMemberId, ciphertext = sealedToken.Ciphertext, nonce = sealedToken.Nonce,
             keyVersion = sealedToken.KeyVersion, scopes = scopes.ToArray(), expiresAt = expiresAt?.UtcDateTime,
-        }, cancellationToken: ct));
+            last4 = token.Length >= 4 ? token[^4..] : null, ownerLogin,
+        }, tx, cancellationToken: ct));
     }
 
     public async Task<bool> DeleteAsync(Guid tenantId, Guid connectionId, CancellationToken ct = default)

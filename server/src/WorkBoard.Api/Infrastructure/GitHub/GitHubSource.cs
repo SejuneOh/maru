@@ -57,6 +57,9 @@ public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials
 
     public async Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct)
     {
+        if (connection.Kind == GitHubAuthKind.Token)
+            return await ListOrganizationRepositoriesAsync(connection, ct);
+
         var repos = new List<SourceRepository>();
         RateLimitInfo? limit = null;
         for (var page = 1; ; page++)
@@ -70,6 +73,15 @@ public sealed class GitHubSource(HttpClient http, IGitHubCredentials credentials
                 break;
         }
         return new RepositoryList(repos, limit);
+    }
+
+    private async Task<RepositoryList> ListOrganizationRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct)
+    {
+        var org = connection.AccountLogin
+            ?? throw new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "The token connection has no organization.");
+        var (items, limit) = await GetRestPagesAsync<RestRepository>(
+            connection, $"{ApiBase}/orgs/{Uri.EscapeDataString(org)}/repos?type=all&sort=full_name", ct);
+        return new RepositoryList(items.Select(ToRepository).ToList(), limit);
     }
 
     public async Task<RepositorySnapshot> ReadRepositoryAsync(

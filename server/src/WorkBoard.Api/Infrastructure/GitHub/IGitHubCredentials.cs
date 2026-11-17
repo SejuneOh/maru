@@ -6,8 +6,11 @@ public enum GitHubAuthKind
     Token,
 }
 
-// Identifies the connection a GitHub call runs for. InstallationId is set for App connections.
-public sealed record GitHubConnectionRef(Guid TenantId, Guid ConnectionId, GitHubAuthKind Kind, long? InstallationId);
+// Identifies the connection a GitHub call runs for. InstallationId is set for App connections. AccountLogin is the
+// connected account; TokenOwnerLogin is the GitHub login the stored token writes as (token connections only).
+public sealed record GitHubConnectionRef(
+    Guid TenantId, Guid ConnectionId, GitHubAuthKind Kind, long? InstallationId,
+    string? AccountLogin = null, string? TokenOwnerLogin = null);
 
 public sealed record GitHubCredential(string Token, GitHubAuthKind Kind);
 

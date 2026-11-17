@@ -292,6 +292,7 @@ export const ko = {
       submitting: "보내는 중",
       resend: "같은 내용으로 다시 보내기",
       pending: "GitHub에 올렸습니다. 보드에는 다음 동기화 뒤에 저장됩니다.",
+      bodyOnGithub: "본문은 GitHub에서 볼 수 있습니다.",
       lockedNote: "GitHub에 이미 올라갔을 수 있어 내용을 고칠 수 없게 잠갔습니다. 같은 내용으로 다시 보내면 댓글이 두 번 올라가지 않습니다.",
       lockedHelp: "취소하면 잠금이 풀리고 다음에는 새 댓글로 보냅니다. 취소하기 전에 GitHub에 이 댓글이 이미 있는지 확인하세요.",
       checkOnGitHub: "GitHub에서 확인",

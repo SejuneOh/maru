@@ -45,7 +45,7 @@ public static class NewIssueEndpoints
             select r.id, r.name, r.full_name, r.archived
               from repositories r
               join github_connections c on c.tenant_id = r.tenant_id and c.id = r.connection_id
-             where c.disconnected_at is null and c.installation_id is not null
+             where c.disconnected_at is null and (c.installation_id is not null or c.auth_kind = 'token')
              order by r.archived, r.name
             """);
         var labels = (await s.QueryAsync<LabelRow>("""
@@ -53,7 +53,7 @@ public static class NewIssueEndpoints
               from labels l
               join repositories r on r.id = l.repository_id
               join github_connections c on c.tenant_id = r.tenant_id and c.id = r.connection_id
-             where c.disconnected_at is null and c.installation_id is not null and not r.archived
+             where c.disconnected_at is null and (c.installation_id is not null or c.auth_kind = 'token') and not r.archived
              order by l.name
             """)).ToLookup(l => l.RepositoryId);
         var members = await s.QueryAsync<NewIssueAssignee>("""

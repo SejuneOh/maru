@@ -14,16 +14,19 @@ public interface IGitHubWriteTargets
 
 public sealed class GitHubWriteTargets(TenantDb db, ICurrentUser user) : IGitHubWriteTargets
 {
-    private sealed record Row(string FullName, Guid ConnectionId, string AuthKind, long? InstallationId, bool Archived, bool StoreBodies);
+    private sealed record Row(string FullName, Guid ConnectionId, string AuthKind, long? InstallationId, bool Archived, bool StoreBodies,
+        string AccountLogin, string? TokenOwnerLogin);
 
     public async Task<GitHubWriteTarget?> ResolveAsync(Guid repositoryId, CancellationToken ct)
     {
         var tenantId = user.Identity.TenantId;
         var row = await db.ReadAsync(session => session.QuerySingleOrDefaultAsync<Row>("""
             select r.full_name as FullName, c.id as ConnectionId, c.auth_kind as AuthKind, c.installation_id as InstallationId,
-                   r.archived as Archived, c.store_bodies as StoreBodies
+                   r.archived as Archived, c.store_bodies as StoreBodies, c.account_login as AccountLogin,
+                   k.owner_login as TokenOwnerLogin
               from repositories r
               join github_connections c on c.tenant_id = r.tenant_id and c.id = r.connection_id
+              left join github_credentials k on k.tenant_id = c.tenant_id and k.connection_id = c.id
              where r.tenant_id = @tenantId and r.id = @repositoryId
                and c.disconnected_at is null and (c.installation_id is not null or c.auth_kind = 'token')
             """, new { tenantId, repositoryId }), ct);
@@ -35,7 +38,8 @@ public sealed class GitHubWriteTargets(TenantDb db, ICurrentUser user) : IGitHub
             : new GitHubWriteTarget(repositoryId,
                 new GitHubRepoRef(
                     new GitHubConnectionRef(tenantId, row.ConnectionId,
-                        row.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, row.InstallationId),
+                        row.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, row.InstallationId,
+                        row.AccountLogin, row.TokenOwnerLogin),
                     row.FullName[..slash], row.FullName[(slash + 1)..]), row.Archived, row.StoreBodies);
     }
 }

@@ -7,6 +7,9 @@ public enum GitHubWriteErrorKind
     InvalidRequest,
     NotFound,
     Unavailable,
+
+    // A token connection has no usable token: none stored, expired, or rejected by GitHub.
+    CredentialMissing,
 }
 
 // Messages carry the HTTP status only, never request or response data.

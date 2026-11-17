@@ -30,7 +30,7 @@ public sealed class WebhookProcessor(
         string DeliveryId, string Event, string? Action, long? InstallationId, long? RepositoryId,
         long? SubjectUserId, long? AccountId, int Attempts);
 
-    private sealed record Connection(Guid Id, Guid TenantId, long AccountId);
+    private sealed record Connection(Guid Id, Guid TenantId, long AccountId, string AuthKind, string AccountLogin);
 
     private sealed record RepoLookup(Guid Id, string FullName, DateTime? LastSyncedAt, bool SyncEnabled);
 
@@ -120,7 +120,7 @@ public sealed class WebhookProcessor(
         installationId is null
             ? null
             : await conn.QuerySingleOrDefaultAsync<Connection>(new CommandDefinition("""
-                select id, tenant_id, account_id from github_connections
+                select id, tenant_id, account_id, auth_kind, account_login from github_connections
                  where installation_id = @installationId and disconnected_at is null
                 """, new { installationId }, cancellationToken: ct));
 
@@ -155,7 +155,7 @@ public sealed class WebhookProcessor(
         await using var scope = scopes.CreateAsyncScope();
         var source = scope.ServiceProvider.GetRequiredService<IGitHubSource>();
         await runner.SyncRepositoryAsync(
-            source, writer, new GitHubConnectionRef(connection.TenantId, connection.Id, GitHubAuthKind.App, installationId.Value), repo, ct);
+            source, writer, new GitHubConnectionRef(connection.TenantId, connection.Id, connection.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, installationId.Value, connection.AccountLogin), repo, ct);
         return "synced";
     }
 

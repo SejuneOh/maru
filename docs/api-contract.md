@@ -96,6 +96,9 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/projects/{id}/schedule` | dev user | `ProjectSchedule` or 404, see below |
 | GET | `/api/connections` | dev user | `GithubConnection[]`, active first |
 | POST | `/api/connections/github` | dev user, admin | `GithubConnection` (`201` new, `200` existing updated) |
+| POST | `/api/connections/github-token` | dev user, admin | `GithubConnection` (`201`), see "Token connections" |
+| PUT | `/api/connections/{id}/github-token` | dev user, admin | `GithubConnection` (`200`), replaces the token |
+| DELETE | `/api/connections/{id}/github-token` | dev user, admin | `204`, disconnects the token connection and deletes the token |
 | GET | `/api/connections/github/request` | dev user | `{ request: ConnectionRequest \| null }`, the company's open organization install request |
 | POST | `/api/connections/github/request` | dev user, admin | `ConnectionRequest` (`201` new, `200` already open) |
 | DELETE | `/api/connections/github/request` | dev user, admin | `204` (closes the open request, if any) |
@@ -151,6 +154,36 @@ Errors: `400 invalid_request` (missing code or installationId, not JSON), `400 i
 `409 account_connected` (active in another tenant), `422 org_members_not_granted` (the installation lacks the
 "Members: read" organization permission), `422 unsupported_account` (neither a user nor an organization),
 `502 github_unavailable` (GitHub call failed), `503 github_app_not_configured`.
+
+### Token connections
+
+`POST /api/connections/github-token` connects an organization with a personal access token instead of the App.
+Body `{"token": "<PAT>", "organization": "<login>"}`. Fine-grained tokens are recommended (resource owner: the
+organization; repository permissions Issues, Pull requests, Contents and Metadata read, Issues write). Classic tokens
+are accepted with `repo` and `read:org` only. The token is never returned, logged or written to `audit_log`; responses
+show `tokenLast4`. The server checks, in order: `GET /user` (the id must equal the caller's GitHub id), the scopes of a
+classic token (`X-OAuth-Scopes`: scopes other than `repo`, `read:org`, `public_repo`, `read:user`, `user:email` are
+refused), the expiry (`github-authentication-token-expiration`, stored as `tokenExpiresAt`), then
+`GET /user/memberships/orgs/{org}` (state `active`) and `GET /orgs/{org}/repos` (SAML SSO shows as a 403 with the
+`X-GitHub-SSO` header). A token without `X-OAuth-Scopes` must start with `github_pat_`. The connection is created with
+`authKind: "token"`, no installation id and `store_bodies = false` (issue and comment text is not mirrored). The
+organization's members are not imported.
+`PUT /api/connections/{id}/github-token` takes `{"token": ...}`, repeats the checks for the connection's organization
+and replaces the stored token. `DELETE` sets `disconnectedAt` and deletes the token.
+Errors: `400 invalid_request`, `400 invalid_token` (rejected or expired), `400 unsupported_token`, `403 admin_only`,
+`403 not_your_account`, `403 not_org_member`, `403 org_membership_inactive`, `403 org_access_denied`,
+`403 sso_not_authorized` (also `ssoUrl`), `404 not_found` (PUT and DELETE: not an active token connection of the
+company), `409 account_connected` (active anywhere, this company included), `422 token_scope_too_broad` (also
+`scopes`), `422 token_scope_missing` (also `missing`), `422 organization_mismatch` (PUT: the token reaches another
+organization), `502 github_unavailable`, `503 credential_store_not_configured` (no usable key file).
+`audit_log` actions: `connection.token_connect`, `connection.token_replace`, `connection.token_delete`,
+`connection.token_failed` (with `reason`), target type `connection`.
+
+Writes through a token connection show the token owner as the GitHub author; the board's "작성: @member" line names
+the member. The duplicate check after a retried write recognises the token owner's login (the App's `<slug>[bot]`
+for App connections). A write on a token connection without a usable token answers `409 credential_missing`.
+Sync and the new-issue repository list include token connections; the organization's repositories come from
+`GET /orgs/{org}/repos`. Webhooks do not reach token connections, so they rely on the periodic sync.
 
 When someone who is not an organization owner installs the App, GitHub records an install request and returns to
 `/connect/github?setup_action=request` without an installation id. The web then calls
@@ -698,6 +731,9 @@ type GithubConnection = {
   id: string; accountId: number; accountLogin: string; accountType: "organization" | "user"; installationId: number | null;
   repositorySelection: "all" | "selected" | null; createdAt: string; disconnectedAt: string | null;
   orgMemberCount: number | null;   // current organization members; null for personal accounts or when unread
+  authKind: "app" | "token";
+  tokenLast4: string | null; tokenOwnerLogin: string | null; tokenExpiresAt: string | null;   // token connections only
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | null; tokenScopes: string[] | null;
 };
 
 type ConnectionRequest = { id: string; requestedAt: string; requestedByLogin: string | null; accountLogin: string | null };
