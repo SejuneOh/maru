@@ -175,6 +175,7 @@ public static class OverviewQueries
               left join issue_assignees ia on ia.github_user_id = m.github_user_id
               left join issues i on i.id = ia.issue_id
               left join issue_status st on st.issue_id = i.id
+             where m.left_at is null
              group by m.id
             """);
 

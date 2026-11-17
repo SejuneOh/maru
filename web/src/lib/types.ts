@@ -16,7 +16,10 @@ export type Member = {
   displayName: string | null;
   avatarUrl: string | null;
   role: "admin" | "member";
-  /** Set when GitHub reported the person left the connected organization; null otherwise. Only `GET /api/members` fills it. */
+  /**
+   * Set when GitHub reported the person left the connected organization; null otherwise. Only `GET /api/members` fills it.
+   * Unrelated to removal by an admin: removed members are left out of `GET /api/members` altogether.
+   */
   removedAt?: string | null;
 };
 
@@ -25,6 +28,60 @@ export type Me = {
   tenant: { id: string; name: string };
   settings: { sprintsEnabled: boolean; sizeEnabled: boolean; priorityEnabled: boolean };
 };
+
+/** Who sent an invitation; null once that member row is gone. */
+export type InvitedBy = { githubLogin: string; displayName: string | null };
+
+/** `GET /api/invitations` (admin): open invitations, newest first. Expired ones are included; compare `expiresAt`. */
+export type Invitation = {
+  id: string;
+  /** Resolved from the login when invited; joining matches this id, never the login. */
+  githubUserId: number;
+  /** The login at invite time, for display only. */
+  githubLogin: string;
+  role: "member";
+  invitedBy: InvitedBy | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+/** `POST /api/invitations` 201. `token` is shown once (null in an `Idempotency-Key` replay); the link is `/join#<token>`. */
+export type CreatedInvitation = { invitation: Invitation; token: string | null };
+
+export type InviteError =
+  | "invalid_request"
+  | "invalid_login"
+  | "github_user_not_found"
+  | "already_member"
+  | "github_rate_limited"
+  | "github_unavailable"
+  | "admin_only";
+
+/** `DELETE /api/members/{id}` and `DELETE /api/invitations/{id}` errors. */
+export type RemoveError = "not_found" | "last_admin" | "admin_only";
+
+/** `POST /api/invitations/preview` 200. Only returned to the invited GitHub account. */
+export type InvitationPreview = {
+  tenant: { id: string; name: string };
+  githubLogin: string;
+  role: "member";
+  invitedBy: InvitedBy | null;
+  expiresAt: string;
+  alreadyMember: boolean;
+};
+
+/** `POST /api/invitations/accept` 200. */
+export type JoinedTenant = { tenant: { id: string; name: string }; member: Member };
+
+export type JoinError =
+  | "unauthenticated"
+  | "invalid_request"
+  | "invite_not_found"
+  | "invite_other_account"
+  | "invite_used"
+  | "invite_revoked"
+  | "invite_expired"
+  | "login_taken";
 
 /** POST /api/tenants body. */
 export type CreateTenantRequest = { name: string };

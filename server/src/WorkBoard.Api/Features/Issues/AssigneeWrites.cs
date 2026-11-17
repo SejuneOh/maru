@@ -31,7 +31,7 @@ public static class TenantAssignees
             if (ids.Length == 0)
                 return [];
             var rows = await s.QueryAsync<Row>(
-                "select github_user_id, github_login from members where github_user_id = any(@ids)", new { ids });
+                "select github_user_id, github_login from members where github_user_id = any(@ids) and left_at is null", new { ids });
             return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
         }, ct);
 
@@ -49,7 +49,8 @@ public static class TenantAssignees
                   left join members m on m.github_user_id = x.id
                   left join issue_assignees a on a.issue_id = @issueId and a.github_user_id = x.id
                   left join github_users gu on gu.github_user_id = x.id
-                 where m.github_user_id is not null or (a.github_user_id is not null and gu.login is not null)
+                 where (m.github_user_id is not null and m.left_at is null)
+                    or (a.github_user_id is not null and coalesce(m.github_login, gu.login) is not null)
                 """, new { ids, issueId });
             return rows.Count == ids.Length ? rows.Select(r => (r.GithubUserId, r.GithubLogin)).ToList() : null;
         }, ct);

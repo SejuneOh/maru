@@ -65,11 +65,13 @@ open.MapHealth();
 if (app.Environment.IsDevelopment())
     open.MapDevUsers();
 open.MapTenants();
+open.MapJoin();
 open.MapWebhooks();
 
 var authed = app.MapGroup("/api").AddEndpointFilter<CurrentMemberFilter>();
 authed.MapMe();
 authed.MapMembers();
+authed.MapInvitations();
 authed.MapConnections();
 authed.MapProjects();
 authed.MapIssues();

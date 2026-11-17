@@ -82,7 +82,13 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/dev/users` | none (Development only) | `DevUser[]`, one entry per membership |
 | POST | `/api/tenants` | sign-in only, no membership needed | `201 CreateTenantResult`, see below |
 | GET | `/api/me` | dev user | `Me` |
-| GET | `/api/members` | dev user | `Member[]` (`removedAt` is set for people who left the connected organization) |
+| GET | `/api/members` | dev user | `Member[]`, current members only (`removedAt` is set for people who left the connected organization) |
+| DELETE | `/api/members/{id}` | dev user, admin | `204`, see "Invitations and removal" |
+| GET | `/api/invitations` | dev user, admin | `Invitation[]`, open (not accepted or revoked) newest first, expired included |
+| POST | `/api/invitations` | dev user, admin | `201 CreatedInvitation` |
+| DELETE | `/api/invitations/{id}` | dev user, admin | `204` |
+| POST | `/api/invitations/preview` | sign-in only, no membership needed | `InvitationPreview` |
+| POST | `/api/invitations/accept` | sign-in only, no membership needed | `JoinedTenant` |
 | POST | `/api/github/webhook` | HMAC signature | see "GitHub webhook" |
 | GET | `/api/projects` | dev user | `Project[]` |
 | GET | `/api/projects/done-by-week` | dev user | `DoneByWeek`, see below |
@@ -443,6 +449,52 @@ tenant transaction (no cache). Rules:
 - `activity`: last 3 days, newest first, max 12. A PR event kind is inferred from its current state (merged,
   open with review requested, other open); closed-unmerged PRs are skipped. `actor` is null when the author is not a member.
 
+## Invitations and removal
+
+An admin invites a person by GitHub login; the person joins by opening the link and signing in with that GitHub
+account. Rules:
+
+- `POST /api/invitations` body `{"githubLogin": string}` (`application/json`; a leading `@` and spaces are dropped).
+  The server looks the login up once with `GET https://api.github.com/users/{login}` and stores the numeric GitHub
+  user id; the login is kept for display only and never matched again. The lookup uses an installation token of the
+  company's active connection when the App can mint one (5000 requests an hour), else it is unauthenticated (60 an
+  hour per server IP). Only accounts of type `User` are accepted. The role is always `member`.
+- The invitation expires 7 days after it is made. Inviting someone who already has an open invitation revokes the old
+  one (its link stops working) and makes a new one, so this is also how an admin gets a new link.
+- The response carries `token`, 43 URL-safe characters (32 random bytes). Only its SHA-256 is stored, so the token
+  cannot be shown again; a replay with the same `Idempotency-Key` returns the same invitation with `token: null`.
+  The web builds the link as `{origin}/join#{token}` (fragment, so the token is not sent to the static host).
+- Errors: `403 admin_only`, `400 invalid_request` (not JSON), `400 invalid_login` (not a valid GitHub login),
+  `400 github_user_not_found` (no such user, or an organization or bot), `409 already_member`,
+  `429 github_rate_limited`, `502 github_unavailable`.
+- `DELETE /api/invitations/{id}` revokes an open invitation: `204`, `404 not_found` (unknown, another company's,
+  already accepted or revoked), `403 admin_only`.
+- `POST /api/invitations/preview` and `/accept`, body `{"token": string}`, need a valid sign-in but no membership.
+  Checks, in order: `401 unauthenticated`; `400 invalid_request` (not JSON); `404 invite_not_found` (malformed or
+  unknown token); `403 invite_other_account` (the signed-in GitHub id is not the invited id; nothing else about the
+  invitation is returned); `409 invite_used` (accepted, and the caller is not a current member, e.g. was removed
+  since); `410 invite_revoked`; `410 invite_expired`. The GitHub id comes from the sign-in (the Supabase identity's
+  `provider_id`, same as every other request), never from the invited login.
+- Preview `200 {"tenant": {"id", "name"}, "githubLogin", "role", "invitedBy": {"githubLogin", "displayName"} | null,
+  "expiresAt", "alreadyMember"}`. Accept `200 {"tenant": {"id", "name"}, "member": Member}`; send `X-Tenant` afterwards.
+  Accepting an invitation already accepted by the same, still current member returns the same `200`, so accept takes
+  no `Idempotency-Key`. A person removed earlier gets their old member row back (same id, role from the invitation,
+  login, name and avatar from the sign-in). `409 login_taken` when another member row of the company still holds the
+  login (a renamed and reused GitHub login).
+- `DELETE /api/members/{id}` (admin) removes a member: `204`, `404 not_found` (unknown, another company's, or already
+  removed), `409 last_admin` (the target is the only admin left, so the last admin cannot remove themselves),
+  `403 admin_only` (also when the caller stopped being an admin while the request waited). Admins may remove
+  themselves when another admin remains. The row stays with `left_at` set: the person's next request to this company
+  fails (`403 no_membership` with a bearer token; with other memberships the usual `X-Tenant` rules apply to those only),
+  while notes, audit rows, assignments and comments keep their name. They drop out of `GET /api/members`, the
+  overview people list and new-issue assignees, and cannot be newly assigned. Open invitations they created are
+  revoked in the same transaction. Rejoining needs a new invitation. This is separate from `removedAt` (GitHub
+  organization membership, #35), which changes no access.
+- `audit_log` actions: `invitation.create`, `invitation.revoke` (also for replaced invitations and those revoked with
+  a removed inviter), `member.join` (written by the joining member), `member.remove`. Invite, revoke and remove accept
+  `Idempotency-Key` like other DB-only writes.
+- Development: `X-Dev-User` also accepts a login that has an invitation, so the join can be tried without Supabase.
+
 ## Sync
 
 A background service syncs every tenant with an active connection that has an `installation_id` each
@@ -497,6 +549,18 @@ lease, retries a failure up to 5 times with 30 s steps, and records the outcome 
 ## Shapes
 
 ```ts
+type Invitation = {
+  id: string; githubUserId: number; githubLogin: string; role: "member";
+  invitedBy: { githubLogin: string; displayName: string | null } | null;
+  createdAt: string; expiresAt: string;
+};
+type CreatedInvitation = { invitation: Invitation; token: string | null };
+type InvitationPreview = {
+  tenant: { id: string; name: string }; githubLogin: string; role: "member";
+  invitedBy: { githubLogin: string; displayName: string | null } | null; expiresAt: string; alreadyMember: boolean;
+};
+type JoinedTenant = { tenant: { id: string; name: string }; member: Member };
+
 type OverviewIssueRef = {
   id: string; repositoryName: string; number: number; title: string;
   status: Status; updatedAt: string;

@@ -11,7 +11,13 @@ public sealed class NpgsqlMemberLookup([FromKeyedServices(DataKeys.Sync)] Npgsql
     {
         await using var conn = await syncSource.OpenConnectionAsync(ct);
         var ids = (await conn.QueryAsync<long>(new CommandDefinition(
-            "select distinct github_user_id from members where github_login = @githubLogin limit 2",
+            """
+            select distinct github_user_id from (
+              select github_user_id from members where github_login = @githubLogin
+              union all
+              select github_user_id from invitations where github_login = @githubLogin
+            ) ids limit 2
+            """,
             new { githubLogin }, cancellationToken: ct))).ToList();
         return ids.Count == 1 ? ids[0] : null;
     }
@@ -24,7 +30,7 @@ public sealed class NpgsqlMemberLookup([FromKeyedServices(DataKeys.Sync)] Npgsql
                    m.tenant_id, t.name as tenant_name
               from members m
               join tenants t on t.id = m.tenant_id
-             where m.github_user_id = @githubUserId
+             where m.github_user_id = @githubUserId and m.left_at is null
              order by t.name
             """, new { githubUserId }, cancellationToken: ct));
 
@@ -43,6 +49,7 @@ public sealed class NpgsqlMemberLookup([FromKeyedServices(DataKeys.Sync)] Npgsql
             select m.github_login, m.github_user_id, m.display_name, m.tenant_id, t.name as tenant_name
               from members m
               join tenants t on t.id = m.tenant_id
+             where m.left_at is null
              order by t.name, m.github_login
             """, cancellationToken: ct));
         return rows.Select(r => new DevUser(r.GithubLogin, r.GithubUserId, r.DisplayName, r.TenantId, r.TenantName)).ToList();

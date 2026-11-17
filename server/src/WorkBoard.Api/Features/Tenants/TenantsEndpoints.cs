@@ -45,7 +45,7 @@ public static class TenantsEndpoints
 
     private static IResult Error(int status, string code) => Results.Json(new ErrorBody(code), statusCode: status);
 
-    private static async Task<GithubProfile?> ProfileAsync(
+    internal static async Task<GithubProfile?> ProfileAsync(
         Caller caller, IAuthIdentitySource source, IMemberLookup members, CancellationToken ct)
     {
         if (caller.AuthUserId is { } authUserId)

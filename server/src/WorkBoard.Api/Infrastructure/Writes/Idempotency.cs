@@ -70,8 +70,10 @@ public static class Idempotency
         return Convert.ToHexString(SHA256.HashData(data));
     }
 
+    // storedBody, when given, replaces the body kept for replays (e.g. to leave out a one-time secret).
     public static async Task<IdempotentResponse> RunAsync(
-        TenantSession session, ICurrentUser user, string? key, string requestHash, Func<Task<WriteResult>> run)
+        TenantSession session, ICurrentUser user, string? key, string requestHash, Func<Task<WriteResult>> run,
+        Func<object?, object?>? storedBody = null)
     {
         if (string.IsNullOrWhiteSpace(key))
             return Render(await run());
@@ -87,7 +89,9 @@ public static class Idempotency
 
         await DeleteAsync(session, tenantId, key);
 
-        var result = Render(await run());
+        var written = await run();
+        var result = Render(written);
+        var stored = storedBody is null ? result : Render(written with { Body = storedBody(written.Body) });
         if (result.StatusCode is >= 200 and < 300)
             await session.ExecuteAsync("""
                 insert into idempotency_keys (tenant_id, key, member_id, request_hash, state, status_code, response)
@@ -95,7 +99,7 @@ public static class Idempotency
                 """, new
             {
                 tenantId, key, memberId = user.Identity.Member.Id, requestHash,
-                statusCode = result.StatusCode, response = result.Json,
+                statusCode = result.StatusCode, response = stored.Json,
             });
         return result;
     }
