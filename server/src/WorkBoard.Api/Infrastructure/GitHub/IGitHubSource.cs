@@ -9,8 +9,9 @@ public enum GitHubSourceErrorKind
     GraphQl,
     Unexpected,
 
-    // Token connections: the stored token was rejected by GitHub or lost access (revoked, invalid), or has expired.
+    // Token connections: the stored token was rejected by GitHub (revoked), refused for the organization (invalid), or has expired.
     CredentialRevoked,
+    CredentialInvalid,
     CredentialExpired,
 }
 

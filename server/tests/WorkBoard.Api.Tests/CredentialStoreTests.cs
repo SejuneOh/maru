@@ -261,11 +261,34 @@ public class CredentialStoreTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(Token, await store.OpenAsync(t.Id, t.ConnectionId));
         Assert.Equal(1, await t.ScalarAsync<int>("select key_version from github_credentials where connection_id = @c", new { c = t.ConnectionId }));
 
-        Assert.True(await store.ReencryptAsync() >= 1);
+        Assert.True((await store.ReencryptAsync()).Moved >= 1);
 
         Assert.Equal(2, await t.ScalarAsync<int>("select key_version from github_credentials where connection_id = @c", new { c = t.ConnectionId }));
         keys.Ring = new CredentialKeyring(2, new Dictionary<int, byte[]> { [2] = keys.Ring.Get(2) });
         Assert.Equal(Token, await store.OpenAsync(t.Id, t.ConnectionId));
+    }
+
+    [DbFact]
+    public async Task Reencrypt_skips_a_row_it_cannot_open_and_still_moves_the_others()
+    {
+        await using var good = await TestTenant.CreateAsync(_factory);
+        await using var bad = await TestTenant.CreateAsync(_factory);
+        var key1 = NewKey();
+        var keys = new StaticKeys(new CredentialKeyring(1, new Dictionary<int, byte[]> { [1] = key1 }));
+        var store = Store(keys);
+        await store.SaveAsync(good.Id, good.ConnectionId, await MemberIdAsync(good), Token, [], null);
+        await store.SaveAsync(bad.Id, bad.ConnectionId, await MemberIdAsync(bad), Token, [], null);
+        await bad.ExecAsync("update github_credentials set ciphertext = '\\x00', nonce = '\\x000000000000000000000000' where connection_id = @c",
+            new { c = bad.ConnectionId });
+        keys.Ring = new CredentialKeyring(2, new Dictionary<int, byte[]> { [1] = key1, [2] = NewKey() });
+
+        var result = await store.ReencryptAsync();
+
+        Assert.True(result.Moved >= 1);
+        Assert.True(result.Skipped >= 1);
+        Assert.Equal(2, await good.ScalarAsync<int>("select key_version from github_credentials where connection_id = @c", new { c = good.ConnectionId }));
+        Assert.Equal(1, await bad.ScalarAsync<int>("select key_version from github_credentials where connection_id = @c", new { c = bad.ConnectionId }));
+        Assert.Equal(Token, await store.OpenAsync(good.Id, good.ConnectionId));
     }
 
     [DbFact]

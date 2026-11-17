@@ -436,8 +436,47 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
 
         Assert.True(await store.MarkInvalidAsync(s.T.Id, s.T.ConnectionId, Replacement, "sso_not_authorized"));
         Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+        Assert.False(await store.ReleaseAsync(s.T.Id, s.T.ConnectionId, Replacement, "owner_left_organization"));
+        Assert.True(await store.MarkInvalidAsync(s.T.Id, s.T.ConnectionId, Replacement, "owner_not_member"));
         Assert.True(await store.ReleaseAsync(s.T.Id, s.T.ConnectionId, Replacement, "owner_left_organization"));
         Assert.Equal(0, await CredentialCountAsync(s.T));
+    }
+
+    [DbFact]
+    public async Task A_token_saved_again_as_active_is_not_deleted_by_a_late_release()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        var store = TokenFakes.Store(_factory);
+        var memberId = await s.T.ScalarAsync<Guid>("select id from members where tenant_id = @tid and github_user_id = @u", new { tid = s.T.Id, u = s.UserId });
+        Assert.True(await store.MarkInvalidAsync(s.T.Id, s.T.ConnectionId, TokenFakes.Token, "owner_not_member"));
+
+        await store.SaveAsync(s.T.Id, s.T.ConnectionId, memberId, TokenFakes.Token, [], null);
+
+        Assert.False(await store.ReleaseAsync(s.T.Id, s.T.ConnectionId, TokenFakes.Token, "owner_left_organization"));
+        Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
+    }
+
+    [DbFact]
+    public async Task An_invalid_token_past_its_expiry_becomes_expired_and_writes_say_which_state_it_is_in()
+    {
+        var s = await SetupAsync(DateTimeOffset.UtcNow.AddDays(1));
+        await using var _ = s;
+        await s.T.ExecAsync("update github_credentials set status = 'invalid', invalid_reason = 'sso_not_authorized', expires_at = now() - interval '1 minute' where connection_id = @id",
+            new { id = s.T.ConnectionId });
+        Assert.Equal("expired", (await ConnectionAsync(s)).GetProperty("tokenStatus").GetString());
+
+        await RunSyncAsync(s);
+
+        Assert.Equal("expired", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Equal(0, s.Source.Lists);
+
+        await s.T.ExecAsync("update github_credentials set status = 'invalid', expires_at = null where connection_id = @id", new { id = s.T.ConnectionId });
+        var writer = new GitHubWriter(new HttpClient(new CountingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))), Credentials(),
+            Options.Create(new GitHubAppOptions()));
+        var e = await Assert.ThrowsAsync<GitHubWriteException>(() => writer.CloseIssueAsync(Repo(s.T), 7, IssueCloseReason.Completed, default));
+        Assert.Equal(GitHubWriteErrorKind.CredentialInvalid, e.Kind);
+        Assert.Equal("credential_invalid", ((ErrorBody)GitHubWriteErrors.ToResult(e).Body!).Error);
     }
 
     [DbFact]

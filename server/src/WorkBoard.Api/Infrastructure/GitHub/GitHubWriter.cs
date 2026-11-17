@@ -132,6 +132,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
                     {
                         GitHubSourceErrorKind.Unauthorized => GitHubWriteErrorKind.CredentialMissing,
                         GitHubSourceErrorKind.CredentialRevoked => GitHubWriteErrorKind.CredentialRevoked,
+                        GitHubSourceErrorKind.CredentialInvalid => GitHubWriteErrorKind.CredentialInvalid,
                         GitHubSourceErrorKind.CredentialExpired => GitHubWriteErrorKind.CredentialExpired,
                         _ => GitHubWriteErrorKind.Unavailable,
                     },

@@ -177,7 +177,8 @@ public sealed class SyncRunner(
                             pauseUntil = PauseFor(g);
                         if (e is GitHubSourceException
                             { Kind: GitHubSourceErrorKind.RateLimited or GitHubSourceErrorKind.Unauthorized
-                                or GitHubSourceErrorKind.CredentialRevoked or GitHubSourceErrorKind.CredentialExpired })
+                                or GitHubSourceErrorKind.CredentialRevoked or GitHubSourceErrorKind.CredentialInvalid
+                                or GitHubSourceErrorKind.CredentialExpired })
                             break;
                     }
                 }
@@ -270,6 +271,7 @@ public sealed class SyncRunner(
         var token = target.Token;
 
         if (await github.GetOrganizationByIdAsync(token, connection.AccountId, ct) is { } org
+            && org.Id == connection.AccountId
             && !string.Equals(org.Login, connection.AccountLogin, StringComparison.Ordinal))
             connection = await RefreshLoginAsync(tenantId, connection, org.Login, ct);
 

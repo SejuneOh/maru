@@ -59,7 +59,7 @@ public static class SyncEndpoints
         var tokens = (await conn.QueryAsync<TokenHealthStatus>(new CommandDefinition("""
             select c.id as ConnectionId, c.account_login as AccountLogin,
                    case when k.status is null then 'token_required'
-                        when k.status = 'active' and k.expires_at <= now() then 'expired'
+                        when k.status in ('active', 'invalid') and k.expires_at <= now() then 'expired'
                         else k.status end as TokenStatus,
                    k.expires_at as TokenExpiresAt,
                    coalesce(k.status = 'active' and k.expires_at > now() and k.expires_at <= now() + interval '7 days', false) as TokenExpiresSoon,

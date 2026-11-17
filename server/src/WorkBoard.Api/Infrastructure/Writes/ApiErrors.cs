@@ -14,6 +14,7 @@ public static class ApiErrors
     public const string RequestInProgress = "request_in_progress";
     public const string CredentialMissing = "credential_missing";
     public const string CredentialRevoked = "credential_revoked";
+    public const string CredentialInvalid = "credential_invalid";
     public const string CredentialExpired = "credential_expired";
     public const string GithubUnavailable = "github_unavailable";
     public const string GithubWriteNotGranted = "github_write_not_granted";

@@ -24,7 +24,8 @@ public sealed class GitHubCredentials(
             throw state?.Status switch
             {
                 "expired" => new GitHubSourceException(GitHubSourceErrorKind.CredentialExpired, "The stored token has expired."),
-                "revoked" or "invalid" => new GitHubSourceException(GitHubSourceErrorKind.CredentialRevoked, "The stored token was rejected by GitHub."),
+                "revoked" => new GitHubSourceException(GitHubSourceErrorKind.CredentialRevoked, "The stored token was rejected by GitHub."),
+                "invalid" => new GitHubSourceException(GitHubSourceErrorKind.CredentialInvalid, "GitHub refuses the stored token for the organization."),
                 _ => new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential."),
             };
         }

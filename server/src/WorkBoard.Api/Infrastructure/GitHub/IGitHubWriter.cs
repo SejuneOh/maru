@@ -14,6 +14,9 @@ public enum GitHubWriteErrorKind
     // The stored token was rejected by GitHub (401) or lost access to the organization; it has to be replaced.
     CredentialRevoked,
 
+    // GitHub refuses the stored token for the organization (SSO not authorized, owner not a member); it has to be replaced.
+    CredentialInvalid,
+
     // The stored token's expiry has passed; it has to be replaced.
     CredentialExpired,
 }

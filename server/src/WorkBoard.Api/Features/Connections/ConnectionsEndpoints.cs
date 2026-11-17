@@ -41,7 +41,7 @@ public static class ConnectionsEndpoints
         c.auth_kind, k.last4 as token_last4, k.owner_login as token_owner_login, k.expires_at as token_expires_at,
         case when c.auth_kind = 'token' then
           case when k.status is null then 'token_required'
-               when k.status = 'active' and k.expires_at <= now() then 'expired'
+               when k.status in ('active', 'invalid') and k.expires_at <= now() then 'expired'
                else k.status end
         end as token_status,
         coalesce(k.status = 'active' and k.expires_at > now() and k.expires_at <= now() + interval '7 days', false) as token_expires_soon,

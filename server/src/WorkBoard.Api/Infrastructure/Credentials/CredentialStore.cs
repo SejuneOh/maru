@@ -11,7 +11,8 @@ namespace WorkBoard.Api.Infrastructure.Credentials;
 // The role bypasses RLS, so every statement filters on tenant_id itself.
 public sealed class CredentialStore(
     [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync,
-    CredentialCipher cipher)
+    CredentialCipher cipher,
+    ILogger<CredentialStore>? logger = null)
 {
     private sealed record Row(byte[] Ciphertext, byte[] Nonce, int KeyVersion);
 
@@ -85,7 +86,7 @@ public sealed class CredentialStore(
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<CredentialState>(new CommandDefinition("""
-            select case when status = 'active' and expires_at <= now() then 'expired' else status end as Status,
+            select case when status in ('active', 'invalid') and expires_at <= now() then 'expired' else status end as Status,
                    expires_at as ExpiresAt
               from github_credentials where tenant_id = @tenantId and connection_id = @connectionId
             """, new { tenantId, connectionId }, cancellationToken: ct));
@@ -176,14 +177,14 @@ public sealed class CredentialStore(
             : null;
     }
 
-    // Marks every active credential of the company whose expires_at has passed as expired; returns how many.
+    // Marks every active or invalid credential of the company whose expires_at has passed as expired; returns how many.
     public async Task<int> ExpireDueAsync(Guid tenantId, CancellationToken ct = default)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         var due = (await conn.QueryAsync<Guid>(new CommandDefinition("""
             select connection_id from github_credentials
-             where tenant_id = @tenantId and status = 'active' and expires_at <= now() for update
+             where tenant_id = @tenantId and status in ('active', 'invalid') and expires_at <= now() for update
             """, new { tenantId }, tx, cancellationToken: ct))).AsList();
         foreach (var connectionId in due)
             await TransitionAsync(conn, tx, tenantId, connectionId, "expired", "connection.token_expired", "expires_at_passed", ct);
@@ -192,13 +193,15 @@ public sealed class CredentialStore(
     }
 
     // Deletes the credential, leaving the connection without a token ("token needed"), but only while it still holds
-    // checkedToken. Returns whether it was deleted.
+    // checkedToken and is still invalid because the owner was not a member. A token saved again as active is kept.
+    // Returns whether it was deleted.
     public async Task<bool> ReleaseAsync(
         Guid tenantId, Guid connectionId, string checkedToken, string reason, CancellationToken ct = default)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, checkedToken, ct) is null)
+        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, checkedToken, ct)
+            is not { Status: "invalid", InvalidReason: "owner_not_member" or "owner_not_active" })
             return false;
         var released = (await conn.QueryAsync<Released>(new CommandDefinition("""
             delete from github_credentials
@@ -264,31 +267,50 @@ public sealed class CredentialStore(
             """, new { tenantId, action, connectionId, after = JsonSerializer.Serialize(after, JsonSerializerOptions.Web) },
             tx, cancellationToken: ct));
 
-    // Seals every row that is not on the current key version again; returns how many rows changed.
-    public async Task<int> ReencryptAsync(CancellationToken ct = default)
+    public sealed record ReencryptResult(int Moved, int Skipped);
+
+    // Seals every row that is not on the current key version again. Each row is handled in its own transaction: a row
+    // that cannot be opened (unknown key version, wrong key, malformed bytes) is skipped and counted, never fatal.
+    public async Task<ReencryptResult> ReencryptAsync(CancellationToken ct = default)
     {
         var current = cipher.CurrentKeyVersion;
         await using var conn = await sync.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var rows = (await conn.QueryAsync<(Guid TenantId, Guid ConnectionId, byte[] Ciphertext, byte[] Nonce, int KeyVersion)>(
-            new CommandDefinition("""
-                select tenant_id, connection_id, ciphertext, nonce, key_version from github_credentials
-                 where key_version <> @current for update
-                """, new { current }, tx, cancellationToken: ct))).AsList();
-        foreach (var r in rows)
+        var candidates = (await conn.QueryAsync<(Guid TenantId, Guid ConnectionId)>(new CommandDefinition(
+            "select tenant_id, connection_id from github_credentials where key_version <> @current",
+            new { current }, cancellationToken: ct))).AsList();
+
+        int moved = 0, skipped = 0;
+        foreach (var (tenantId, connectionId) in candidates)
         {
-            var token = cipher.Open(new SealedCredential(r.Ciphertext, r.Nonce, r.KeyVersion), r.TenantId, r.ConnectionId);
-            var resealed = cipher.Seal(token, r.TenantId, r.ConnectionId);
-            await conn.ExecuteAsync(new CommandDefinition("""
-                update github_credentials set ciphertext = @ciphertext, nonce = @nonce, key_version = @keyVersion
-                 where tenant_id = @tenantId and connection_id = @connectionId
-                """, new
+            await using var tx = await conn.BeginTransactionAsync(ct);
+            var r = await conn.QuerySingleOrDefaultAsync<(byte[] Ciphertext, byte[] Nonce, int KeyVersion)?>(new CommandDefinition("""
+                select ciphertext, nonce, key_version from github_credentials
+                 where tenant_id = @tenantId and connection_id = @connectionId and key_version <> @current for update
+                """, new { tenantId, connectionId, current }, tx, cancellationToken: ct));
+            if (r is not { } row)
+                continue;
+            try
             {
-                tenantId = r.TenantId, connectionId = r.ConnectionId, ciphertext = resealed.Ciphertext,
-                nonce = resealed.Nonce, keyVersion = resealed.KeyVersion,
-            }, tx, cancellationToken: ct));
+                var token = cipher.Open(new SealedCredential(row.Ciphertext, row.Nonce, row.KeyVersion), tenantId, connectionId);
+                var resealed = cipher.Seal(token, tenantId, connectionId);
+                await conn.ExecuteAsync(new CommandDefinition("""
+                    update github_credentials set ciphertext = @ciphertext, nonce = @nonce, key_version = @keyVersion
+                     where tenant_id = @tenantId and connection_id = @connectionId
+                    """, new
+                {
+                    tenantId, connectionId, ciphertext = resealed.Ciphertext, nonce = resealed.Nonce, keyVersion = resealed.KeyVersion,
+                }, tx, cancellationToken: ct));
+                await tx.CommitAsync(ct);
+                moved++;
+            }
+            catch (Exception e) when (e is CredentialException or CredentialKeyException)
+            {
+                await tx.RollbackAsync(ct);
+                skipped++;
+                logger?.LogWarning("Credential of connection {ConnectionId} (tenant {TenantId}, key version {KeyVersion}) could not be re-encrypted: {Kind}",
+                    connectionId, tenantId, row.KeyVersion, e.GetType().Name);
+            }
         }
-        await tx.CommitAsync(ct);
-        return rows.Count;
+        return new ReencryptResult(moved, skipped);
     }
 }

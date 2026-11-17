@@ -41,7 +41,8 @@ Write endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) use these standard codes, alw
 | 504 | `github_unavailable` | the GitHub call got no answer: network error, the client's own 30 second timeout, or the 60 second call limit |
 | 403 | `github_write_not_granted` | the GitHub App lacks the permission the write needs (GitHub answered 403 with a permission message; a rate-limit or other 403 is `github_unavailable`) |
 | 409 | `credential_missing` | a token connection has no stored token (token needed) |
-| 409 | `credential_revoked` | a token connection's token was rejected by GitHub (401) or GitHub refuses it for the organization; replace it |
+| 409 | `credential_revoked` | a token connection's token was rejected by GitHub (401); replace it |
+| 409 | `credential_invalid` | GitHub refuses a token connection's token for the organization (SAML SSO not authorized, owner not a member); replace it |
 | 409 | `credential_expired` | a token connection's token has passed its expiry; replace it |
 | 409 | `field_disabled` | priority or size is switched off for the tenant |
 | 409 | `repository_archived` | the write would call GitHub on an archived repository |
@@ -204,7 +205,7 @@ Transitions (each writes an `audit_log` row without a member and without token t
 
 | From | Trigger | To | `audit_log` action |
 | --- | --- | --- | --- |
-| `active` | `expires_at` passed (checked at the start of every sync run) | `expired` | `connection.token_expired` |
+| `active`, `invalid` | `expires_at` passed (checked at the start of every sync run) | `expired` | `connection.token_expired` |
 | `active` | GitHub answered 401 for that token (sync, write, organization import, or the owner check), no retry | `revoked` | `connection.token_revoked` |
 | `active` | the owner check finds the organization refuses the token (SAML SSO not authorized, policy), or the owner is not a member (404) or not an active member (`state` other than `active`) for the first time | `invalid` (token kept) | `connection.token_invalid` (reason `sso_not_authorized`, `org_access_denied`, `owner_not_member`, `owner_not_active`) |
 | `invalid` | the next owner check passes | `active` | `connection.token_recovered` |
@@ -219,7 +220,7 @@ losing membership needs two checks in a row for the same token (the checks run o
 run, and a passing check in between resets the count). Before the membership question the organization is looked up
 by its stored id (`GET /organizations/{id}`); a changed login updates `account_login` (`connection.org_renamed`). Syncing skips a token
 connection unless its token is `active` and unexpired, so a stopped connection makes no GitHub call and no `sync_runs`
-row. Writes answer `credential_missing`, `credential_revoked` (also for `invalid`) or `credential_expired`. Selected
+row. Writes answer `credential_missing`, `credential_revoked`, `credential_invalid` or `credential_expired`. Selected
 repositories and mirrored data are kept. Handover: another admin replaces the token with `PUT`; the same checks run for
 the replacing admin (`403 not_your_account` unless the token belongs to them), and the connection syncs again at the
 next run, with the rate-limit pause cleared. The #40 organization webhooks do not reach token connections, so owner
