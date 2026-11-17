@@ -347,6 +347,24 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
+    public async Task Installation_deleted_also_deletes_the_stored_credential_of_the_connection()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var installation = await InstallAsync(t);
+        var (admin, _) = await t.AddMemberAsync("admin");
+        await t.ExecAsync("update members set role = 'admin' where tenant_id = @tid and github_login = @admin", new { tid = t.Id, admin });
+        await t.ExecAsync("insert into github_credentials (tenant_id, connection_id, owner_member_id, ciphertext, nonce, key_version) " +
+                          "select @tid, @cid, id, '\\x00', '\\x000000000000000000000000', 1 from members where tenant_id = @tid and github_login = @admin",
+            new { tid = t.Id, cid = t.ConnectionId, admin });
+        var (client, host) = Host(login: admin);
+
+        await PostAsync(client, "installation", new { action = "deleted", installation = new { id = installation } });
+        await DrainAsync(host);
+
+        Assert.Equal(0, await t.ScalarAsync<int>("select count(*)::int from github_credentials where connection_id = @cid", new { cid = t.ConnectionId }));
+    }
+
+    [DbFact]
     public async Task Repository_events_of_a_disconnected_installation_are_ignored()
     {
         await using var t = await TestTenant.CreateAsync(_factory);

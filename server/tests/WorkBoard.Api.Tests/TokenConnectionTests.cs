@@ -29,14 +29,17 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
         public OrgAccess? Access { get; set; }
         public Exception? Throw { get; set; }
         public List<string> OrgCalls { get; } = [];
+        public Func<Task>? DuringOrgAccess { get; set; }
 
         public Task<TokenIdentity?> GetIdentityAsync(string token, CancellationToken ct) =>
             Throw is { } e ? Task.FromException<TokenIdentity?>(e) : Task.FromResult(Identity);
 
-        public Task<OrgAccess?> GetOrganizationAccessAsync(string token, string organization, CancellationToken ct)
+        public async Task<OrgAccess?> GetOrganizationAccessAsync(string token, string organization, CancellationToken ct)
         {
             OrgCalls.Add(organization);
-            return Task.FromResult(Access);
+            if (DuringOrgAccess is { } hook)
+                await hook();
+            return Access;
         }
     }
 
@@ -187,6 +190,62 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("unsupported_token", await ErrorAsync(response));
+    }
+
+    [DbTheory]
+    [InlineData("gho_0123456789abcdefghijklmnopqrstuvwxyz")]
+    [InlineData("ghu_0123456789abcdefghijklmnopqrstuvwxyz")]
+    [InlineData("ghs_0123456789abcdefghijklmnopqrstuvwxyz")]
+    [InlineData("ghr_0123456789abcdefghijklmnopqrstuvwxyz")]
+    public async Task Tokens_that_are_not_classic_or_fine_grained_pats_are_unsupported(string token)
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (login, userId) = await AdminAsync(t);
+        var fake = Fake(userId, login, "acme", TestTenant.NextId());
+
+        var response = await PostAsync(Client(fake, login), token, "acme");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("unsupported_token", await ErrorAsync(response));
+        Assert.Empty(fake.OrgCalls);
+    }
+
+    [DbFact]
+    public async Task A_delete_between_verification_and_save_leaves_no_token_on_the_disconnected_connection()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (login, userId) = await AdminAsync(t);
+        var orgId = TestTenant.NextId();
+        var fake = Fake(userId, login, "acme", orgId);
+        var client = Client(fake, login);
+        var id = (await JsonAsync(await PostAsync(client, Classic, "acme"))).GetProperty("id").GetGuid();
+        fake.DuringOrgAccess = async () =>
+        {
+            fake.DuringOrgAccess = null;
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/connections/{id}/github-token")).StatusCode);
+        };
+
+        var response = await client.PutAsJsonAsync($"/api/connections/{id}/github-token", new { token = Replacement });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, await t.ScalarAsync<int>("select count(*)::int from github_credentials where connection_id = @id", new { id }));
+    }
+
+    [DbFact]
+    public async Task Replace_and_delete_of_another_companys_connection_are_404()
+    {
+        await using var other = await TestTenant.CreateAsync(_factory);
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (otherLogin, otherUser) = await AdminAsync(other);
+        var (login, userId) = await AdminAsync(t);
+        var otherClient = Client(Fake(otherUser, otherLogin, "acme-o", TestTenant.NextId()), otherLogin);
+        var foreign = (await JsonAsync(await PostAsync(otherClient, Classic, "acme-o"))).GetProperty("id").GetGuid();
+        var client = Client(Fake(userId, login, "acme-o", TestTenant.NextId()), login);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync($"/api/connections/{foreign}/github-token", new { token = Replacement })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/connections/{foreign}/github-token")).StatusCode);
+        Assert.Equal(1, await other.ScalarAsync<int>("select count(*)::int from github_credentials where connection_id = @foreign", new { foreign }));
+        Assert.True(await other.ScalarAsync<bool>("select disconnected_at is null from github_connections where id = @foreign", new { foreign }));
     }
 
     [DbFact]
@@ -524,12 +583,18 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
         var issue = await t.AddIssueAsync(repo);
         await t.ExecAsync("insert into github_users (tenant_id, github_user_id, login) values (@tid, @ownerId, @owner)", new { tid = t.Id, ownerId, owner });
         await t.ExecAsync("update issues set author_github_id = @ownerId, body = @body where id = @issue",
-            new { ownerId, issue, body = "hello" + GitHubWriter.Footer("carol") });
+            new { ownerId, issue, body = "hello" + GitHubWriter.Footer("carol") + "\n" + GitHubWriter.CreateMarker("abc") });
         using var client = _factory.CreateClient().WithDevUser(t.ViewerLogin);
 
         var detail = await client.GetFromJsonAsync<JsonElement>($"/api/issues/{issue}");
 
         Assert.Equal("hello", detail.GetProperty("body").GetString());
+
+        var plain = await t.AddIssueAsync(repo);
+        var typed = "hi" + GitHubWriter.Footer("carol");
+        await t.ExecAsync("update issues set author_github_id = @ownerId, body = @typed where id = @plain", new { ownerId, plain, typed });
+        var untouched = await client.GetFromJsonAsync<JsonElement>($"/api/issues/{plain}");
+        Assert.Equal(typed, untouched.GetProperty("body").GetString());
     }
 
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

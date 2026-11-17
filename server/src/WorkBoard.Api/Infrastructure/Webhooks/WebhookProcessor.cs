@@ -182,9 +182,13 @@ public sealed class WebhookProcessor(
     private static async Task<string> DisconnectAsync(NpgsqlConnection conn, long? installationId, CancellationToken ct)
     {
         var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
-            update github_connections set disconnected_at = now()
-             where installation_id = @installationId and disconnected_at is null
-            returning tenant_id
+            with gone as (
+              update github_connections set disconnected_at = now()
+               where installation_id = @installationId and disconnected_at is null
+              returning id, tenant_id),
+            dropped as (
+              delete from github_credentials k using gone g where k.tenant_id = g.tenant_id and k.connection_id = g.id)
+            select tenant_id from gone
             """, new { installationId }, cancellationToken: ct))).AsList();
         await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
         return tenants.Count > 0 ? "disconnected" : "ignored: unknown_installation";

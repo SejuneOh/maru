@@ -20,7 +20,8 @@ public static class IssueDetailQueries
               left join github_users gu on gu.github_user_id = i.author_github_id
              where i.id = @id
             """, new { id });
-        var body = bodyRow?.Body is { } raw && WroteForBoard(app, bodyRow.AuthorLogin, bodyRow.TokenOwnerLogin) && BoardFooter.Strip(raw) is { } own
+        var body = bodyRow?.Body is { } raw && BoardFooter.Strip(raw) is { } own
+                   && WroteForBoard(app, bodyRow.AuthorLogin, bodyRow.TokenOwnerLogin, own.HasMarker)
             ? own.Body
             : bodyRow?.Body;
 
@@ -97,8 +98,9 @@ public static class IssueDetailQueries
     private static async Task<List<CommentDto>> CommentsAsync(TenantSession s, IEnumerable<CommentRow> rows, GitHubAppOptions app)
     {
         var all = rows
-            .Select(r => (Row: r, Own: (r.GithubLogin is null && app.IsBot(r.AuthorLogin))
-                                       || IsTokenOwner(r.AuthorLogin, r.TokenOwnerLogin)
+            .Select(r => (Row: r, Own: BoardFooter.Strip(r.Body) is { } own
+                                       && ((r.GithubLogin is null && app.IsBot(r.AuthorLogin))
+                                           || (own.HasMarker && IsTokenOwner(r.AuthorLogin, r.TokenOwnerLogin)))
                 ? BoardFooter.Strip(r.Body)
                 : null))
             .ToList();
@@ -115,9 +117,9 @@ public static class IssueDetailQueries
             .ToList();
     }
 
-    // The App's bot wrote it, or the token owner of a token connection did.
-    private static bool WroteForBoard(GitHubAppOptions app, string? author, string? tokenOwner) =>
-        app.IsBot(author) || IsTokenOwner(author, tokenOwner);
+    // The App's bot wrote it, or the token owner of a token connection did through the board (marker present).
+    private static bool WroteForBoard(GitHubAppOptions app, string? author, string? tokenOwner, bool hasMarker) =>
+        app.IsBot(author) || (hasMarker && IsTokenOwner(author, tokenOwner));
 
     private static bool IsTokenOwner(string? author, string? tokenOwner) =>
         tokenOwner is not null && string.Equals(author, tokenOwner, StringComparison.OrdinalIgnoreCase);

@@ -112,7 +112,8 @@ public static class ConnectGithubToken
 
         try
         {
-            await store.SaveAsync(caller.TenantId, id, caller.Member.Id, token, v.Scopes, v.ExpiresAt, ct, v.OwnerLogin);
+            if (!await ReplaceStoredAsync(sync, store, caller.TenantId, caller.Member.Id, connection, token, v, ct))
+                return ConnectGithub.Error(StatusCodes.Status404NotFound, ApiErrors.NotFound);
         }
         catch (Exception e) when (e is CredentialKeyException or CredentialException)
         {
@@ -178,6 +179,8 @@ public static class ConnectGithubToken
     private static async Task<(Verified? Value, Failure? Failure)> VerifyAsync(
         IGitHubTokenClient github, string token, string organization, long callerGithubUserId, CancellationToken ct)
     {
+        if (!token.StartsWith("ghp_", StringComparison.Ordinal) && !token.StartsWith(FineGrainedPrefix, StringComparison.Ordinal))
+            return (null, new Failure(StatusCodes.Status400BadRequest, "unsupported_token"));
         try
         {
             var identity = await github.GetIdentityAsync(token, ct);
@@ -261,6 +264,26 @@ public static class ConnectGithubToken
         {
             return null;
         }
+    }
+
+    // Re-checks under a row lock that the connection is still the active token connection of that account: a delete
+    // that ran while the token was being verified must not get a new token.
+    private static async Task<bool> ReplaceStoredAsync(
+        NpgsqlDataSource sync, CredentialStore store, Guid tenantId, Guid memberId, TokenConnection connection, string token,
+        Verified v, CancellationToken ct)
+    {
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        var locked = await conn.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition("""
+            select id from github_connections
+             where tenant_id = @tenantId and id = @id and auth_kind = 'token' and account_id = @accountId and disconnected_at is null
+               for update
+            """, new { tenantId, connection.Id, connection.AccountId }, tx, cancellationToken: ct));
+        if (locked is null)
+            return false;
+        await store.SaveAsync(conn, tx, tenantId, connection.Id, memberId, token, v.Scopes, v.ExpiresAt, v.OwnerLogin, ct);
+        await tx.CommitAsync(ct);
+        return true;
     }
 
     private static async Task<TokenConnection?> FindActiveAsync(NpgsqlDataSource sync, Guid tenantId, Guid id, CancellationToken ct)

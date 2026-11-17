@@ -174,6 +174,10 @@ printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.con
 - 검증 순서: 토큰 소유자(`GET /user`)가 로그인한 본인과 같은 GitHub 사용자인지 → 클래식 토큰이면 스코프(`repo`, `read:org`만 허용, `admin:org`·`delete_repo` 같은 넓은 스코프는 거부) → 만료일 → 조직 멤버십이 `active`인지와 조직 저장소 목록 접근. SAML SSO 승인이 안 된 토큰은 `sso_not_authorized`와 승인 링크를 돌려줍니다.
 - 토큰은 암호화해 저장하고 응답, 로그, `audit_log`에는 마지막 4자만 남습니다. 키 파일이 없으면 등록은 `503 credential_store_not_configured`로 끝납니다.
 - 토큰 연결은 `store_bodies = false`로 만들어 이슈와 댓글 본문을 미러에 저장하지 않습니다. 읽기(동기화)와 쓰기 모두 연결의 `auth_kind`로 인증하고, 웹훅은 오지 않으므로 주기 동기화에 의존합니다.
+- 받는 토큰은 클래식 `ghp_`와 fine-grained `github_pat_`뿐입니다. OAuth 앱(`gho_`)과 앱 사용자·설치·갱신 토큰(`ghu_`, `ghs_`, `ghr_`)은 `unsupported_token`으로 거부합니다.
+- fine-grained 토큰의 권한은 응답 헤더로 읽을 수 없어서 서버는 권한이 과한 fine-grained 토큰을 거부하지 못합니다. 최소 권한(Contents 읽기, Issues 읽기·쓰기, Metadata 읽기, Members 읽기)만 주도록 안내하세요. 클래식 토큰만 스코프로 걸러냅니다.
+- 같은 조직을 App과 토큰으로 동시에 연결할 수 없습니다. 토큰으로 연결된 계정에 App을 설치해 연결하려 하면 `409 account_connected`입니다(반대 방향도 같습니다). 연결이 해제되면(토큰 삭제, App 제거 웹훅) 그 연결의 저장 토큰 행도 함께 지웁니다.
+- 다른 관리자가 토큰을 교체하면 이후 GitHub 쓰기는 그 관리자 이름으로 보입니다. 교체는 소유자 확인을 다시 거치고, 확인과 저장 사이에 연결이 해제됐으면 `404 not_found`입니다.
 - 토큰으로 쓴 글은 GitHub에서 토큰 소유자 이름으로 보입니다. 다른 구성원이 한 일이면 본문 끝 "작성: @구성원" 줄이 그대로 붙습니다. 재시도 때 중복 확인은 App 봇 대신 토큰 소유자 로그인을 봅니다.
 
 ### 테스트 조직용 토큰 만들기

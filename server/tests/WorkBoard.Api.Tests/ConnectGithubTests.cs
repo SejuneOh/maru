@@ -109,6 +109,23 @@ public class ConnectGithubTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
+    public async Task App_install_for_an_account_connected_with_a_token_is_a_conflict()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, installationId, accountId) = await AdminAsync(tenant);
+        await tenant.ExecAsync("update github_connections set account_id = @accountId, auth_kind = 'token', store_bodies = false where id = @id",
+            new { accountId, id = tenant.ConnectionId });
+
+        var response = await PostAsync(Client(fake, login), installationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("account_connected", await ErrorAsync(response));
+        var row = Assert.Single(await tenant.QueryAsync("select auth_kind, installation_id from github_connections where id = @id", new { id = tenant.ConnectionId }));
+        Assert.Equal("token", (string)row.auth_kind);
+        Assert.Null((object?)row.installation_id);
+    }
+
+    [DbFact]
     public async Task Admin_connects_personal_account_and_the_row_is_stored()
     {
         await using var tenant = await TestTenant.CreateAsync(_factory);

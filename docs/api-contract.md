@@ -165,7 +165,7 @@ show `tokenLast4`. The server checks, in order: `GET /user` (the id must equal t
 classic token (`X-OAuth-Scopes`: scopes other than `repo`, `read:org`, `public_repo`, `read:user`, `user:email` are
 refused), the expiry (`github-authentication-token-expiration`, stored as `tokenExpiresAt`), then
 `GET /user/memberships/orgs/{org}` (state `active`) and `GET /orgs/{org}/repos` (SAML SSO shows as a 403 with the
-`X-GitHub-SSO` header). A token without `X-OAuth-Scopes` must start with `github_pat_`. The connection is created with
+`X-GitHub-SSO` header). Only `ghp_` (classic, with the scopes header) and `github_pat_` (fine-grained) tokens are accepted; `gho_`, `ghu_`, `ghs_`, `ghr_` are `unsupported_token`. The permissions of a fine-grained token cannot be read, so an over-privileged one is not refused. The connection is created with
 `authKind: "token"`, no installation id and `store_bodies = false` (issue and comment text is not mirrored). The
 organization's members are not imported.
 `PUT /api/connections/{id}/github-token` takes `{"token": ...}`, repeats the checks for the connection's organization
@@ -173,7 +173,7 @@ and replaces the stored token. `DELETE` sets `disconnectedAt` and deletes the to
 Errors: `400 invalid_request`, `400 invalid_token` (rejected or expired), `400 unsupported_token`, `403 admin_only`,
 `403 not_your_account`, `403 not_org_member`, `403 org_membership_inactive`, `403 org_access_denied`,
 `403 sso_not_authorized` (also `ssoUrl`), `404 not_found` (PUT and DELETE: not an active token connection of the
-company), `409 account_connected` (active anywhere, this company included), `422 token_scope_too_broad` (also
+company), `409 account_connected` (active anywhere, this company included; `POST /api/connections/github` answers the same for an account connected with a token), `422 token_scope_too_broad` (also
 `scopes`), `422 token_scope_missing` (also `missing`), `422 organization_mismatch` (PUT: the token reaches another
 organization), `502 github_unavailable`, `503 credential_store_not_configured` (no usable key file).
 `audit_log` actions: `connection.token_connect`, `connection.token_replace`, `connection.token_delete`,
