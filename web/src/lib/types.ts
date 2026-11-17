@@ -172,15 +172,17 @@ export type ImportOrganizationRequest = {
   teamProjects?: string[];
 };
 
-export type ImportedProject = { id: string; name: string; repositoryCount: number; created: boolean };
+export type ImportedProject = { id: string; name: string; repositoryCount: number };
+
+/** A team that got no project: no selected repository, or a project with that name exists already. */
+export type SkippedTeam = { slug: string; reason: "no_selected_repositories" | "name_taken" };
 
 export type ImportOrganizationResult = {
   selected: number;
   /** Repositories that were selected before and are not any more. */
   deselected: number;
   projects: ImportedProject[];
-  /** Teams with no selected repository. */
-  skippedTeams: string[];
+  skippedTeams: SkippedTeam[];
   membersReferenced: number;
 };
 

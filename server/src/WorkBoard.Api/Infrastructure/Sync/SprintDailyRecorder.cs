@@ -46,7 +46,7 @@ public sealed class SprintDailyRecorder(
               left join (select bf.tenant_id, bf.sprint_id, bf.issue_id as id, st.status,
                                 case bf.size when 'M' then 2 when 'L' then 3 else 1 end as weight
                            from board_fields bf
-                           join issue_status st on st.tenant_id = bf.tenant_id and st.issue_id = bf.issue_id) i
+                           join issue_status_all st on st.tenant_id = bf.tenant_id and st.issue_id = bf.issue_id) i
                      on i.tenant_id = sp.tenant_id and i.sprint_id = sp.id
              where (@tenantId::uuid is null or sp.tenant_id = @tenantId::uuid)
                and sp.state <> 'closed' and sp.start_date <= @day and sp.end_date >= @day

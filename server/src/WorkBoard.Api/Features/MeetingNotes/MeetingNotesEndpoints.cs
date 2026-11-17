@@ -213,7 +213,7 @@ public static class MeetingNotesEndpoints
             ToMember(a.MemberId, a.GithubUserId, a.GithubLogin, a.DisplayName, a.AvatarUrl, a.Role),
             a.DueDate is { } due ? DateOnly.Parse(due) : null,
             a.IssueId is { } issueId
-                ? new ActionItemIssue(issueId, a.IssueNumber ?? 0, a.RepositoryName ?? "", a.IssueStatus ?? "todo",
+                ? new ActionItemIssue(issueId, a.IssueNumber ?? 0, a.RepositoryName ?? "", a.IssueStatus ?? (a.IssueState == "closed" ? "done" : "todo"),
                     a.IssueState ?? "open", a.IssueHtmlUrl)
                 : null,
             a.IssueId is null && a.ClaimNumber is { } number

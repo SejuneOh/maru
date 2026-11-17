@@ -34,12 +34,14 @@ public sealed record OrganizationPreview(
     PreviewCounts Counts,
     PreviewTruncated Truncated);
 
-public sealed record ImportedProject(Guid Id, string Name, int RepositoryCount, bool Created);
+public sealed record ImportedProject(Guid Id, string Name, int RepositoryCount);
+
+public sealed record SkippedTeam(string Slug, string Reason);
 
 public sealed record SelectionResult(int Selected, int Deselected);
 
 public sealed record ImportResult(
-    int Selected, int Deselected, IReadOnlyList<ImportedProject> Projects, IReadOnlyList<string> SkippedTeams, int MembersReferenced);
+    int Selected, int Deselected, IReadOnlyList<ImportedProject> Projects, IReadOnlyList<SkippedTeam> SkippedTeams, int MembersReferenced);
 
 // Preview and import of a token-connected organization. Only repositories chosen here are synced (repositories.sync_enabled).
 // Members are written as github_users reference rows only; nobody becomes a board member. Secrets, billing, webhooks,
@@ -55,6 +57,8 @@ public static class OrganizationImport
     public const string UnknownRepository = "unknown_repository";
     public const string UnknownTeam = "unknown_team";
     public const string GithubRateLimited = "github_rate_limited";
+    public const string NoSelectedRepositories = "no_selected_repositories";
+    public const string NameTaken = "name_taken";
 
     public static void MapOrganizationImport(this RouteGroupBuilder api)
     {
@@ -87,6 +91,7 @@ public static class OrganizationImport
         GitHubSourceException { Kind: GitHubSourceErrorKind.Unauthorized } =>
             ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialMissing),
         GitHubSourceException or HttpRequestException => ApiErrors.GithubUnavailableResult(),
+        TaskCanceledException => ApiErrors.GithubUnavailableResult(),
         _ => null,
     };
 
@@ -123,7 +128,7 @@ public static class OrganizationImport
                  where tenant_id = @tenantId and connection_id = @id and sync_enabled
                 """, new { tenantId = caller.TenantId, id }, cancellationToken: ct))).ToHashSet();
             var onBoard = (await conn.QueryAsync<long>(new CommandDefinition("""
-                select github_user_id from members where tenant_id = @tenantId and removed_at is null
+                select github_user_id from members where tenant_id = @tenantId and removed_at is null and left_at is null
                 """, new { tenantId = caller.TenantId }, cancellationToken: ct))).ToHashSet();
 
             var preview = new OrganizationPreview(
@@ -201,16 +206,19 @@ public static class OrganizationImport
                 return ApiErrors.NotFoundResult();
             var result = await SelectAsync(conn, tx, caller.TenantId, id, ids, ct);
             var projects = new List<ImportedProject>();
-            var skipped = new List<string>();
+            var skipped = new List<SkippedTeam>();
             foreach (var (team, teamIds) in chosen)
             {
                 var inTeam = ids.Where(teamIds.Contains).ToArray();
                 if (inTeam.Length == 0)
                 {
-                    skipped.Add(team.Slug);
+                    skipped.Add(new SkippedTeam(team.Slug, NoSelectedRepositories));
                     continue;
                 }
-                projects.Add(await UpsertProjectAsync(conn, tx, caller.TenantId, id, team.Name, inTeam, ct));
+                if (await CreateProjectAsync(conn, tx, caller.TenantId, id, team.Name, inTeam, ct) is { } project)
+                    projects.Add(project);
+                else
+                    skipped.Add(new SkippedTeam(team.Slug, NameTaken));
             }
             await UpsertMemberReferencesAsync(conn, tx, caller.TenantId, members, ct);
             await tx.CommitAsync(ct);
@@ -300,26 +308,23 @@ public static class OrganizationImport
         return new SelectionResult(selected, deselected);
     }
 
-    private static async Task<ImportedProject> UpsertProjectAsync(
+    // Null when a project with that name exists already: it may have been made by hand, so it is left alone.
+    private static async Task<ImportedProject?> CreateProjectAsync(
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, Guid connectionId, string name, long[] githubRepoIds,
         CancellationToken ct)
     {
-        var created = await conn.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition("""
+        var projectId = await conn.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition("""
             insert into projects (tenant_id, name) values (@tenantId, @name)
             on conflict (tenant_id, name) do nothing returning id
             """, new { tenantId, name }, tx, cancellationToken: ct));
-        var projectId = created ?? await conn.QuerySingleAsync<Guid>(new CommandDefinition(
-            "select id from projects where tenant_id = @tenantId and name = @name", new { tenantId, name }, tx, cancellationToken: ct));
-        await conn.ExecuteAsync(new CommandDefinition("""
+        if (projectId is null)
+            return null;
+        var count = await conn.ExecuteAsync(new CommandDefinition("""
             insert into project_repositories (tenant_id, project_id, repository_id)
             select @tenantId, @projectId, r.id from repositories r
              where r.tenant_id = @tenantId and r.connection_id = @connectionId and r.github_repo_id = any(@githubRepoIds)
-            on conflict do nothing
             """, new { tenantId, projectId, connectionId, githubRepoIds }, tx, cancellationToken: ct));
-        var count = await conn.QuerySingleAsync<int>(new CommandDefinition(
-            "select count(*)::int from project_repositories where tenant_id = @tenantId and project_id = @projectId",
-            new { tenantId, projectId }, tx, cancellationToken: ct));
-        return new ImportedProject(projectId, name, count, created is not null);
+        return new ImportedProject(projectId.Value, name, count);
     }
 
     private static Task UpsertMemberReferencesAsync(

@@ -232,7 +232,9 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                     not exists (select 1 from github_connections c
                                  where c.tenant_id = @tenantId and c.id = @connectionId and c.auth_kind = 'token'))
             on conflict (tenant_id, github_repo_id) do update
-               set connection_id = excluded.connection_id, name = excluded.name, full_name = excluded.full_name,
+               set sync_enabled = case when repositories.connection_id <> excluded.connection_id
+                                       then excluded.sync_enabled else repositories.sync_enabled end,
+                   connection_id = excluded.connection_id, name = excluded.name, full_name = excluded.full_name,
                    html_url = excluded.html_url, archived = excluded.archived
             returning id
             """, args);

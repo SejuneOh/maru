@@ -204,7 +204,7 @@ per repository one label and one milestone request) and returns, without writing
   "counts": { "repositories", "teams", "members", "labels", "milestones", "countedRepositories" },
   "truncated": { "repositories", "teams", "members", "counts": bool } }
 ```
-`selected` is the current selection (`repositories.sync_enabled`); `onBoard` is true for an active board member with that
+`selected` is the current selection (`repositories.sync_enabled`); `onBoard` is true for an active board member (not removed, not left) with that
 GitHub id. Lists are capped at 10 pages of 100 (`truncated.*` true when more exist). Labels and milestones are counted
 for the first 30 non-archived repositories only (`labelCount` / `milestoneCount` are null for the others and
 `truncated.counts` is true); `counts.labels` and `counts.milestones` sum those.
@@ -212,24 +212,28 @@ for the first 30 non-archived repositories only (`labelCount` / `milestoneCount`
 `POST /api/connections/{id}/organization/import` body `{"repositories": [<GitHub repo id>, ...], "teamProjects": ["<team slug>", ...]}`
 (`repositories` needs 1 to 1000 ids, `teamProjects` is optional, at most 50). The ids must belong to the organization's
 repositories. The selection replaces the previous one. For each team in `teamProjects` a board project named after the team
-is created (an existing project with that name is reused) and linked to the selected repositories the team can access;
-a team with no selected repository is skipped. Organization members are written to `github_users` as reference rows
+is created and linked to the selected repositories the team can access. A team is skipped (listed in `skippedTeams` with a
+`reason`) when no selected repository is in it (`no_selected_repositories`) or when a project with that name exists
+already (`name_taken`; that project is left untouched, including one an earlier import made). Organization members are written to `github_users` as reference rows
 (login and avatar) and never become board members; access still only comes from invitations. Nothing else is read: no secrets, billing,
 webhooks, security or SSO settings, or organization Projects. Response `200`:
-`{"selected": n, "deselected": n, "projects": [{"id", "name", "repositoryCount", "created": bool}], "skippedTeams": ["slug"], "membersReferenced": n}`.
+`{"selected": n, "deselected": n, "projects": [{"id", "name", "repositoryCount"}], "skippedTeams": [{"slug", "reason"}], "membersReferenced": n}`.
 
 `PUT /api/connections/{id}/organization/repositories` body `{"repositories": [...]}` (0 to 1000 ids) replaces the selection
 later. Response `200` `{"selected": n, "deselected": n}` where `deselected` counts repositories that were selected before.
 
 Selection and sync: `repositories.sync_enabled` is the selection. A sync run of a token connection still lists the
 organization's repositories, but inserts unknown ones with `sync_enabled = false` and reads only enabled ones. Token
-connections that existed before this feature start with nothing selected (migration 0024). A deselected repository keeps its
+connections that existed before this feature start with nothing selected (migration 0024). When a repository moves to
+another connection (e.g. reconnected with the App), `sync_enabled` is reset from the new connection: App enabled, token
+disabled until imported. A deselected repository keeps its
 mirrored rows, stops syncing, and its issues drop out of `issue_status`, so board lists, search, milestones, overview and
-project views no longer show them. Selecting it again shows them again and the next run catches up from its last
+project views no longer show them. Sprint carry-over, its undo guard and `sprint_daily` read `issue_status_all` (same status, no visibility rule), so
+hiding a repository never strands issues in a sprint or changes recorded scope. Selecting it again shows them again and the next run catches up from its last
 `last_synced_at`. Projects keep their links to deselected repositories, which the project views hide.
 Errors: `400 invalid_request`, `403 admin_only`, `404 not_found`, `409 credential_missing` (stored token missing or
 rejected by GitHub), `422 unknown_repository` (also `ids`), `422 unknown_team` (also `slugs`), `429 github_rate_limited`,
-`502 github_unavailable`. `audit_log` actions: `connection.org_import`, `connection.org_repositories_update`.
+`502 github_unavailable` (also a GitHub timeout). `audit_log` actions: `connection.org_import`, `connection.org_repositories_update`.
 
 When someone who is not an organization owner installs the App, GitHub records an install request and returns to
 `/connect/github?setup_action=request` without an installation id. The web then calls

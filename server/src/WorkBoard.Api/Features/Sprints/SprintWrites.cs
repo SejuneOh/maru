@@ -186,7 +186,7 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
             select i.id
               from board_fields bf
               join issues i on i.id = bf.issue_id
-              join issue_status st on st.issue_id = i.id
+              join issue_status_all st on st.issue_id = i.id
              where bf.sprint_id = @fromId and st.status not in ('done', 'cancelled')
              order by i.id
             """, new { fromId })).ToArray();
@@ -245,7 +245,7 @@ public sealed class SprintWrites(ICurrentUser user, IAuditLog audit, IIssueEvent
         var blocking = (await s.QueryAsync<Guid>("""
             select i.id
               from issues i
-              join issue_status st on st.issue_id = i.id
+              join issue_status_all st on st.issue_id = i.id
               left join board_fields bf on bf.issue_id = i.id
              where i.id = any(@issueIds)
                and (bf.sprint_id is distinct from @toId

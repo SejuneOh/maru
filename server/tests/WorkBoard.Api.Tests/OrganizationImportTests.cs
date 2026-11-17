@@ -210,8 +210,9 @@ public class OrganizationImportTests : IClassFixture<WebApplicationFactory<Progr
         var project = Assert.Single(body.GetProperty("projects").EnumerateArray());
         Assert.Equal("Platform Team", project.GetProperty("name").GetString());
         Assert.Equal(1, project.GetProperty("repositoryCount").GetInt32());
-        Assert.True(project.GetProperty("created").GetBoolean());
-        Assert.Equal(["design"], body.GetProperty("skippedTeams").EnumerateArray().Select(x => x.GetString()).ToArray());
+        var skipped = Assert.Single(body.GetProperty("skippedTeams").EnumerateArray());
+        Assert.Equal("design", skipped.GetProperty("slug").GetString());
+        Assert.Equal("no_selected_repositories", skipped.GetProperty("reason").GetString());
         Assert.Equal(1, await t.ScalarAsync<int>(
             "select count(*)::int from repositories where tenant_id = @tid and sync_enabled", new { tid = t.Id }));
         Assert.Equal(1, await t.ScalarAsync<int>(
@@ -222,7 +223,7 @@ public class OrganizationImportTests : IClassFixture<WebApplicationFactory<Progr
     }
 
     [DbFact]
-    public async Task Import_reuses_a_project_with_the_same_name()
+    public async Task Import_skips_a_team_whose_project_name_is_taken_and_leaves_that_project_alone()
     {
         var (t, fake, admin) = await SetupAsync();
         await using var _ = t;
@@ -232,9 +233,38 @@ public class OrganizationImportTests : IClassFixture<WebApplicationFactory<Progr
         var body = await JsonAsync(await admin.PostAsJsonAsync(Url(t, "import"),
             new { repositories = new[] { fake.Repos[0].Id }, teamProjects = new[] { "platform" } }));
 
-        var project = body.GetProperty("projects")[0];
-        Assert.Equal(existing, project.GetProperty("id").GetGuid());
-        Assert.False(project.GetProperty("created").GetBoolean());
+        Assert.Equal(0, body.GetProperty("projects").GetArrayLength());
+        var skipped = Assert.Single(body.GetProperty("skippedTeams").EnumerateArray());
+        Assert.Equal("name_taken", skipped.GetProperty("reason").GetString());
+        Assert.Equal(0, await t.ScalarAsync<int>(
+            "select count(*)::int from project_repositories where project_id = @existing", new { existing }));
+    }
+
+    [DbFact]
+    public async Task Preview_does_not_count_members_who_left_as_on_the_board()
+    {
+        var (t, fake, admin) = await SetupAsync();
+        await using var _ = t;
+        var (_, leftId) = await t.AddMemberAsync("gone");
+        await t.ExecAsync("update members set left_at = now() where tenant_id = @tid and github_user_id = @leftId", new { tid = t.Id, leftId });
+        fake.Members = [new OrgMemberInfo(leftId, "gone", null)];
+
+        var body = await JsonAsync(await admin.GetAsync(Url(t, "preview")));
+
+        Assert.False(body.GetProperty("members")[0].GetProperty("onBoard").GetBoolean());
+    }
+
+    [DbFact]
+    public async Task A_GitHub_timeout_is_a_502()
+    {
+        var (t, fake, admin) = await SetupAsync();
+        await using var _ = t;
+        fake.Throw = new TaskCanceledException("timeout");
+
+        var response = await admin.GetAsync(Url(t, "preview"));
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal("github_unavailable", await ErrorAsync(response));
     }
 
     [DbFact]
