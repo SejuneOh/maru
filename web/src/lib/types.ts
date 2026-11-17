@@ -250,7 +250,35 @@ export type MeetingActionItem = {
   assignee: Member | null;
   /** `yyyy-MM-dd`. */
   dueDate: string | null;
-  issue: { id: string; number: number; repositoryName: string; status: Status } | null;
+  /** `state` as mirrored from GitHub. */
+  issue: {
+    id: string;
+    number: number;
+    repositoryName: string;
+    status: Status;
+    state: "open" | "closed";
+    htmlUrl: string | null;
+  } | null;
+  /** GitHub created the issue but the board has not mirrored it yet. */
+  pendingIssue: { repositoryName: string; number: number } | null;
+  /** A request is creating the issue right now. */
+  creatingIssue: boolean;
+};
+
+/** `POST /api/meeting-action-items/{id}/issue` (needs `Idempotency-Key`). */
+export type ActionItemIssueRequest = { repositoryId: string };
+
+/** 201 (`created: true`) or 200 (the item already had this issue). */
+export type ActionItemIssueResult = { actionItem: MeetingActionItem; created: boolean; droppedAssignees: number[] };
+
+/** 202: on GitHub, not on the board yet. */
+export type PendingActionItemIssue = {
+  actionItemId: string;
+  repository: string;
+  number: number;
+  /** Null (and `repository` empty) when the repository is no longer in the mirror. */
+  htmlUrl: string | null;
+  mirrorPending: true;
 };
 
 export type MeetingNote = {

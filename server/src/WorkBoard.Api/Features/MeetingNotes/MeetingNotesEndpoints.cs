@@ -169,18 +169,7 @@ public static class MeetingNotesEndpoints
              order by m.github_login
             """, new { id });
 
-        var items = await s.QueryAsync<ActionItemRow>("""
-            select a.id, a.text, a.due_date::text as due_date,
-                   m.id as member_id, m.github_user_id, m.github_login, m.display_name, m.avatar_url, m.role,
-                   i.id as issue_id, i.number as issue_number, r.name as repository_name, st.status as issue_status
-              from meeting_action_items a
-              left join members m on m.id = a.assignee_member_id
-              left join issues i on i.id = a.issue_id
-              left join repositories r on r.id = i.repository_id
-              left join issue_status st on st.issue_id = i.id
-             where a.note_id = @id
-             order by a.position, a.created_at, a.id
-            """, new { id });
+        var items = await ActionItemsAsync(s, "a.note_id = @id", new { id });
 
         return new MeetingNote(
             note.Id,
@@ -190,17 +179,47 @@ public static class MeetingNotesEndpoints
             ToProject(note.ProjectId, note.ProjectName),
             note.Decisions,
             attendees.Select(a => a.ToMember()).ToList(),
-            items.Select(a => new ActionItemDto(
-                a.Id,
-                a.Text,
-                ToMember(a.MemberId, a.GithubUserId, a.GithubLogin, a.DisplayName, a.AvatarUrl, a.Role),
-                a.DueDate is { } due ? DateOnly.Parse(due) : null,
-                a.IssueId is { } issueId
-                    ? new ActionItemIssue(issueId, a.IssueNumber ?? 0, a.RepositoryName ?? "", a.IssueStatus ?? "todo")
-                    : null)).ToList(),
+            items,
             ToMember(note.MemberId, note.GithubUserId, note.GithubLogin, note.DisplayName, note.AvatarUrl, note.Role),
             note.CreatedAt,
             note.UpdatedAt);
+    }
+
+    internal static async Task<ActionItemDto?> GetActionItemAsync(TenantSession s, Guid id) =>
+        (await ActionItemsAsync(s, "a.id = @id", new { id })).SingleOrDefault();
+
+    // An item whose issue GitHub created but the mirror lacked shows it as pending until the mirror stores it (PendingLink).
+    private static async Task<List<ActionItemDto>> ActionItemsAsync(TenantSession s, string where, object args)
+    {
+        var rows = await s.QueryAsync<ActionItemRow>($"""
+            select a.id, a.text, a.due_date::text as due_date,
+                   m.id as member_id, m.github_user_id, m.github_login, m.display_name, m.avatar_url, m.role,
+                   i.id as issue_id, i.number as issue_number, r.name as repository_name, st.status as issue_status,
+                   i.state as issue_state, i.html_url as issue_html_url,
+                   cr.name as claim_repository_name, a.issue_claim_number as claim_number,
+                   ({ActionItemIssues.ActiveClaim}) as creating_issue
+              from meeting_action_items a
+              left join members m on m.id = a.assignee_member_id
+              left join repositories cr on cr.id = a.issue_claim_repository_id and a.issue_claim_number is not null
+              left join issues i on i.id = a.issue_id
+              left join repositories r on r.id = i.repository_id
+              left join issue_status st on st.issue_id = i.id
+             where {where}
+             order by a.position, a.created_at, a.id
+            """, args);
+        return rows.Select(a => new ActionItemDto(
+            a.Id,
+            a.Text,
+            ToMember(a.MemberId, a.GithubUserId, a.GithubLogin, a.DisplayName, a.AvatarUrl, a.Role),
+            a.DueDate is { } due ? DateOnly.Parse(due) : null,
+            a.IssueId is { } issueId
+                ? new ActionItemIssue(issueId, a.IssueNumber ?? 0, a.RepositoryName ?? "", a.IssueStatus ?? "todo",
+                    a.IssueState ?? "open", a.IssueHtmlUrl)
+                : null,
+            a.IssueId is null && a.ClaimNumber is { } number
+                ? new ActionItemPendingIssue(a.ClaimRepositoryName ?? "", number)
+                : null,
+            a.IssueId is null && a.CreatingIssue)).ToList();
     }
 
     private static Member? ToMember(Guid? id, long? userId, string? login, string? displayName, string? avatarUrl, string? role) =>
@@ -253,5 +272,10 @@ public static class MeetingNotesEndpoints
         public int? IssueNumber { get; set; }
         public string? RepositoryName { get; set; }
         public string? IssueStatus { get; set; }
+        public string? IssueState { get; set; }
+        public string? IssueHtmlUrl { get; set; }
+        public string? ClaimRepositoryName { get; set; }
+        public int? ClaimNumber { get; set; }
+        public bool CreatingIssue { get; set; }
     }
 }

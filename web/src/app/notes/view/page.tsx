@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { ErrorBox, Loading } from "@/components/Feedback";
+import { ActionItemList } from "@/components/ActionItemList";
 import { NoteEditor, canDelete, confirmAndDelete } from "@/components/NoteEditor";
-import { useIssuePanel } from "@/components/useIssuePanel";
-import { Avatar, Card, Flag, PageHeader, StatusBadge } from "@/components/ui";
+import { Card, PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { useFormat, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
@@ -49,7 +49,6 @@ function EditScreen({ id }: { id: string | null }) {
 
 function ReadScreen({ id }: { id: string | null }) {
   const router = useRouter();
-  const { open } = useIssuePanel();
   const t = useT();
   const nt = t.notes;
   const fmt = useFormat();
@@ -62,7 +61,6 @@ function ReadScreen({ id }: { id: string | null }) {
   if (note.error) return <ErrorBox error={note.error} />;
   if (!note.data) return <Loading />;
   const n = note.data;
-  const missing = n.actionItems.filter((a) => !a.issue).length;
 
   const remove = async () => {
     setDeleting(true);
@@ -115,55 +113,7 @@ function ReadScreen({ id }: { id: string | null }) {
         )}
       </Card>
 
-      <Card
-        title={nt.actionItems}
-        count={n.actionItems.length}
-        hint={nt.actionHint}
-        action={missing > 0 ? <span>{nt.missingCount(missing)}</span> : null}
-        className="reveal [animation-delay:60ms]"
-      >
-        {n.actionItems.length === 0 ? (
-          <p className="px-5 py-4 text-small text-muted">{nt.noActionItems}</p>
-        ) : (
-          <ul>
-            {n.actionItems.map((a) => (
-              <li key={a.id} className="flex flex-col gap-1 relative px-5 py-4 after:absolute after:inset-x-5 after:top-0 after:h-px after:bg-rule first:after:hidden">
-                <span className="text-ui font-medium">{a.text}</span>
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-small text-ink-soft">
-                  {a.assignee ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Avatar person={a.assignee} size="sm" />
-                      {fmt.person(a.assignee)}
-                    </span>
-                  ) : (
-                    <span className="text-accent">{t.common.unassigned}</span>
-                  )}
-                  {a.dueDate && <span className="tabular-nums">{nt.due(fmt.date(`${a.dueDate}T00:00:00`))}</span>}
-                  {a.issue ? (
-                    <button
-                      type="button"
-                      onClick={() => open(a.issue!.id)}
-                      className="inline-flex cursor-pointer items-center gap-2 [&>.font-mono]:hover:underline [&>.font-mono]:hover:underline-offset-3"
-                    >
-                      <span className="font-mono">
-                        {a.issue.repositoryName} #{a.issue.number}
-                      </span>
-                      <StatusBadge status={a.issue.status} />
-                    </button>
-                  ) : (
-                    <>
-                      <Flag>{t.common.noIssue}</Flag>
-                      <span className="text-muted" title={nt.createIssueTitle}>
-                        {nt.createIssue}
-                      </span>
-                    </>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <ActionItemList note={n} className="reveal [animation-delay:60ms]" />
 
       <Card title={nt.body} hint={nt.bodyHint} className="reveal [animation-delay:90ms]">
         {n.bodyMd ? (

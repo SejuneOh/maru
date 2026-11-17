@@ -54,6 +54,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
             "select github_issue_id as GithubId, state as State, state_reason as StateReason from issues where tenant_id = @tenantId and github_issue_id = any(@ids)",
             new { ids = snapshot.Issues.Select(i => i.DatabaseId).ToArray() });
         var issues = await UpsertIssuesAsync(db, repoId, snapshot.Issues, milestones);
+        await db.Exec(Features.MeetingNotes.PendingLink.LinkMirroredSql, new { repoId });
         await RecordStateChangesAsync(db, issues, before.ToDictionary(b => b.GithubId));
         await ReplaceIssueChildrenAsync(db, repoId, issues, labels);
         await ResolveParentsAsync(db, issues);
@@ -100,6 +101,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
             issueId = applied[0].Id;
             await ReplaceIssueChildrenAsync(db, repositoryId, applied, await LoadLabelIndexAsync(db, repositoryId));
         }
+        await db.Exec(Features.MeetingNotes.PendingLink.LinkMirroredSql, new { repoId = repositoryId });
 
         if (change is { } c)
             await db.Exec("""

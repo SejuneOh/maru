@@ -79,7 +79,7 @@ type FormEvent = { type: "created"; issue: CreatedIssue; dropped: string[] } | {
 const listeners = new Set<(e: FormEvent) => void>();
 const emit = (e: FormEvent) => listeners.forEach((l) => l(e));
 
-function readLastRepo(): string | null {
+export function readLastRepo(): string | null {
   try {
     return window.localStorage.getItem(LAST_REPO_KEY);
   } catch {
@@ -87,7 +87,7 @@ function readLastRepo(): string | null {
   }
 }
 
-function writeLastRepo(id: string) {
+export function writeLastRepo(id: string) {
   try {
     window.localStorage.setItem(LAST_REPO_KEY, id);
   } catch {

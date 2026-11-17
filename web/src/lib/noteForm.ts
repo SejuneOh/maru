@@ -3,7 +3,10 @@ import type { MeetingActionItem, MeetingNote, MeetingNoteRequest } from "./types
 
 export type DecisionRow = { key: string; text: string };
 
-/** `id` is null until the server has saved the item; `issue` is read only (linked items cannot be removed). */
+/**
+ * `id` is null until the server has saved the item; `issue` and `held` are read only. A held item has an issue, or
+ * one is being made for it, and cannot be removed.
+ */
 export type ItemRow = {
   key: string;
   id: string | null;
@@ -11,7 +14,12 @@ export type ItemRow = {
   assigneeId: string | null;
   dueDate: string | null;
   issue: MeetingActionItem["issue"];
+  held: boolean;
 };
+
+export function isHeld(a: Pick<MeetingActionItem, "issue" | "pendingIssue" | "creatingIssue">): boolean {
+  return !!a.issue || !!a.pendingIssue || a.creatingIssue;
+}
 
 export type NoteForm = {
   title: string;
@@ -32,7 +40,15 @@ export function emptyForm(now = new Date()): NoteForm {
 }
 
 export function itemRow(a: MeetingActionItem): ItemRow {
-  return { key: a.id, id: a.id, text: a.text, assigneeId: a.assignee?.id ?? null, dueDate: a.dueDate, issue: a.issue };
+  return {
+    key: a.id,
+    id: a.id,
+    text: a.text,
+    assigneeId: a.assignee?.id ?? null,
+    dueDate: a.dueDate,
+    issue: a.issue,
+    held: isHeld(a),
+  };
 }
 
 export function formOf(n: MeetingNote): NoteForm {
@@ -95,8 +111,8 @@ export function snapshotOf(f: NoteForm): string {
 }
 
 /**
- * Builds on someone else's newer copy: items they deleted become new items, and items linked to an issue that
- * this form no longer has come back (they cannot be removed).
+ * Builds on someone else's newer copy: items they deleted become new items, and held items that this form no
+ * longer has come back (they cannot be removed).
  */
 export function rebaseOnto(f: NoteForm, latest: MeetingNote): NoteForm {
   const theirs = new Set(latest.actionItems.map((a) => a.id));
@@ -104,8 +120,8 @@ export function rebaseOnto(f: NoteForm, latest: MeetingNote): NoteForm {
   return {
     ...f,
     items: [
-      ...f.items.map((r) => (r.id !== null && !theirs.has(r.id) ? { ...r, id: null, issue: null } : r)),
-      ...latest.actionItems.filter((a) => a.issue && !mine.has(a.id)).map(itemRow),
+      ...f.items.map((r) => (r.id !== null && !theirs.has(r.id) ? { ...r, id: null, issue: null, held: false } : r)),
+      ...latest.actionItems.filter((a) => isHeld(a) && !mine.has(a.id)).map(itemRow),
     ],
   };
 }

@@ -30,6 +30,12 @@ public sealed record NewIssue(
     GitHubWriteTarget Target, string Title, string? Body, IReadOnlyList<string> Labels,
     IReadOnlyList<(long UserId, string Login)> Assignees, string? Status, string? Priority, string? Size);
 
+// A repository where an earlier attempt may have created the issue, and the time of that attempt.
+public sealed record EarlierAttempt(GitHubWriteTarget Target, DateTimeOffset Since);
+
+// The issue on GitHub, the repository it is in, and whether an earlier attempt had created it.
+public sealed record FoundOrCreated(SourceIssue Issue, GitHubWriteTarget Target, bool Found);
+
 public sealed class IssueCreation(
     ICurrentUser user, TenantDb db, IGitHubWriter writer, MirrorWriter mirror, IAuditLog audit, IIssueEvents events,
     IOptions<GitHubAppOptions> app)
@@ -53,60 +59,92 @@ public sealed class IssueCreation(
         Idempotency.RunExternalAsync(db, user, key, requestHash, async (callCt, attempt) =>
         {
             var marker = GitHubWriter.CreateMarker(MarkerId(user.Identity.TenantId, key, requestHash));
-            SourceIssue? created = null;
-            if (attempt.TakenOverFrom is { } since)
-            {
-                try
-                {
-                    created = await writer.FindCreatedIssueAsync(issue.Target.Repo, marker, since - LookupMargin, callCt);
-                }
-                catch (GitHubWriteException e)
-                {
-                    // Unknown whether the earlier attempt created the issue: creating now could duplicate it.
-                    throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "Lookup of an earlier create failed.",
-                        noResponse: true, inner: e);
-                }
-            }
-
-            if (created is null)
-                try
-                {
-                    created = await writer.CreateIssueAsync(issue.Target.Repo, user.Identity.Member.GithubLogin, issue.Title,
-                        issue.Body, issue.Labels, issue.Assignees.Select(a => a.Login).ToList(), callCt, marker);
-                }
-                catch (GitHubWriteException e) when (!e.NoResponse)
-                {
-                    return GitHubWriteErrors.ToOutcome(e);
-                }
-
-            // GitHub has the issue from here on. A local failure must not leave the key pending (a retry would
-            // create a second issue), so it completes with a 202 and the next sync fills the rows.
-            var pending = new ExternalOutcome(new WriteResult(StatusCodes.Status202Accepted,
-                new PendingIssue($"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", created.Number, created.HtmlUrl, true)), true);
+            FoundOrCreated result;
             try
             {
-                var mirrored = await mirror.ApplyWrittenIssueAsync(
-                    user.Identity.TenantId, issue.Target.RepositoryId, created, null, null, CancellationToken.None);
-                if (mirrored is null)
-                {
-                    log.LogWarning("Issue {Number} was created on GitHub but the repository is gone from the mirror", created.Number);
-                    return pending;
-                }
-
-                var dropped = issue.Assignees
-                    .Where(a => !created.Assignees.Any(c => string.Equals(c.Login, a.Login, StringComparison.OrdinalIgnoreCase)))
-                    .Select(a => a.UserId).ToList();
-                var detail = await db.WriteAsync(s => FinishAsync(s, mirrored.IssueId, issue, created), CancellationToken.None);
-                return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created, new CreatedIssue(detail, dropped)), true);
+                result = await FindOrCreateAsync(issue, marker,
+                    attempt.TakenOverFrom is { } since ? [new EarlierAttempt(issue.Target, since)] : [], callCt);
             }
-            catch (Exception e)
+            catch (GitHubWriteException e) when (!e.NoResponse)
             {
-                log.LogError(e, "Issue {Number} was created on GitHub but saving it locally failed", created.Number);
-                return pending;
+                return GitHubWriteErrors.ToOutcome(e);
             }
+
+            var detail = await SaveAsync(issue, result, log);
+            return detail is null
+                ? PendingOutcome(result)
+                : new ExternalOutcome(new WriteResult(StatusCodes.Status201Created,
+                    new CreatedIssue(detail, DroppedAssignees(issue, result.Issue))), true);
         }, ct, log);
 
-    private async Task<IssueDetail> FinishAsync(TenantSession s, Guid issueId, NewIssue issue, SourceIssue created)
+    // Returns the issue an earlier attempt created (the first lookup that finds marker), or creates it in issue.Target.
+    // A lookup that cannot be read throws GitHubWriteException with NoResponse: creating then could duplicate the issue.
+    // A refused create throws GitHubWriteException as IGitHubWriter does.
+    public async Task<FoundOrCreated> FindOrCreateAsync(
+        NewIssue issue, string marker, IReadOnlyList<EarlierAttempt> lookups, CancellationToken ct)
+    {
+        foreach (var (target, since) in lookups)
+        {
+            SourceIssue? found;
+            try
+            {
+                found = await writer.FindCreatedIssueAsync(target.Repo, marker, since - LookupMargin, ct);
+            }
+            catch (GitHubWriteException e)
+            {
+                throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "Lookup of an earlier create failed.",
+                    noResponse: true, inner: e);
+            }
+            if (found is not null)
+                return new FoundOrCreated(found, target, true);
+        }
+
+        var created = await writer.CreateIssueAsync(issue.Target.Repo, user.Identity.Member.GithubLogin, issue.Title,
+            issue.Body, issue.Labels, issue.Assignees.Select(a => a.Login).ToList(), ct, marker);
+        return new FoundOrCreated(created, issue.Target, false);
+    }
+
+    // GitHub has the issue from here on: mirror it, then board fields, the audit row and link (one transaction).
+    // Null when that failed or the repository is gone from the mirror; the caller answers 202 and the next sync
+    // fills the rows. Never throws, so a retry cannot create a second issue.
+    public async Task<IssueDetail?> SaveAsync(
+        NewIssue issue, FoundOrCreated result, ILogger log, Func<TenantSession, Guid, Task>? link = null)
+    {
+        var created = result.Issue;
+        try
+        {
+            var mirrored = await mirror.ApplyWrittenIssueAsync(
+                user.Identity.TenantId, result.Target.RepositoryId, created, null, null, CancellationToken.None);
+            if (mirrored is null)
+            {
+                log.LogWarning("Issue {Number} was created on GitHub but the repository is gone from the mirror", created.Number);
+                return null;
+            }
+            return await db.WriteAsync(async s =>
+            {
+                var detail = await FinishAsync(s, mirrored.IssueId, issue, result);
+                if (link is not null)
+                    await link(s, mirrored.IssueId);
+                return detail;
+            }, CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            log.LogError(e, "Issue {Number} was created on GitHub but saving it locally failed", created.Number);
+            return null;
+        }
+    }
+
+    public static ExternalOutcome PendingOutcome(FoundOrCreated result) =>
+        new(new WriteResult(StatusCodes.Status202Accepted, new PendingIssue(
+            $"{result.Target.Repo.Owner}/{result.Target.Repo.Name}", result.Issue.Number, result.Issue.HtmlUrl, true)), true);
+
+    public static List<long> DroppedAssignees(NewIssue issue, SourceIssue created) =>
+        issue.Assignees
+            .Where(a => !created.Assignees.Any(c => string.Equals(c.Login, a.Login, StringComparison.OrdinalIgnoreCase)))
+            .Select(a => a.UserId).ToList();
+
+    private async Task<IssueDetail> FinishAsync(TenantSession s, Guid issueId, NewIssue issue, FoundOrCreated result)
     {
         if (issue.Status is not null || issue.Priority is not null || issue.Size is not null)
         {
@@ -130,7 +168,7 @@ public sealed class IssueCreation(
         }
 
         await audit.WriteAsync(s, "issue.create", "issue", issueId, null,
-            new { repository = $"{issue.Target.Repo.Owner}/{issue.Target.Repo.Name}", number = created.Number });
+            new { repository = $"{result.Target.Repo.Owner}/{result.Target.Repo.Name}", number = result.Issue.Number });
         return (await IssueDetailQueries.GetAsync(s, issueId, app.Value))!;
     }
 
