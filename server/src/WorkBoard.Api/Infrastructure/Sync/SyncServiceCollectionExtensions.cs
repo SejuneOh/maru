@@ -9,6 +9,9 @@ public static class SyncServiceCollectionExtensions
         services.AddSingleton<SyncRunner>();
         services.AddSingleton<SprintDailyRecorder>();
         services.AddHostedService<SyncWorker>();
+        services.AddSingleton<Webhooks.WebhookWake>();
+        services.AddSingleton<Webhooks.WebhookProcessor>();
+        services.AddHostedService<Webhooks.WebhookWorker>();
         return services;
     }
 }

@@ -82,7 +82,8 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/dev/users` | none (Development only) | `DevUser[]`, one entry per membership |
 | POST | `/api/tenants` | sign-in only, no membership needed | `201 CreateTenantResult`, see below |
 | GET | `/api/me` | dev user | `Me` |
-| GET | `/api/members` | dev user | `Member[]` |
+| GET | `/api/members` | dev user | `Member[]` (`removedAt` is set for people who left the connected organization) |
+| POST | `/api/github/webhook` | HMAC signature | see "GitHub webhook" |
 | GET | `/api/projects` | dev user | `Project[]` |
 | GET | `/api/projects/done-by-week` | dev user | `DoneByWeek`, see below |
 | GET | `/api/projects/{id}/schedule` | dev user | `ProjectSchedule` or 404, see below |
@@ -445,7 +446,7 @@ tenant transaction (no cache). Rules:
 ## Sync
 
 A background service syncs every tenant with an active connection that has an `installation_id` each
-`Sync:IntervalMinutes` (default 10; `Sync:Enabled=false` turns the loop off, manual runs still work). A run lists the
+`Sync:IntervalMinutes` (default 10, or 60 when `GitHub:App:WebhookSecret` is set, because webhooks then carry the live updates and the loop only reconciles; `Sync:Enabled=false` turns the loop and the webhook worker off, manual runs still work). A run lists the
 installation's repositories, upserts them (`sync_enabled` defaults to true) and reads each enabled repository with
 `since = last_synced_at - 2 minutes` (full read on the first run). One run per tenant at a time. Each run writes one
 `sync_runs` row per connection; GitHub errors and a missing App key are recorded there, never thrown. A repository
@@ -463,6 +464,35 @@ recent finished run. `nextRunAt` is null while the periodic loop is off.
 `POST /api/sync/run` (admin only) starts a run in the background -> `202 { "started": true }`. Errors, checked in this
 order: `403 { "error": "admin_only" }`, `503 { "error": "github_app_not_configured" }`, `409 { "error": "not_connected" }`,
 `409 { "error": "sync_running" }`.
+
+## GitHub webhook
+
+`POST /api/github/webhook` is anonymous; the only proof of origin is `X-Hub-Signature-256` (HMAC-SHA256 of the raw body
+with `GitHub:App:WebhookSecret`, compared in constant time). Checks run in this order and touch no database until the last:
+
+| Status | Body | When |
+|---|---|---|
+| 503 | `{ "error": "webhook_not_configured" }` | no secret configured |
+| 401 | `{ "error": "invalid_signature" }` | header missing, malformed, or not matching the body |
+| 413 | `{ "error": "payload_too_large" }` | body over 2 MB |
+| 400 | `{ "error": "invalid_request" }` | `X-GitHub-Event` / `X-GitHub-Delivery` missing, or the body is not JSON |
+| 200 | `{ "status": "pong" }` | `ping` |
+| 202 | `{ "status": "ignored" }` | an event or action work-board does not act on (no row is stored) |
+| 200 | `{ "status": "duplicate" }` | this `X-GitHub-Delivery` was already received |
+| 202 | `{ "status": "queued" }` | stored in `webhook_deliveries` for the worker |
+
+The request never waits for GitHub or for the mirror: it only inserts the delivery id and its routing fields
+(event, action, installation id, repository full name, member id, account login; never the payload). The primary key on
+`delivery_id` is the dedup. `WebhookWorker` drains the table (woken on insert, polling every 5 s), claims rows with a 2 minute
+lease, retries a failure up to 5 times with 30 s steps, and records the outcome in `result`. Processed rows are deleted after 14 days.
+
+| Event | Handling |
+|---|---|
+| `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `milestone`, `label`, `sub_issues` | The payload is not applied. The repository is re-read through `IGitHubSource` since its `last_synced_at - 2 minutes` and applied by `MirrorWriter`, exactly like a periodic run (ordering rule, issue_events, PendingLink, label and milestone lists). Pending events of one repository share one read. Unknown installation, unknown repository (not listed by a sync yet) and `sync_enabled = false` are acknowledged and ignored. |
+| `installation` `deleted`, `suspend` | Active connections with that `installation_id` get `disconnected_at = now()`. Every sync query already skips disconnected connections, so syncing and board writes stop; the connection list shows it as disconnected. |
+| `installation` `unsuspend` | The most recently disconnected connection of that installation is reactivated unless the account or installation already has an active connection. |
+| `organization` `member_removed`, `member_added` | For the connection whose `account_login` equals `organization.login`: `members.removed_at` is set (or cleared) for that GitHub user id. A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
+| everything else (`installation` `created`, `installation_repositories`, `push`, ...) | `202 ignored`. New repositories appear with the next periodic run. |
 
 ## Shapes
 

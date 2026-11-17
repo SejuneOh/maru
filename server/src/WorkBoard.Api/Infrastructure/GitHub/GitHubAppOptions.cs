@@ -12,6 +12,11 @@ public sealed class GitHubAppOptions
     public string? PrivateKeyPath { get; set; }
     public string? Slug { get; set; }
 
+    // Shared secret of the App's webhook. Without it POST /api/github/webhook answers 503 and does nothing.
+    public string? WebhookSecret { get; set; }
+
+    public bool WebhooksEnabled => !string.IsNullOrWhiteSpace(WebhookSecret);
+
     // The login GitHub shows for what this App writes; null without a Slug.
     public string? BotLogin => string.IsNullOrWhiteSpace(Slug) ? null : Slug.Trim() + "[bot]";
 

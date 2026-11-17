@@ -6,7 +6,7 @@ using WorkBoard.Api.Infrastructure.Identity;
 
 namespace WorkBoard.Api.Infrastructure.Sync;
 
-// Syncs every connected tenant each Sync:IntervalMinutes, then records today's sprint_daily rows.
+// Syncs every connected tenant each Sync:IntervalMinutes (60 with webhooks, else 10), then records today's sprint_daily rows.
 public sealed class SyncWorker(
     SyncRunner runner,
     SprintDailyRecorder sprintDaily,
@@ -34,7 +34,7 @@ public sealed class SyncWorker(
                 if (app.Value.CanReadInstallations)
                     await RunAllAsync(ct);
                 await sprintDaily.RecordTodayAsync(ct);
-                var interval = options.Value.Interval;
+                var interval = options.Value.IntervalFor(app.Value.WebhooksEnabled);
                 runner.NextRunAt = time.GetUtcNow() + interval;
                 await Task.Delay(interval, time, ct);
             }

@@ -8,7 +8,7 @@ public static class MembersEndpoints
         api.MapGet("/members", async (TenantDb db, CancellationToken ct) =>
         {
             var rows = await db.ReadAsync(s => s.QueryAsync<MemberRow>(
-                $"select {MemberRow.Columns} from members m order by m.github_login"), ct);
+                $"select {MemberRow.Columns}, m.removed_at from members m order by m.github_login"), ct);
             return rows.Select(r => r.ToMember()).ToList();
         });
 }
