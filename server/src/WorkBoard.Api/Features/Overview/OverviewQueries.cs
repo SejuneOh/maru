@@ -209,7 +209,7 @@ public static class OverviewQueries
         var repos = (await s.QueryAsync<ProjectRepoRow>("""
             select pr.project_id, r.name
               from project_repositories pr
-              join repositories r on r.id = pr.repository_id
+              join repositories r on r.id = pr.repository_id and r.sync_enabled
              order by r.name
             """)).ToLookup(r => r.ProjectId, r => r.Name);
         var byStatus = (await s.QueryAsync<ProjectStatusRow>("""

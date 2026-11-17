@@ -227,8 +227,10 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                and (name = @name or full_name = @fullName)
             """, args);
         return await db.Scalar<Guid>("""
-            insert into repositories (tenant_id, connection_id, github_repo_id, name, full_name, html_url, archived)
-            values (@tenantId, @connectionId, @githubId, @name, @fullName, @htmlUrl, @archived)
+            insert into repositories (tenant_id, connection_id, github_repo_id, name, full_name, html_url, archived, sync_enabled)
+            values (@tenantId, @connectionId, @githubId, @name, @fullName, @htmlUrl, @archived,
+                    not exists (select 1 from github_connections c
+                                 where c.tenant_id = @tenantId and c.id = @connectionId and c.auth_kind = 'token'))
             on conflict (tenant_id, github_repo_id) do update
                set connection_id = excluded.connection_id, name = excluded.name, full_name = excluded.full_name,
                    html_url = excluded.html_url, archived = excluded.archived

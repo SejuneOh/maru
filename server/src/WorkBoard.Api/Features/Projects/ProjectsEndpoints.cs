@@ -24,7 +24,7 @@ public static class ProjectsEndpoints
                 await s.QueryAsync<ProjectRepoRow>("""
                     select pr.project_id, r.id as repository_id, r.name
                       from project_repositories pr
-                      join repositories r on r.id = pr.repository_id
+                      join repositories r on r.id = pr.repository_id and r.sync_enabled
                      order by r.name
                     """)), ct);
 

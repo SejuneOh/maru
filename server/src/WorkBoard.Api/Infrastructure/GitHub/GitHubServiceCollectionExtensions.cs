@@ -46,6 +46,11 @@ public static class GitHubServiceCollectionExtensions
             c.Timeout = TimeSpan.FromSeconds(60);
             c.DefaultRequestHeaders.UserAgent.ParseAdd("work-board");
         });
+        services.AddHttpClient<IGitHubOrgReader, GitHubSource>(c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(60);
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("work-board");
+        });
         return services;
     }
 }

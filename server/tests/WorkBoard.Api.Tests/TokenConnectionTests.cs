@@ -531,6 +531,8 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
         var (login, _) = await AdminAsync(t);
         await t.ExecAsync("update github_connections set auth_kind = 'token', store_bodies = false where id = @id", new { id = t.ConnectionId });
         var source = new RecordingSource { Repositories = [new SourceRepository(TestTenant.NextId(), "api", $"org-{t.Suffix}/api", "https://x/api", false)] };
+        await t.ExecAsync("insert into repositories (tenant_id, connection_id, github_repo_id, name, full_name, sync_enabled) values (@tid, @cid, @gid, 'api', @full, true)",
+            new { tid = t.Id, cid = t.ConnectionId, gid = source.Repositories[0].Id, full = source.Repositories[0].FullName });
         var client = _factory.WithWebHostBuilder(b =>
         {
             b.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
