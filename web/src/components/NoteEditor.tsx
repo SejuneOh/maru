@@ -228,6 +228,14 @@ export function NoteEditor({
           setLatestFailed(false);
           setPhase("conflict");
         } else {
+          // The stored items take the place of the form's rows by position, so the PATCH keeps their ids.
+          const stored = new Map(built.keys.map((k, i) => [k, note.actionItems[i]?.id]));
+          replaceForm({
+            ...formRef.current,
+            items: formRef.current.items.map((r) => (r.id === null && stored.get(r.key) ? { ...r, id: stored.get(r.key)! } : r)),
+          });
+          const theirs = requestOf(formOf(note));
+          if ("req" in theirs) markSaved(JSON.stringify(theirs.req));
           setPhase("idle");
           again.current = true;
         }
