@@ -291,7 +291,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <form
               id="site-search"
               role="search"
-              className={`ml-auto h-9 min-w-0 flex-1 items-center gap-2 rounded-control bg-surface pl-3 pr-1.5 text-small text-muted shadow-elev-1 focus-within:shadow-[0_0_0_2px_var(--wb-focus)] min-[640px]:flex min-[1024px]:max-w-[340px] ${
+              className={`ml-auto h-9 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-control bg-surface pl-3 pr-1.5 text-small text-muted shadow-elev-1 focus-within:shadow-[0_0_0_2px_var(--wb-focus)] min-[640px]:flex min-[1024px]:max-w-[340px] ${
                 searchOpen ? "flex" : "hidden"
               }`}
               onSubmit={(e) => {
@@ -324,7 +324,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <SearchIcon size={18} />
             </button>
-            {!narrow && <SyncStatus className="flex shrink-0" />}
+            {!narrow && <SyncStatus className="flex shrink" />}
             <NewIssueButton onClick={newIssue} className="h-9 max-[639px]:hidden" />
             <div className={`flex shrink-0 items-center gap-2 ${searchOpen ? "max-[639px]:hidden" : ""}`}>
               <div className="flex items-center gap-2 min-[1024px]:hidden">

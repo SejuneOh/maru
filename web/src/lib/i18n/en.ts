@@ -992,8 +992,8 @@ export const en: Dict = {
     errors: {
       invalid_token: ["GitHub did not accept this token.", "Copy it again, or create a new one if it expired."],
       unsupported_token: ["This kind of token cannot be used.", "Use a fine-grained token (github_pat_) or a classic token (ghp_)."],
-      token_scope_too_broad: ["The token has more access than needed.", "Create a new token with only repo and read:org."],
-      token_scope_missing: ["The token lacks a required scope.", "Create a new token with repo and read:org."],
+      token_scope_too_broad: ["The token has more access than needed.", "Classic: only repo and read:org. Fine-grained: only Contents read, Issues read and write, Pull requests read, Metadata read, Members read."],
+      token_scope_missing: ["The token lacks a required scope.", "Classic: turn on repo and read:org. Fine-grained: Contents read, Issues read and write, Pull requests read, Metadata read, Members read."],
       sso_not_authorized: ["The organization's SSO has not authorized this token yet.", "Authorize SSO for the token on GitHub, then try again."],
       not_your_account: ["This token belongs to a different account.", "Use a token from the GitHub account you signed in with."],
       not_org_member: ["The token owner is not a member of this organization.", "Check the organization name, or join it first."],

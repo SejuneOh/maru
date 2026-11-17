@@ -21,6 +21,14 @@ function tokenSummary(h: TokenHealth, t: Dict, fmt: Format): string {
   return parts.join(" · ");
 }
 
+/** "@octocat · 12.01 만료", or "토큰 필요 · acme" when stopped, for the crowded top bar. */
+function tokenShort(h: TokenHealth, t: Dict, fmt: Format): string {
+  const tt = t.tokens;
+  const who = h.tokenOwnerLogin ? `@${h.tokenOwnerLogin}` : h.accountLogin;
+  if (h.tokenStatus !== "active") return `${tt.status[h.tokenStatus]} · ${who}`;
+  return `${who} · ${h.tokenExpiresAt ? tt.expiresOn(fmt.shortDate(h.tokenExpiresAt)) : tt.noExpiry}`;
+}
+
 /**
  * "Synced 3 min ago" for the top bar, refreshed every minute (every 5 s while a sync runs) while the tab is visible.
  * Members see nothing until GitHub is connected; admins get a link to settings and a "sync now" button.
@@ -104,25 +112,27 @@ export function SyncStatus({ className = "" }: { className?: string }) {
   } else if (data.lastSyncedAt) label = s.syncedAgo(fmt.relativeTime(data.lastSyncedAt));
   else label = s.never;
 
-  const tokens = [...data.tokens].sort((a, b) => urgency(a) - urgency(b));
-  const first = tokens[0];
+  // Only tokens that need a look reach the sync row; healthy ones are on the settings rows.
+  const attention = data.tokens.filter((h) => urgency(h) < 3).sort((a, b) => urgency(a) - urgency(b));
+  const first = attention[0];
 
   return (
-    <div className={`min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-small ${className}`}>
+    <div className={`items-center gap-x-2 gap-y-1 text-small max-[1023px]:min-w-0 max-[1023px]:flex-wrap ${className}`}>
       {first && (
         <Link
           href="/settings"
-          title={tokens.map((h) => tokenSummary(h, t, fmt)).join("\n")}
-          className="flex min-w-0 shrink items-center gap-2 rounded-control hover:bg-hover max-[1023px]:basis-full"
+          title={attention.map((h) => tokenSummary(h, t, fmt)).join("\n")}
+          className="flex min-w-0 shrink items-center gap-2 overflow-hidden rounded-control hover:bg-hover max-[1023px]:basis-full min-[1024px]:max-[1279px]:min-w-fit"
         >
-          <span className="shrink-0 empty:hidden">
-            <TokenMarks health={first} />
+          <span className="shrink-0">
+            <TokenMarks health={first} detailClassName="min-[1024px]:hidden" />
           </span>
-          <span className="min-w-0 truncate text-muted min-[1024px]:sr-only">{tokenSummary(first, t, fmt)}</span>
-          {tokens.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{tokens.length - 1}</span>}
+          <span className="min-w-0 truncate text-muted min-[1024px]:hidden">{tokenSummary(first, t, fmt)}</span>
+          <span className="min-w-0 max-w-[10rem] truncate text-muted max-[1279px]:hidden">{tokenShort(first, t, fmt)}</span>
+          {attention.length > 1 && <span className="shrink-0 font-mono text-meta text-muted">+{attention.length - 1}</span>}
         </Link>
       )}
-      <p className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={title}>
+      <p className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap ${first ? "min-[1024px]:max-[1279px]:sr-only" : ""}`} title={title}>
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${data.running ? "animate-pulse bg-ink-soft" : failed ? "bg-ink" : "bg-faint"}`}

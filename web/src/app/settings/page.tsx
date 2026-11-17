@@ -79,7 +79,7 @@ export default function SettingsPage() {
 
 const SMALL_BTN = "btn h-8 px-3 text-small";
 
-type Open ={ kind: "connect" } | { kind: "import"; connection: GithubConnection } | null;
+type Open = { kind: "connect" } | { kind: "import"; connection: GithubConnection } | null;
 
 function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<GithubConnection[]>; isAdmin: boolean }) {
   const t = useT();
@@ -153,7 +153,7 @@ function ConnectionsCard({ connections, isAdmin }: { connections: Loadable<Githu
           )}
         </div>
       )}
-      <div role="status" className="empty:hidden px-5 pb-3">
+      <div role="status" className="px-5 empty:pb-0 pb-3">
         {notice && (
           <p className="flex items-center gap-2.5 text-ui">
             <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-ink" />

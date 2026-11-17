@@ -1001,8 +1001,8 @@ export const ko = {
     errors: {
       invalid_token: ["GitHub이 이 토큰을 받지 않았습니다.", "토큰을 다시 복사해 넣거나, 만료되었다면 새로 만들어 주세요."],
       unsupported_token: ["이 종류의 토큰은 쓸 수 없습니다.", "github_pat_로 시작하는 fine-grained 토큰이나 ghp_로 시작하는 클래식 토큰을 넣어 주세요."],
-      token_scope_too_broad: ["토큰 권한이 필요보다 넓습니다.", "repo와 read:org만 켠 토큰을 새로 만들어 주세요."],
-      token_scope_missing: ["토큰에 필요한 권한이 빠졌습니다.", "repo와 read:org를 켠 토큰을 새로 만들어 주세요."],
+      token_scope_too_broad: ["토큰 권한이 필요보다 넓습니다.", "클래식 토큰은 repo와 read:org만 켜고, fine-grained 토큰은 Contents 읽기, Issues 읽기·쓰기, Pull requests 읽기, Metadata 읽기, Members 읽기만 주세요."],
+      token_scope_missing: ["토큰에 필요한 권한이 빠졌습니다.", "클래식 토큰은 repo와 read:org를 켜고, fine-grained 토큰은 Contents 읽기, Issues 읽기·쓰기, Pull requests 읽기, Metadata 읽기, Members 읽기를 주세요."],
       sso_not_authorized: ["조직의 SSO가 이 토큰을 아직 허락하지 않았습니다.", "GitHub에서 이 토큰의 SSO 승인을 마친 뒤 다시 시도해 주세요."],
       not_your_account: ["이 토큰은 지금 로그인한 계정의 것이 아닙니다.", "업무 보드에 로그인한 GitHub 계정으로 만든 토큰을 넣어 주세요."],
       not_org_member: ["토큰 주인이 이 조직의 구성원이 아닙니다.", "조직 이름을 확인하거나, 조직에 합류한 뒤 다시 시도해 주세요."],

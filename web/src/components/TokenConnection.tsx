@@ -116,7 +116,7 @@ export function urgency(h: Health): number {
 }
 
 /** "연결 멈춤" or "곧 만료" (accent, needs someone) or "동기화 쉬는 중" (neutral, clears itself). */
-export function TokenMarks({ health: h }: { health: Health }) {
+export function TokenMarks({ health: h, detailClassName = "" }: { health: Health; detailClassName?: string }) {
   const t = useT();
   const tt = t.tokens;
   const fmt = useFormat();
@@ -124,7 +124,7 @@ export function TokenMarks({ health: h }: { health: Health }) {
     return (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
         <Flag>{tt.stopped}</Flag>
-        <span className="font-semibold text-ink-soft">{tt.status[h.tokenStatus as keyof typeof tt.status]}</span>
+        <span className={`font-semibold text-ink-soft ${detailClassName}`}>{tt.status[h.tokenStatus as keyof typeof tt.status]}</span>
       </span>
     );
   }
@@ -132,7 +132,7 @@ export function TokenMarks({ health: h }: { health: Health }) {
     return (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
         <Flag>{tt.expiresSoon}</Flag>
-        {h.tokenDaysLeft !== null && <span className="font-semibold text-ink-soft tabular-nums">{tt.daysLeft(h.tokenDaysLeft)}</span>}
+        {h.tokenDaysLeft !== null && <span className={`font-semibold text-ink-soft tabular-nums ${detailClassName}`}>{tt.daysLeft(h.tokenDaysLeft)}</span>}
       </span>
     );
   }
@@ -140,7 +140,7 @@ export function TokenMarks({ health: h }: { health: Health }) {
     return (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1" title={tt.pausedHint}>
         <span className="tag">{tt.paused}</span>
-        <span className="text-muted tabular-nums">{tt.pausedUntil(fmt.time(h.syncPausedUntil))}</span>
+        <span className={`text-muted tabular-nums ${detailClassName}`}>{tt.pausedUntil(fmt.time(h.syncPausedUntil))}</span>
       </span>
     );
   }
@@ -338,7 +338,7 @@ export function TokenConnectFlow({ onClose, onConnected }: { onClose: () => void
     }
   };
 
-  const step: 1 | 2 | 3 = connected ? 3 : hasToken ? 2 : 1;
+  const step: 1 | 2 | 3 = connected ? 3 : hasToken || busy ? 2 : 1;
   const tokenBad = local === "needToken" || (failure !== null && !ORG_ERRORS.has(failure.reason) && failure.reason !== "network");
   const orgBad = local === "needOrg" || (failure !== null && ORG_ERRORS.has(failure.reason));
 
@@ -367,7 +367,7 @@ export function TokenConnectFlow({ onClose, onConnected }: { onClose: () => void
           <OrganizationImport connection={connected} fresh onClose={onClose} />
         </>
       ) : (
-        <form method="post" onSubmit={submit} noValidate className="flex flex-col gap-5" aria-busy={busy}>
+        <form onSubmit={submit} noValidate className="flex flex-col gap-5" aria-busy={busy}>
           <div className="grid gap-2">
             <label htmlFor={`${id}-token`} className="flex items-center gap-2 text-small font-semibold text-ink">
               <span aria-hidden className="font-mono text-meta text-muted">
@@ -656,7 +656,14 @@ export function OrganizationImport({
                 >
                   {tt.selectAll}
                 </button>
-                <button type="button" className="link text-small" onClick={() => setPicked(new Set())}>
+                <button
+                  type="button"
+                  className="link text-small"
+                  onClick={() => {
+                    setProblem(null);
+                    setPicked(new Set());
+                  }}
+                >
                   {tt.selectNone}
                 </button>
               </div>
@@ -863,7 +870,7 @@ export function ReplaceTokenForm({
   };
 
   return (
-    <form method="post" onSubmit={submit} noValidate className="secret mt-3 grid gap-3" aria-busy={busy}>
+    <form onSubmit={submit} noValidate className="secret mt-3 grid gap-3" aria-busy={busy}>
       <label htmlFor={`${id}-token`} className="text-small font-semibold text-ink">
         {tt.replaceField(connection.accountLogin)}
       </label>
