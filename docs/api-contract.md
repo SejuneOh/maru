@@ -788,7 +788,8 @@ type AddCommentRequest = { body: string };
 type PostedComment = {
   id: string | null;                 // null with mirrorPending: on GitHub, in the panel after the next sync
   author: { githubLogin: string | null; displayName: string | null };
-  body: string; createdAt: string; htmlUrl: string | null; mirrorPending: boolean;
+  body: string | null;               // null in a replay when the connection does not store bodies
+  createdAt: string; htmlUrl: string | null; mirrorPending: boolean;
 };
 
 type MeetingNoteSummary = {

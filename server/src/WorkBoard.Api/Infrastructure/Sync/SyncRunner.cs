@@ -42,7 +42,7 @@ public sealed class SyncRunner(
             }
             catch (Exception e)
             {
-                logger.LogError("Sync for tenant {TenantId} crashed: {Error}", tenantId, Describe(e));
+                logger.LogError("Sync for tenant {TenantId} crashed: {Error}", tenantId, Detail(e));
             }
             finally
             {
@@ -132,7 +132,7 @@ public sealed class SyncRunner(
                 }
                 catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
-                    logger.LogWarning("Sync of {Repository} failed: {Error}", repo.FullName, Describe(e));
+                    logger.LogWarning("Sync of {Repository} failed: {Error}", repo.FullName, Detail(e));
                     errors.Add($"{repo.FullName}: {Describe(e)}");
                     if (e is GitHubSourceException { Kind: GitHubSourceErrorKind.RateLimited or GitHubSourceErrorKind.Unauthorized })
                         break;
@@ -145,12 +145,15 @@ public sealed class SyncRunner(
         }
         catch (Exception e)
         {
-            logger.LogWarning("Sync of connection {ConnectionId} failed: {Error}", connection.Id, Describe(e));
+            logger.LogWarning("Sync of connection {ConnectionId} failed: {Error}", connection.Id, Detail(e));
             errors.Add(Describe(e));
         }
 
         await FinishRunAsync(runId, errors, issues, pullRequests, comments, remaining);
     }
+
+    // Type, message and stack for the log, with anything shaped like a token masked.
+    private static string Detail(Exception e) => TokenMasker.Apply(e.ToString())!;
 
     private static string Describe(Exception e) => TokenMasker.Apply(e switch
     {

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Sync;
 using WorkBoard.Api.Tests.Fakes;
@@ -47,9 +48,25 @@ public class SyncEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 
     public SyncEndpointTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private HttpClient Client(FakeSource fake, string login, bool configured = true, string clientSecret = "secret") =>
+    private sealed class CapturingLogs : ILoggerProvider, ILogger
+    {
+        public List<string> Lines { get; } = [];
+        public ILogger CreateLogger(string categoryName) => this;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (Lines)
+                Lines.Add(formatter(state, exception) + (exception is null ? "" : "\n" + exception));
+        }
+        public void Dispose() { }
+    }
+
+    private HttpClient Client(FakeSource fake, string login, bool configured = true, string clientSecret = "secret", ILoggerProvider? logs = null) =>
         _factory.WithWebHostBuilder(b =>
         {
+            if (logs is not null)
+                b.ConfigureServices(s => s.AddSingleton(logs));
             b.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["GitHub:App:AppId"] = configured ? "123" : "0",
@@ -351,6 +368,29 @@ public class SyncEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var error = await t.ScalarAsync<string>("select error from sync_runs where tenant_id = @tid", new { tid = t.Id });
         Assert.DoesNotContain(token, error);
         Assert.Contains("[token]", error);
+    }
+
+    [DbFact]
+    public async Task A_failed_sync_is_logged_with_exception_type_and_stack_but_without_the_token()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        await ConnectAsync(t);
+        var (admin, _) = await AdminAsync(t);
+        const string token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+        var logs = new CapturingLogs();
+        var fake = new FakeSource { ThrowOnList = new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "rejected " + token) };
+        var client = Client(fake, admin, logs: logs);
+
+        await client.PostAsync("/api/sync/run", null);
+        await WaitIdleAsync(client);
+
+        string line;
+        lock (logs.Lines)
+            line = logs.Lines.Single(l => l.Contains("failed:"));
+        Assert.DoesNotContain(token, line);
+        Assert.Contains("[token]", line);
+        Assert.Contains(nameof(GitHubSourceException), line);
+        Assert.Contains(" at ", line);
     }
 
     [DbFact]

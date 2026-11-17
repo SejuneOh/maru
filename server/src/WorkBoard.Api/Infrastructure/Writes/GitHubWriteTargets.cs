@@ -4,7 +4,7 @@ using WorkBoard.Api.Infrastructure.Identity;
 
 namespace WorkBoard.Api.Infrastructure.Writes;
 
-public sealed record GitHubWriteTarget(Guid RepositoryId, GitHubRepoRef Repo, bool Archived);
+public sealed record GitHubWriteTarget(Guid RepositoryId, GitHubRepoRef Repo, bool Archived, bool StoreBodies = true);
 
 public interface IGitHubWriteTargets
 {
@@ -14,14 +14,14 @@ public interface IGitHubWriteTargets
 
 public sealed class GitHubWriteTargets(TenantDb db, ICurrentUser user) : IGitHubWriteTargets
 {
-    private sealed record Row(string FullName, Guid ConnectionId, string AuthKind, long? InstallationId, bool Archived);
+    private sealed record Row(string FullName, Guid ConnectionId, string AuthKind, long? InstallationId, bool Archived, bool StoreBodies);
 
     public async Task<GitHubWriteTarget?> ResolveAsync(Guid repositoryId, CancellationToken ct)
     {
         var tenantId = user.Identity.TenantId;
         var row = await db.ReadAsync(session => session.QuerySingleOrDefaultAsync<Row>("""
             select r.full_name as FullName, c.id as ConnectionId, c.auth_kind as AuthKind, c.installation_id as InstallationId,
-                   r.archived as Archived
+                   r.archived as Archived, c.store_bodies as StoreBodies
               from repositories r
               join github_connections c on c.tenant_id = r.tenant_id and c.id = r.connection_id
              where r.tenant_id = @tenantId and r.id = @repositoryId
@@ -36,6 +36,6 @@ public sealed class GitHubWriteTargets(TenantDb db, ICurrentUser user) : IGitHub
                 new GitHubRepoRef(
                     new GitHubConnectionRef(tenantId, row.ConnectionId,
                         row.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, row.InstallationId),
-                    row.FullName[..slash], row.FullName[(slash + 1)..]), row.Archived);
+                    row.FullName[..slash], row.FullName[(slash + 1)..]), row.Archived, row.StoreBodies);
     }
 }

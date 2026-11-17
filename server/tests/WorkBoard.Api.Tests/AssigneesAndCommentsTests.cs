@@ -135,6 +135,42 @@ public class AssigneesAndCommentsTests(WebApplicationFactory<Program> factory) :
         t.ScalarAsync<int>("select count(*)::int from audit_log where tenant_id = @tid and action = @action", new { tid = t.Id, action });
 
     [DbFact]
+    public async Task Comment_text_reaches_neither_comments_nor_the_stored_idempotency_response_when_store_bodies_is_off()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+        await t.ExecAsync("update github_connections set auth_kind = 'token', store_bodies = false where id = @id", new { id = t.ConnectionId });
+        const string text = "private words nobody may store";
+
+        var first = await CommentAsync(c, text, "keep-out");
+        var replay = await CommentAsync(c, text, "keep-out");
+
+        Assert.Equal(HttpStatusCode.Created, first.Status);
+        Assert.Equal(text, first.Body.GetProperty("body").GetString());
+        Assert.Equal(HttpStatusCode.Created, replay.Status);
+        Assert.Equal(JsonValueKind.Null, replay.Body.GetProperty("body").ValueKind);
+        Assert.Equal(first.Body.GetProperty("id").GetString(), replay.Body.GetProperty("id").GetString());
+        Assert.Equal(1, c.Writer.CommentCalls);
+        Assert.Equal("", await t.ScalarAsync<string>("select body from comments where issue_id = @issue", new { issue = c.Issue }));
+        Assert.Equal(0, await t.ScalarAsync<int>(
+            "select count(*)::int from idempotency_keys where tenant_id = @tid and response::text like '%' || @text || '%'", new { tid = t.Id, text }));
+        Assert.Equal(0, await t.ScalarAsync<int>(
+            "select count(*)::int from audit_log where tenant_id = @tid and (before::text like '%' || @text || '%' or after::text like '%' || @text || '%')", new { tid = t.Id, text }));
+    }
+
+    [DbFact]
+    public async Task Comment_replay_keeps_the_body_when_store_bodies_is_on()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var c = await CardAsync(t);
+
+        await CommentAsync(c, "kept text", "keep-in");
+        var replay = await CommentAsync(c, "kept text", "keep-in");
+
+        Assert.Equal("kept text", replay.Body.GetProperty("body").GetString());
+    }
+
+    [DbFact]
     public async Task Assignees_are_replaced_on_github_then_in_the_mirror_with_an_audit_row()
     {
         await using var t = await TestTenant.CreateAsync(factory);

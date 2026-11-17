@@ -314,7 +314,7 @@ export type AddCommentRequest = { body: string };
 export type PostedComment = {
   id: string | null;
   author: { githubLogin: string | null; displayName: string | null };
-  body: string;
+  body: string | null; // null in a replay when the connection does not store bodies
   createdAt: string;
   htmlUrl: string | null;
   mirrorPending: boolean;
