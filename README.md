@@ -66,6 +66,8 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 | `GitHub__App__PrivateKeyPath` | 내려받은 `.pem` 경로. 절대 경로 또는 API 폴더 기준 상대 경로. `*.pem`은 `.gitignore`에 있음 |
 | `GitHub__App__Slug` | App 주소의 이름. **필수**: API가 `<Slug>[bot]`으로 App이 쓴 댓글·본문을 알아보고(작성자 표시), 중단된 요청을 다시 보낼 때 이미 만든 이슈·댓글을 찾는 데 씀. 비우면 작성자가 봇으로 보이고, 이어받는 재시도는 504로 멈춤. 화면의 설치 링크에도 씀 |
 
+토큰 연결의 저장 토큰을 암호화하는 키는 `GitHub__Credentials__KeyFile`(키 파일 경로, 모드 600, 저장소 밖)로 넣습니다. 개발용 키 파일 만드는 법과 교체 절차는 [docs/auth-and-github.md](docs/auth-and-github.md)의 "연결별 GitHub 자격 증명"에 있습니다. `*.keyring.json`, `credential-keys*.json`은 `.gitignore`에 있습니다.
+
 ### 웹훅 (실시간 반영)
 
 `GitHub__App__WebhookSecret`이 있어야 웹훅이 켜집니다. 비어 있거나 `Sync:Enabled=false`이면 `POST /api/github/webhook`은 503이고 아무것도 저장하지 않습니다. 주기 동기화는 기본 10분이고, 최근 30분 안에 검증된 전달이 있을 때만 60분 간격의 보정 작업이 됩니다. 전달이 끊기면 다시 10분으로 돌아갑니다(`Sync:IntervalMinutes`로 직접 지정하면 그 값만 씁니다).

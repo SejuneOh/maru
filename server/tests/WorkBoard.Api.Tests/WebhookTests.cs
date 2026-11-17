@@ -26,11 +26,11 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         public List<(string Name, DateTimeOffset? Since)> Reads { get; } = [];
         public SourceRepository? Repository { get; set; }
 
-        public Task<RepositoryList> ListRepositoriesAsync(long installationId, CancellationToken ct) =>
+        public Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct) =>
             Task.FromResult(new RepositoryList([], null));
 
         public Task<RepositorySnapshot> ReadRepositoryAsync(
-            long installationId, string owner, string name, DateTimeOffset? since, CancellationToken ct)
+            GitHubConnectionRef connection, string owner, string name, DateTimeOffset? since, CancellationToken ct)
         {
             lock (Reads)
                 Reads.Add(($"{owner}/{name}", since));

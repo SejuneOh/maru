@@ -12,7 +12,7 @@ public sealed record AddCommentRequest(string? Body);
 // 201 body. Id is the mirrored comment, null when the mirror could not store it yet (MirrorPending): the comment is on
 // GitHub and the next sync brings it.
 public sealed record PostedComment(
-    Guid? Id, CommentAuthor Author, string Body, DateTime CreatedAt, string? HtmlUrl, bool MirrorPending);
+    Guid? Id, CommentAuthor Author, string? Body, DateTime CreatedAt, string? HtmlUrl, bool MirrorPending);
 
 // Posts one comment through the App (bot author, footer naming the caller). Not safe to repeat, so every comment
 // carries a marker derived from the Idempotency-Key; a retry that takes over a stale reservation looks for it before
@@ -106,8 +106,10 @@ public sealed class CommentWrites(
                 log.LogError(e, "Comment {CommentId} was posted on GitHub but its audit row failed", posted.Id);
             }
 
-            return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created,
-                new PostedComment(id, author, body, posted.CreatedAt.UtcDateTime, posted.HtmlUrl, id is null)), true);
+            var response = new PostedComment(id, author, body, posted.CreatedAt.UtcDateTime, posted.HtmlUrl, id is null);
+            // The live answer echoes the body; the copy kept for replays must not hold text the mirror is not allowed to store.
+            return new ExternalOutcome(new WriteResult(StatusCodes.Status201Created, response), true,
+                target.StoreBodies ? null : new WriteResult(StatusCodes.Status201Created, response with { Body = null }));
         }, ct, log);
 
     private static ExternalOutcome Fail(int status, string code) => new(new WriteResult(status, new ErrorBody(code)), false);

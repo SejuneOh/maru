@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens tokens, IOptions<GitHubAppOptions> options) : IGitHubWriter
+public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials, IOptions<GitHubAppOptions> options) : IGitHubWriter
 {
     private const string ApiBase = "https://api.github.com";
 
@@ -115,7 +115,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
             string token;
             try
             {
-                token = await tokens.GetAsync(repo.InstallationId, ct);
+                token = (await credentials.GetAsync(repo.Connection, ct)).Token;
             }
             catch (GitHubSourceException e)
             {
@@ -148,7 +148,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubInstallationTokens toke
             {
                 if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
                 {
-                    tokens.Invalidate(repo.InstallationId);
+                    credentials.Invalidate(repo.Connection);
                     continue;
                 }
                 if (!response.IsSuccessStatusCode)

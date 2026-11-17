@@ -104,9 +104,9 @@ public sealed record RepositoryList(IReadOnlyList<SourceRepository> Repositories
 // Read-only access to GitHub through an installation token. Throws GitHubSourceException.
 public interface IGitHubSource
 {
-    Task<RepositoryList> ListRepositoriesAsync(long installationId, CancellationToken ct);
+    Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct);
 
     // since == null reads everything.
     Task<RepositorySnapshot> ReadRepositoryAsync(
-        long installationId, string owner, string name, DateTimeOffset? since, CancellationToken ct);
+        GitHubConnectionRef connection, string owner, string name, DateTimeOffset? since, CancellationToken ct);
 }

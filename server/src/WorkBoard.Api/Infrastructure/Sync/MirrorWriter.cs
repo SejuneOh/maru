@@ -46,6 +46,8 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         var db = new Db(conn, tx, tenantId, ct);
         await db.SetTenantAsync();
 
+        var storeBodies = await db.Scalar<bool?>(
+            "select store_bodies from github_connections where tenant_id = @tenantId and id = @connectionId", new { connectionId }) ?? true;
         var repoId = await UpsertRepositoryAsync(db, connectionId, snapshot.Repository);
         await UpsertUsersAsync(db, SnapshotUsers(snapshot));
         var milestones = await UpsertMilestonesAsync(db, repoId, snapshot.Milestones);
@@ -53,14 +55,14 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         var before = await db.Query<StoredState>(
             "select github_issue_id as GithubId, state as State, state_reason as StateReason from issues where tenant_id = @tenantId and github_issue_id = any(@ids)",
             new { ids = snapshot.Issues.Select(i => i.DatabaseId).ToArray() });
-        var issues = await UpsertIssuesAsync(db, repoId, snapshot.Issues, milestones);
+        var issues = await UpsertIssuesAsync(db, repoId, snapshot.Issues, milestones, storeBodies);
         await db.Exec(Features.MeetingNotes.PendingLink.LinkMirroredSql, new { repoId });
         await RecordStateChangesAsync(db, issues, before.ToDictionary(b => b.GithubId));
         await ReplaceIssueChildrenAsync(db, repoId, issues, labels);
         await ResolveParentsAsync(db, issues);
         var pullRequests = await UpsertPullRequestsAsync(db, repoId, snapshot.PullRequests);
         await ReplaceClosingLinksAsync(db, repoId, pullRequests);
-        var comments = await UpsertCommentsAsync(db, repoId, snapshot.Comments);
+        var comments = await UpsertCommentsAsync(db, repoId, snapshot.Comments, storeBodies);
 
         await tx.CommitAsync(ct);
         return new MirrorResult(repoId, issues.Count, pullRequests.Count, comments);
@@ -90,7 +92,9 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         await UpsertUsersAsync(db, [issue.Author, .. issue.Assignees]);
         var milestones = await db.Query<(int Number, Guid Id)>(
             "select number, id from milestones where tenant_id = @tenantId and repository_id = @repositoryId", new { repositoryId });
-        var applied = await UpsertIssuesAsync(db, repositoryId, [issue], milestones.ToDictionary(m => m.Number, m => m.Id), keepParent: true);
+        var applied = await UpsertIssuesAsync(
+            db, repositoryId, [issue], milestones.ToDictionary(m => m.Number, m => m.Id), await StoreBodiesOfRepositoryAsync(db, repositoryId),
+            keepParent: true);
 
         Guid issueId;
         if (applied.Count == 0)
@@ -131,10 +135,17 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         await db.SetTenantAsync();
 
         await UpsertUsersAsync(db, [comment.Author]);
-        var written = await UpsertCommentsAsync(db, repositoryId, [comment]);
+        var written = await UpsertCommentsAsync(db, repositoryId, [comment], await StoreBodiesOfRepositoryAsync(db, repositoryId));
         await tx.CommitAsync(ct);
         return written > 0;
     }
+
+    private static async Task<bool> StoreBodiesOfRepositoryAsync(Db db, Guid repositoryId) =>
+        await db.Scalar<bool?>("""
+            select c.store_bodies from repositories r
+              join github_connections c on c.tenant_id = r.tenant_id and c.id = r.connection_id
+             where r.tenant_id = @tenantId and r.id = @repositoryId
+            """, new { repositoryId }) ?? true;
 
     private sealed record PreviousState(string State, string? StateReason);
 
@@ -354,7 +365,8 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     }
 
     private static async Task<List<(SourceIssue Issue, Guid Id)>> UpsertIssuesAsync(
-        Db db, Guid repoId, IReadOnlyList<SourceIssue> issues, Dictionary<int, Guid> milestones, bool keepParent = false)
+        Db db, Guid repoId, IReadOnlyList<SourceIssue> issues, Dictionary<int, Guid> milestones, bool storeBodies,
+        bool keepParent = false)
     {
         var applied = new List<(SourceIssue, Guid)>();
         foreach (var i in issues)
@@ -377,7 +389,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                 returning id
                 """, new
             {
-                repoId, githubId = i.DatabaseId, number = i.Number, title = Clean(i.Title), body = Clean(i.Body), issueType = i.IssueType,
+                repoId, githubId = i.DatabaseId, number = i.Number, title = Clean(i.Title), body = storeBodies ? Clean(i.Body) : null, issueType = i.IssueType,
                 state = i.State, stateReason = i.StateReason, author = i.Author?.Id, createdAt = Utc(i.CreatedAt), closedAt = Utc(i.ClosedAt),
                 updatedAt = Utc(i.UpdatedAt), htmlUrl = i.HtmlUrl, nodeId = i.NodeId, milestoneId, parentGithubId = i.ParentDatabaseId, keepParent,
             });
@@ -478,7 +490,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
         }
     }
 
-    private static async Task<int> UpsertCommentsAsync(Db db, Guid repoId, IReadOnlyList<SourceComment> comments)
+    private static async Task<int> UpsertCommentsAsync(Db db, Guid repoId, IReadOnlyList<SourceComment> comments, bool storeBodies)
     {
         if (comments.Count == 0)
             return 0;
@@ -502,7 +514,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
                  where excluded.github_updated_at >= comments.github_updated_at
                 """, new
             {
-                issueId, githubId = c.Id, author = c.Author?.Id, body = Clean(c.Body) ?? "",
+                issueId, githubId = c.Id, author = c.Author?.Id, body = storeBodies ? Clean(c.Body) ?? "" : "",
                 createdAt = Utc(c.CreatedAt), updatedAt = Utc(c.UpdatedAt),
             });
         }

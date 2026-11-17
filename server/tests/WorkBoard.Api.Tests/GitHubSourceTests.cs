@@ -28,14 +28,17 @@ public class GitHubSourceTests
         }
     }
 
-    private sealed class FakeTokens : IGitHubInstallationTokens
+    private static readonly GitHubConnectionRef Conn = new(Guid.Empty, Guid.Empty, GitHubAuthKind.App, 9);
+
+    private sealed class FakeTokens : IGitHubCredentials
     {
         public int Invalidations { get; private set; }
         public int Mints { get; private set; }
 
-        public Task<string> GetAsync(long installationId, CancellationToken ct) => Task.FromResult($"tok-{++Mints}");
+        public Task<GitHubCredential> GetAsync(GitHubConnectionRef connection, CancellationToken ct) =>
+            Task.FromResult(new GitHubCredential($"tok-{++Mints}", GitHubAuthKind.App));
 
-        public void Invalidate(long installationId) => Invalidations++;
+        public void Invalidate(GitHubConnectionRef connection) => Invalidations++;
     }
 
     private sealed class FakeEnv : IHostEnvironment
@@ -94,7 +97,7 @@ public class GitHubSourceTests
     {
         var (source, handler, _) = Create(Route);
 
-        var snap = await source.ReadRepositoryAsync(9, "octo-org", "hello", null, CancellationToken.None);
+        var snap = await source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, CancellationToken.None);
 
         Assert.Equal(new SourceRepository(1001, "hello", "octo-org/hello", "https://github.com/octo-org/hello", false), snap.Repository);
 
@@ -148,7 +151,7 @@ public class GitHubSourceTests
         var (source, handler, _) = Create(Route);
         var since = DateTimeOffset.Parse("2026-01-01T12:00:00+00:00");
 
-        await source.ReadRepositoryAsync(9, "octo-org", "hello", since, CancellationToken.None);
+        await source.ReadRepositoryAsync(Conn, "octo-org", "hello", since, CancellationToken.None);
 
         var issueCalls = handler.Requests
             .Where(r => r.Uri.AbsolutePath == "/graphql" && !r.Body.Contains("pullRequests("))
@@ -168,7 +171,7 @@ public class GitHubSourceTests
         var (source, _, _) = Create(Route);
 
         var snap = await source.ReadRepositoryAsync(
-            9, "octo-org", "hello", DateTimeOffset.Parse("2026-01-01T00:00:00Z"), CancellationToken.None);
+            Conn, "octo-org", "hello", DateTimeOffset.Parse("2026-01-01T00:00:00Z"), CancellationToken.None);
 
         Assert.Equal([11], snap.PullRequests.Select(p => p.Number));
     }
@@ -185,7 +188,7 @@ public class GitHubSourceTests
             return Ok($$"""{"total_count":101,"repositories":[{{string.Join(",", repos)}}]}""");
         });
 
-        var list = await source.ListRepositoriesAsync(9, CancellationToken.None);
+        var list = await source.ListRepositoriesAsync(Conn, CancellationToken.None);
 
         Assert.Equal(101, list.Repositories.Count);
         Assert.True(list.Repositories[0].Archived);
@@ -204,7 +207,7 @@ public class GitHubSourceTests
             return response;
         });
 
-        var list = await source.ListRepositoriesAsync(9, CancellationToken.None);
+        var list = await source.ListRepositoriesAsync(Conn, CancellationToken.None);
 
         Assert.Equal(new RateLimitInfo(123, DateTimeOffset.FromUnixTimeSeconds(1767229200)), list.RateLimit);
     }
@@ -217,7 +220,7 @@ public class GitHubSourceTests
     {
         var (source, _, _) = Create(_ => Status(code, """{"message":"secret-ish detail"}"""));
 
-        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(9, CancellationToken.None));
+        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(Conn, CancellationToken.None));
 
         Assert.Equal(kind, e.Kind);
         Assert.DoesNotContain("secret-ish", e.Message);
@@ -235,7 +238,7 @@ public class GitHubSourceTests
             return response;
         });
 
-        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(9, CancellationToken.None));
+        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(Conn, CancellationToken.None));
 
         Assert.Equal(GitHubSourceErrorKind.RateLimited, e.Kind);
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1767229200), e.RetryAt);
@@ -247,7 +250,7 @@ public class GitHubSourceTests
         var calls = 0;
         var (source, _, tokens) = Create(_ => ++calls == 1 ? Status(HttpStatusCode.Unauthorized) : Ok(Fixture("installation_repos.json")));
 
-        var list = await source.ListRepositoriesAsync(9, CancellationToken.None);
+        var list = await source.ListRepositoriesAsync(Conn, CancellationToken.None);
 
         Assert.Single(list.Repositories);
         Assert.Equal(1, tokens.Invalidations);
@@ -259,7 +262,7 @@ public class GitHubSourceTests
     {
         var (source, _, _) = Create(_ => Status(HttpStatusCode.Unauthorized));
 
-        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(9, CancellationToken.None));
+        var e = await Assert.ThrowsAsync<GitHubSourceException>(() => source.ListRepositoriesAsync(Conn, CancellationToken.None));
 
         Assert.Equal(GitHubSourceErrorKind.Unauthorized, e.Kind);
     }
@@ -276,7 +279,7 @@ public class GitHubSourceTests
             : Route(r));
 
         var e = await Assert.ThrowsAsync<GitHubSourceException>(
-            () => source.ReadRepositoryAsync(9, "octo-org", "hello", null, CancellationToken.None));
+            () => source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, CancellationToken.None));
 
         Assert.Equal(kind, e.Kind);
     }
@@ -293,7 +296,7 @@ public class GitHubSourceTests
             return Ok(json);
         });
 
-        var snap = await source.ReadRepositoryAsync(9, "octo-org", "hello", null, CancellationToken.None);
+        var snap = await source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, CancellationToken.None);
 
         Assert.Equal([10, 11], snap.PullRequests.Select(p => p.Number));
     }
@@ -306,7 +309,7 @@ public class GitHubSourceTests
             : Route(r));
 
         var e = await Assert.ThrowsAsync<GitHubSourceException>(
-            () => source.ReadRepositoryAsync(9, "octo-org", "gone", null, CancellationToken.None));
+            () => source.ReadRepositoryAsync(Conn, "octo-org", "gone", null, CancellationToken.None));
 
         Assert.Equal(GitHubSourceErrorKind.NotFound, e.Kind);
     }
@@ -324,7 +327,7 @@ public class GitHubSourceTests
         });
 
         var e = await Assert.ThrowsAsync<GitHubSourceException>(
-            () => source.ReadRepositoryAsync(9, "octo-org", "hello", null, CancellationToken.None));
+            () => source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, CancellationToken.None));
 
         Assert.Equal(GitHubSourceErrorKind.RateLimited, e.Kind);
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1767229200), e.RetryAt);
@@ -342,7 +345,7 @@ public class GitHubSourceTests
             return Ok("""{"data":{"repository":{"databaseId":1,"nameWithOwner":"a/b","isArchived":false,"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[null,{"databaseId":2,"id":"p","number":2,"title":"t","state":"OPEN","isDraft":false,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","url":"u","author":null,"reviewRequests":{"nodes":[null,{"requestedReviewer":null}]},"closingIssuesReferences":{"nodes":[null]}}]}}}}""");
         });
 
-        var snap = await source.ReadRepositoryAsync(9, "octo-org", "hello", null, CancellationToken.None);
+        var snap = await source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, CancellationToken.None);
 
         Assert.Equal(1, Assert.Single(snap.Issues).Number);
         Assert.Empty(snap.Issues[0].Assignees);
@@ -356,7 +359,7 @@ public class GitHubSourceTests
         var (source, _, _) = Create(r => r.Uri.AbsolutePath == "/graphql" ? Ok("""{"data":{"repository":null}}""") : Route(r));
 
         var e = await Assert.ThrowsAsync<GitHubSourceException>(
-            () => source.ReadRepositoryAsync(9, "octo-org", "gone", null, CancellationToken.None));
+            () => source.ReadRepositoryAsync(Conn, "octo-org", "gone", null, CancellationToken.None));
 
         Assert.Equal(GitHubSourceErrorKind.NotFound, e.Kind);
     }
@@ -369,7 +372,7 @@ public class GitHubSourceTests
         await cts.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => source.ReadRepositoryAsync(9, "octo-org", "hello", null, cts.Token));
+            () => source.ReadRepositoryAsync(Conn, "octo-org", "hello", null, cts.Token));
 
         Assert.Empty(handler.Requests);
     }

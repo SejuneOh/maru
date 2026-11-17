@@ -23,7 +23,7 @@ public sealed class GitHubWriteException(
     public bool NoResponse { get; } = noResponse;
 }
 
-public sealed record GitHubRepoRef(long InstallationId, string Owner, string Name);
+public sealed record GitHubRepoRef(GitHubConnectionRef Connection, string Owner, string Name);
 
 public enum IssueCloseReason
 {

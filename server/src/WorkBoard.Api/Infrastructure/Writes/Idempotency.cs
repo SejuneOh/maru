@@ -10,7 +10,8 @@ namespace WorkBoard.Api.Infrastructure.Writes;
 public sealed record WriteResult(int StatusCode, object? Body = null);
 
 // Result of the external call in two-phase mode. SideEffectPossible says whether GitHub may have applied the change.
-public sealed record ExternalOutcome(WriteResult Result, bool SideEffectPossible);
+// Stored, when given, replaces Result in the response kept for replays (e.g. to leave out text the mirror must not keep).
+public sealed record ExternalOutcome(WriteResult Result, bool SideEffectPossible, WriteResult? Stored = null);
 
 // What the external call is told about its own start. TakenOverFrom is the creation time of the stale pending
 // reservation it replaced: an earlier attempt with this key may already have reached GitHub, so a call that
@@ -164,13 +165,14 @@ public static class Idempotency
         }
 
         var result = Render(outcome.Result);
+        var stored = outcome.Stored is null ? result : Render(outcome.Stored);
         if (result.StatusCode is >= 200 and < 300 || outcome.SideEffectPossible)
         {
             var updated = await db.WriteAsync(session => session.ExecuteAsync("""
                 update idempotency_keys
                    set state = 'completed', status_code = @statusCode, response = cast(@response as jsonb)
                  where tenant_id = @tenantId and key = @key and state = 'pending' and reservation_id = @reservationId
-                """, new { tenantId, key, reservationId, statusCode = result.StatusCode, response = result.Json }),
+                """, new { tenantId, key, reservationId, statusCode = result.StatusCode, response = stored.Json }),
                 CancellationToken.None);
             if (updated == 0)
                 log?.LogWarning("Idempotency reservation {Key} was taken over before its call completed", key);
