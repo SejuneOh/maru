@@ -449,8 +449,8 @@ export function AccountMenu() {
         <span aria-hidden className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-ink text-meta font-semibold text-on-ink">
           {initials(name)}
         </span>
-        <span className="hidden max-w-[10rem] truncate min-[1024px]:inline">{name}</span>
-        <span className="sr-only min-[1024px]:hidden">{name}</span>
+        <span className="hidden max-w-[10rem] truncate min-[1280px]:inline">{name}</span>
+        <span className="sr-only min-[1280px]:hidden">{name}</span>
       </span>
       <button
         type="button"

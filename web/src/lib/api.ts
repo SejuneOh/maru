@@ -10,9 +10,13 @@ import type {
   BoardIssue,
   ConnectionRequest,
   ConnectionRequestCheck,
+  ConnectGithubTokenRequest,
   CreateIssueRequest,
   CreatedInvitation,
   CreatedIssue,
+  GithubConnection,
+  ImportOrganizationRequest,
+  ImportOrganizationResult,
   InvitationPreview,
   JoinedTenant,
   MeetingNote,
@@ -22,11 +26,14 @@ import type {
   PendingActionItemIssue,
   PendingIssue,
   PostedComment,
+  ReplaceGithubTokenRequest,
+  RepositorySelectionResult,
   SetAssigneesRequest,
   Sprint,
   SprintForm,
   SprintIssuesResult,
   SyncStatus,
+  UpdateRepositorySelectionRequest,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
@@ -35,6 +42,8 @@ const DEV_TENANT_KEY = "workboard.devTenant";
 export const DEV_USER_EVENT = "workboard:dev-user";
 /** Fired after a write that changes issues, so every board refetches its issue lists. */
 export const ISSUES_CHANGED_EVENT = "workboard:issues-changed";
+/** Fired after a connection or its token changes, so the sync status refetches. */
+export const SYNC_CHANGED_EVENT = "workboard:sync-changed";
 
 /** The same login can belong to several tenants, so a dev identity is the pair. */
 export type DevIdentity = { login: string; tenantId: string | null };
@@ -153,6 +162,41 @@ export function checkConnectionRequest(accountId?: number): Promise<ConnectionRe
 /** `DELETE /api/connections/github/request` (admin). */
 export async function cancelConnectionRequest(): Promise<void> {
   await request<null>(CONNECTION_REQUEST_PATH, { method: "DELETE" });
+}
+
+/** `POST /api/connections/github-token` (admin). The token goes in the body once and is never returned. */
+export function connectGithubToken(token: string, organization: string): Promise<GithubConnection> {
+  return apiPost<GithubConnection>("/api/connections/github-token", { token, organization } satisfies ConnectGithubTokenRequest);
+}
+
+/** `PUT /api/connections/{id}/github-token` (admin). */
+export function replaceGithubToken(id: string, token: string): Promise<GithubConnection> {
+  return request<GithubConnection>(`/api/connections/${encodeURIComponent(id)}/github-token`, {
+    method: "PUT",
+    body: { token } satisfies ReplaceGithubTokenRequest,
+  });
+}
+
+/** `DELETE /api/connections/{id}/github-token` (admin): disconnects and deletes the stored token. */
+export async function deleteGithubToken(id: string): Promise<void> {
+  await request<null>(`/api/connections/${encodeURIComponent(id)}/github-token`, { method: "DELETE" });
+}
+
+export function organizationPreviewPath(id: string): string {
+  return `/api/connections/${encodeURIComponent(id)}/organization/preview`;
+}
+
+/** `POST .../organization/import` (admin): replaces the selection and optionally makes projects from teams. */
+export function importOrganization(id: string, req: ImportOrganizationRequest): Promise<ImportOrganizationResult> {
+  return apiPost<ImportOrganizationResult>(`/api/connections/${encodeURIComponent(id)}/organization/import`, req);
+}
+
+/** `PUT .../organization/repositories` (admin): replaces the selection; an empty list stops every repository. */
+export function updateRepositorySelection(id: string, repositories: number[]): Promise<RepositorySelectionResult> {
+  return request<RepositorySelectionResult>(`/api/connections/${encodeURIComponent(id)}/organization/repositories`, {
+    method: "PUT",
+    body: { repositories } satisfies UpdateRepositorySelectionRequest,
+  });
 }
 
 export const MILESTONES_PATH = "/api/milestones";

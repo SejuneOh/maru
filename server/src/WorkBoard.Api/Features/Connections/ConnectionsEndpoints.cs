@@ -22,6 +22,7 @@ public sealed record GithubConnection(
     bool TokenExpiresSoon,
     int? TokenDaysLeft,
     DateTime? SyncPausedUntil,
+    bool StoreBodies,
     [property: System.Text.Json.Serialization.JsonIgnore] string? TokenScopesText)
 {
     public string[]? TokenScopes => TokenScopesText is null ? null : TokenScopesText.Length == 0 ? [] : TokenScopesText.Split(',');
@@ -48,6 +49,7 @@ public static class ConnectionsEndpoints
         case when k.status = 'active' and k.expires_at is not null
              then greatest(0, ceil(extract(epoch from (k.expires_at - now())) / 86400))::int end as token_days_left,
         case when c.auth_kind = 'token' and c.sync_not_before > now() then c.sync_not_before end as sync_paused_until,
+        c.store_bodies,
         array_to_string(k.scopes, ',') as token_scopes_text
         """;
 

@@ -21,6 +21,7 @@ public sealed record SyncStatus(
 public sealed record TokenHealthStatus(
     Guid ConnectionId,
     string AccountLogin,
+    string? TokenOwnerLogin,
     string TokenStatus,
     DateTime? TokenExpiresAt,
     bool TokenExpiresSoon,
@@ -57,7 +58,7 @@ public static class SyncEndpoints
             """, new { tenantId }, cancellationToken: ct));
 
         var tokens = (await conn.QueryAsync<TokenHealthStatus>(new CommandDefinition("""
-            select c.id as ConnectionId, c.account_login as AccountLogin,
+            select c.id as ConnectionId, c.account_login as AccountLogin, k.owner_login as TokenOwnerLogin,
                    case when k.status is null then 'token_required'
                         when k.status in ('active', 'invalid') and k.expires_at <= now() then 'expired'
                         else k.status end as TokenStatus,

@@ -123,6 +123,8 @@ export type GithubConnection = {
   syncPausedUntil: string | null;
   /** Classic scopes; empty for a fine-grained token. */
   tokenScopes: string[] | null;
+  /** Issue and comment text is mirrored. Off for token connections; there is no endpoint to change it. */
+  storeBodies: boolean;
 };
 
 /** `POST /api/connections/github-token` body. The token is sent once and never returned. */
@@ -675,6 +677,8 @@ export type SyncStatus = {
 export type TokenHealth = {
   connectionId: string;
   accountLogin: string;
+  /** Null while no token is stored. */
+  tokenOwnerLogin: string | null;
   tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required";
   tokenExpiresAt: string | null;
   tokenExpiresSoon: boolean;
