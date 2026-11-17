@@ -7,9 +7,9 @@ public sealed class SyncOptions
     // Turns the periodic loop off. Manual runs through POST /api/sync/run still work.
     public bool Enabled { get; set; } = true;
 
-    // Unset: 10 minutes, or 60 when webhooks are enabled and the loop only reconciles.
+    // Unset: 10 minutes, or 60 while webhook deliveries are arriving and the loop only reconciles.
     public int? IntervalMinutes { get; set; }
 
-    public TimeSpan IntervalFor(bool webhooksEnabled) =>
-        TimeSpan.FromMinutes(Math.Max(1, IntervalMinutes ?? (webhooksEnabled ? 60 : 10)));
+    public TimeSpan IntervalFor(bool deliveriesRecent) =>
+        TimeSpan.FromMinutes(Math.Max(1, IntervalMinutes ?? (deliveriesRecent ? 60 : 10)));
 }

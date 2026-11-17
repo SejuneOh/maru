@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
+using WorkBoard.Api.Infrastructure.Sync;
 using WorkBoard.Api.Infrastructure.Webhooks;
 using WorkBoard.Api.Infrastructure.Writes;
 
@@ -19,14 +20,15 @@ public static class WebhookEndpoints
 
     public static void MapWebhooks(this RouteGroupBuilder api) => api.MapPost("/github/webhook", ReceiveAsync);
 
+    // 503 also while Sync:Enabled=false, because the worker that drains the queue is off then.
     // Anonymous: the HMAC signature is the only proof the request came from GitHub. Everything before the insert is
     // memory-only, so unsigned or oversized requests never reach the database. Payload contents are never logged.
     private static async Task<IResult> ReceiveAsync(
-        HttpContext http, IOptions<GitHubAppOptions> app, WebhookWake wake,
+        HttpContext http, IOptions<GitHubAppOptions> app, IOptions<SyncOptions> syncOptions, WebhookWake wake,
         [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync, CancellationToken ct)
     {
         var secret = app.Value.WebhookSecret;
-        if (string.IsNullOrWhiteSpace(secret))
+        if (string.IsNullOrWhiteSpace(secret) || !syncOptions.Value.Enabled)
             return ApiErrors.Of(StatusCodes.Status503ServiceUnavailable, "webhook_not_configured");
 
         var request = http.Request;
@@ -73,13 +75,13 @@ public static class WebhookEndpoints
 
         await using var conn = await sync.OpenConnectionAsync(ct);
         var inserted = await conn.ExecuteAsync(new CommandDefinition("""
-            insert into webhook_deliveries (delivery_id, event, action, installation_id, repository_full_name, subject_user_id, account_login)
-            values (@deliveryId, @event, @action, @installationId, @repositoryFullName, @subjectUserId, @accountLogin)
+            insert into webhook_deliveries (delivery_id, event, action, installation_id, repository_id, subject_user_id, account_id)
+            values (@deliveryId, @event, @action, @installationId, @repositoryId, @subjectUserId, @accountId)
             on conflict (delivery_id) do nothing
             """, new
         {
             deliveryId, @event = route.Event, action = route.Action, installationId = route.InstallationId,
-            repositoryFullName = route.RepositoryFullName, subjectUserId = route.SubjectUserId, accountLogin = route.AccountLogin,
+            repositoryId = route.RepositoryId, subjectUserId = route.SubjectUserId, accountId = route.AccountId,
         }, cancellationToken: ct));
         if (inserted == 0)
             return Results.Ok(new WebhookAck("duplicate"));

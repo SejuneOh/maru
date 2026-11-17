@@ -446,7 +446,7 @@ tenant transaction (no cache). Rules:
 ## Sync
 
 A background service syncs every tenant with an active connection that has an `installation_id` each
-`Sync:IntervalMinutes` (default 10, or 60 when `GitHub:App:WebhookSecret` is set, because webhooks then carry the live updates and the loop only reconciles; `Sync:Enabled=false` turns the loop and the webhook worker off, manual runs still work). A run lists the
+`Sync:IntervalMinutes` (default 10, or 60 while a verified webhook delivery was stored within the last 30 minutes, because the loop then only reconciles; an explicit value always wins; `Sync:Enabled=false` turns the loop and the webhook worker off, manual runs still work). A run lists the
 installation's repositories, upserts them (`sync_enabled` defaults to true) and reads each enabled repository with
 `since = last_synced_at - 2 minutes` (full read on the first run). One run per tenant at a time. Each run writes one
 `sync_runs` row per connection; GitHub errors and a missing App key are recorded there, never thrown. A repository
@@ -472,7 +472,7 @@ with `GitHub:App:WebhookSecret`, compared in constant time). Checks run in this 
 
 | Status | Body | When |
 |---|---|---|
-| 503 | `{ "error": "webhook_not_configured" }` | no secret configured |
+| 503 | `{ "error": "webhook_not_configured" }` | no secret configured, or `Sync:Enabled=false` (nothing would drain the queue); nothing is stored |
 | 401 | `{ "error": "invalid_signature" }` | header missing, malformed, or not matching the body |
 | 413 | `{ "error": "payload_too_large" }` | body over 2 MB |
 | 400 | `{ "error": "invalid_request" }` | `X-GitHub-Event` / `X-GitHub-Delivery` missing, or the body is not JSON |
@@ -482,16 +482,16 @@ with `GitHub:App:WebhookSecret`, compared in constant time). Checks run in this 
 | 202 | `{ "status": "queued" }` | stored in `webhook_deliveries` for the worker |
 
 The request never waits for GitHub or for the mirror: it only inserts the delivery id and its routing fields
-(event, action, installation id, repository full name, member id, account login; never the payload). The primary key on
+(event, action, installation id, repository id, member id, organization id; never the payload). The primary key on
 `delivery_id` is the dedup. `WebhookWorker` drains the table (woken on insert, polling every 5 s), claims rows with a 2 minute
 lease, retries a failure up to 5 times with 30 s steps, and records the outcome in `result`. Processed rows are deleted after 14 days.
 
 | Event | Handling |
 |---|---|
-| `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `milestone`, `label`, `sub_issues` | The payload is not applied. The repository is re-read through `IGitHubSource` since its `last_synced_at - 2 minutes` and applied by `MirrorWriter`, exactly like a periodic run (ordering rule, issue_events, PendingLink, label and milestone lists). Pending events of one repository share one read. Unknown installation, unknown repository (not listed by a sync yet) and `sync_enabled = false` are acknowledged and ignored. |
+| `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `milestone`, `label`, `sub_issues` | The payload is not applied. The repository (matched by `repository.id`, so a rename does not drop events) is re-read through `IGitHubSource` since its `last_synced_at - 2 minutes` and applied by `MirrorWriter`, exactly like a periodic run (ordering rule, issue_events, PendingLink, label and milestone lists). Pending events of one repository share one read. Unknown installation, unknown repository (not listed by a sync yet) and `sync_enabled = false` are acknowledged and ignored. |
 | `installation` `deleted`, `suspend` | Active connections with that `installation_id` get `disconnected_at = now()`. Every sync query already skips disconnected connections, so syncing and board writes stop; the connection list shows it as disconnected. |
 | `installation` `unsuspend` | The most recently disconnected connection of that installation is reactivated unless the account or installation already has an active connection. |
-| `organization` `member_removed`, `member_added` | For the connection whose `account_login` equals `organization.login`: `members.removed_at` is set (or cleared) for that GitHub user id. A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
+| `organization` `member_removed`, `member_added` | For the connection whose `account_id` equals `organization.id`: `members.removed_at` is set (or cleared) for that GitHub user id, tenant-wide (per-organization handling and access policy come with #40; no connection is an organization yet, so it has no effect today). A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
 | everything else (`installation` `created`, `installation_repositories`, `push`, ...) | `202 ignored`. New repositories appear with the next periodic run. |
 
 ## Shapes

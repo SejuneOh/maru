@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using WorkBoard.Api.Infrastructure.GitHub;
+using WorkBoard.Api.Infrastructure.Sync;
 using WorkBoard.Api.Infrastructure.Webhooks;
 using WorkBoard.Api.Tests.Fakes;
 
@@ -44,7 +45,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
 
     public WebhookTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private (HttpClient Client, WebApplicationFactory<Program> Host) Host(FakeSource? fake = null, string? secret = null, string? login = null)
+    private (HttpClient Client, WebApplicationFactory<Program> Host) Host(FakeSource? fake = null, string? secret = null, string? login = null, bool syncEnabled = true)
     {
         var host = _factory.WithWebHostBuilder(b =>
         {
@@ -53,12 +54,13 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
                 ["GitHub:App:AppId"] = "123",
                 ["GitHub:App:PrivateKeyPath"] = "unused.pem",
                 ["GitHub:App:WebhookSecret"] = secret ?? Secret,
-                ["Sync:Enabled"] = "false",
+                ["Sync:Enabled"] = syncEnabled ? "true" : "false",
             }));
             b.ConfigureServices(s =>
             {
                 s.RemoveAll<IGitHubSource>();
                 s.AddSingleton<IGitHubSource>(fake ?? new FakeSource());
+                s.RemoveAll<Microsoft.Extensions.Hosting.IHostedService>();
             });
         });
         var client = host.CreateClient();
@@ -101,8 +103,8 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         return (id, await t.ScalarAsync<long>("select github_repo_id from repositories where id = @id", new { id }), fullName);
     }
 
-    private static object IssuePayload(long installation, string fullName, string action = "edited") =>
-        new { action, installation = new { id = installation }, repository = new { full_name = fullName, id = 1 } };
+    private static object IssuePayload(long installation, long repositoryId, string action = "edited") =>
+        new { action, installation = new { id = installation }, repository = new { full_name = "renamed/elsewhere", id = repositoryId } };
 
     private static SourceIssue Issue(long id, int number, DateTimeOffset updated, string title) =>
         new(id, "n" + id, number, title, null, null, "open", null, null, T0, null, updated, "https://x/" + number, null, [], [], null, null);
@@ -122,7 +124,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         await using var t = await TestTenant.CreateAsync(_factory);
         var (client, _) = Host();
         var delivery = Guid.NewGuid().ToString();
-        var payload = IssuePayload(1, "x/y");
+        var payload = IssuePayload(1, 1);
 
         var response = await PostAsync(client, "issues", payload, delivery,
             signature: kind switch { "wrong" => Sign("another-secret", JsonSerializer.SerializeToUtf8Bytes(payload)), "missing" => "", _ => "sha256=zz" });
@@ -137,9 +139,9 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         await using var t = await TestTenant.CreateAsync(_factory);
         var (client, _) = Host();
         var delivery = Guid.NewGuid().ToString();
-        var signed = JsonSerializer.SerializeToUtf8Bytes(IssuePayload(1, "x/y", "opened"));
+        var signed = JsonSerializer.SerializeToUtf8Bytes(IssuePayload(1, 1, "opened"));
 
-        var response = await PostAsync(client, "issues", IssuePayload(1, "x/y", "closed"), delivery, signature: Sign(Secret, signed));
+        var response = await PostAsync(client, "issues", IssuePayload(1, 1, "closed"), delivery, signature: Sign(Secret, signed));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal(0, await RowsAsync(t, delivery));
@@ -152,7 +154,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var (client, _) = Host(secret: " ");
         var delivery = Guid.NewGuid().ToString();
 
-        var response = await PostAsync(client, "issues", IssuePayload(1, "x/y"), delivery, secret: " ");
+        var response = await PostAsync(client, "issues", IssuePayload(1, 1), delivery, secret: " ");
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(0, await RowsAsync(t, delivery));
@@ -199,7 +201,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var fake = new FakeSource { Repository = new SourceRepository(repo.GithubId, "api", repo.FullName, null, false) };
         var (client, host) = Host(fake);
         var delivery = Guid.NewGuid().ToString();
-        var payload = IssuePayload(installation, repo.FullName);
+        var payload = IssuePayload(installation, repo.GithubId);
 
         var first = await PostAsync(client, "issues", payload, delivery);
         var second = await PostAsync(client, "issues", payload, delivery);
@@ -230,7 +232,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var (client, host) = Host(fake);
         var delivery = Guid.NewGuid().ToString();
 
-        await PostAsync(client, "issues", IssuePayload(installation, repo.FullName, "opened"), delivery);
+        await PostAsync(client, "issues", IssuePayload(installation, repo.GithubId, "opened"), delivery);
         await DrainAsync(host);
 
         Assert.Equal("from webhook", await t.ScalarAsync<string>("select title from issues where github_issue_id = @issueId", new { issueId }));
@@ -252,12 +254,12 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
             Snapshot = r => new RepositorySnapshot(r, [], [], [Issue(issueId, 7, updated, "newer")], [], [], null),
         };
         var (client, host) = Host(fake);
-        await PostAsync(client, "issues", IssuePayload(installation, repo.FullName), Guid.NewGuid().ToString());
+        await PostAsync(client, "issues", IssuePayload(installation, repo.GithubId), Guid.NewGuid().ToString());
         await DrainAsync(host);
 
         updated = T0;
         fake.Snapshot = r => new RepositorySnapshot(r, [], [], [Issue(issueId, 7, T0, "older")], [], [], null);
-        await PostAsync(client, "issues", IssuePayload(installation, repo.FullName), Guid.NewGuid().ToString());
+        await PostAsync(client, "issues", IssuePayload(installation, repo.GithubId), Guid.NewGuid().ToString());
         await DrainAsync(host);
 
         Assert.Equal("newer", await t.ScalarAsync<string>("select title from issues where github_issue_id = @issueId", new { issueId }));
@@ -273,7 +275,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var (client, host) = Host(fake);
 
         foreach (var kind in new[] { "issues", "issue_comment", "pull_request", "pull_request_review", "milestone" })
-            await PostAsync(client, kind, IssuePayload(installation, repo.FullName));
+            await PostAsync(client, kind, IssuePayload(installation, repo.GithubId));
         await DrainAsync(host);
 
         Assert.Single(fake.Reads);
@@ -287,7 +289,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var (client, host) = Host(fake);
         var delivery = Guid.NewGuid().ToString();
 
-        var response = await PostAsync(client, "issues", IssuePayload(TestTenant.NextId(), "org/none"), delivery);
+        var response = await PostAsync(client, "issues", IssuePayload(TestTenant.NextId(), 1), delivery);
         await DrainAsync(host);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -309,7 +311,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         };
         var (client, host) = Host(fake);
         var delivery = Guid.NewGuid().ToString();
-        await PostAsync(client, "issues", IssuePayload(installation, repo.FullName), delivery);
+        await PostAsync(client, "issues", IssuePayload(installation, repo.GithubId), delivery);
 
         for (var i = 0; i < WebhookProcessor.MaxAttempts; i++)
         {
@@ -353,7 +355,7 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var fake = new FakeSource { Repository = new SourceRepository(repo.GithubId, "api", repo.FullName, null, false) };
         var (client, host) = Host(fake);
         await PostAsync(client, "installation", new { action = "suspend", installation = new { id = installation } });
-        await PostAsync(client, "issues", IssuePayload(installation, repo.FullName));
+        await PostAsync(client, "issues", IssuePayload(installation, repo.GithubId));
 
         await DrainAsync(host);
 
@@ -384,28 +386,72 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         var installation = await InstallAsync(t);
         var (login, userId) = await t.AddMemberAsync("leaver");
         var other = await t.AddMemberAsync("stays");
+        var accountId = await t.ScalarAsync<long>("select account_id from github_connections where id = @c", new { c = t.ConnectionId });
         var (client, host) = Host(login: t.ViewerLogin);
-        object Payload(string action, string org) => new
+        object Payload(string action, long org) => new
         {
-            action, installation = new { id = installation }, organization = new { login = org },
+            action, installation = new { id = installation }, organization = new { id = org },
             membership = new { user = new { id = userId } },
         };
 
-        await PostAsync(client, "organization", Payload("member_removed", "someone-else"));
+        await PostAsync(client, "organization", Payload("member_removed", accountId + 1));
         await DrainAsync(host);
         var untouched = await client.GetFromJsonAsync<JsonElement>("/api/members");
         Assert.All(untouched.EnumerateArray(), m => Assert.Equal(JsonValueKind.Null, m.GetProperty("removedAt").ValueKind));
 
-        await PostAsync(client, "organization", Payload("member_removed", "org-" + t.Suffix));
+        await PostAsync(client, "organization", Payload("member_removed", accountId));
         await DrainAsync(host);
         var removed = await client.GetFromJsonAsync<JsonElement>("/api/members");
         Assert.NotEqual(JsonValueKind.Null, removed.EnumerateArray().Single(m => m.GetProperty("githubLogin").GetString() == login).GetProperty("removedAt").ValueKind);
         Assert.Equal(JsonValueKind.Null, removed.EnumerateArray().Single(m => m.GetProperty("githubLogin").GetString() == other.Login).GetProperty("removedAt").ValueKind);
 
-        await PostAsync(client, "organization", Payload("member_added", "org-" + t.Suffix));
+        await PostAsync(client, "organization", Payload("member_added", accountId));
         await DrainAsync(host);
         var back = await client.GetFromJsonAsync<JsonElement>("/api/members");
         Assert.Equal(JsonValueKind.Null, back.EnumerateArray().Single(m => m.GetProperty("githubLogin").GetString() == login).GetProperty("removedAt").ValueKind);
+    }
+
+    [DbFact]
+    public async Task While_sync_is_disabled_the_endpoint_does_not_queue()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (client, _) = Host(syncEnabled: false);
+        var delivery = Guid.NewGuid().ToString();
+
+        var response = await PostAsync(client, "issues", IssuePayload(1, 1), delivery);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(0, await RowsAsync(t, delivery));
+    }
+
+    private static SyncWorker Worker(WebApplicationFactory<Program> host, int? intervalMinutes = null)
+    {
+        var s = host.Services;
+        var options = Microsoft.Extensions.Options.Options.Create(new SyncOptions { IntervalMinutes = intervalMinutes });
+        return new SyncWorker(
+            s.GetRequiredService<SyncRunner>(), s.GetRequiredService<SprintDailyRecorder>(), options,
+            s.GetRequiredService<Microsoft.Extensions.Options.IOptions<GitHubAppOptions>>(),
+            s.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WorkBoard.Api.Infrastructure.Identity.DataKeys.Sync),
+            TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<SyncWorker>.Instance);
+    }
+
+    [DbFact]
+    public async Task The_sync_interval_is_long_only_while_deliveries_arrive()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (_, host) = Host();
+        var delivery = Guid.NewGuid().ToString();
+        await t.ExecAsync("delete from webhook_deliveries");
+
+        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host).IntervalAsync(CancellationToken.None));
+
+        await t.ExecAsync("insert into webhook_deliveries (delivery_id, event, processed_at) values (@delivery, 'issues', now())", new { delivery });
+        Assert.Equal(TimeSpan.FromMinutes(60), await Worker(host).IntervalAsync(CancellationToken.None));
+        Assert.Equal(TimeSpan.FromMinutes(5), await Worker(host, 5).IntervalAsync(CancellationToken.None));
+
+        await t.ExecAsync("update webhook_deliveries set received_at = now() - interval '31 minutes' where delivery_id = @delivery", new { delivery });
+        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host).IntervalAsync(CancellationToken.None));
+        await t.ExecAsync("delete from webhook_deliveries where delivery_id = @delivery", new { delivery });
     }
 
     [DbFact]

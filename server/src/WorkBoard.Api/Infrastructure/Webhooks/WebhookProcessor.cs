@@ -26,10 +26,10 @@ public sealed class WebhookProcessor(
     private static readonly TimeSpan Retention = TimeSpan.FromDays(14);
 
     private sealed record Row(
-        string DeliveryId, string Event, string? Action, long? InstallationId, string? RepositoryFullName,
-        long? SubjectUserId, string? AccountLogin, int Attempts);
+        string DeliveryId, string Event, string? Action, long? InstallationId, long? RepositoryId,
+        long? SubjectUserId, long? AccountId, int Attempts);
 
-    private sealed record Connection(Guid Id, Guid TenantId, string AccountLogin);
+    private sealed record Connection(Guid Id, Guid TenantId, long AccountId);
 
     private sealed record RepoLookup(Guid Id, string FullName, DateTime? LastSyncedAt, bool SyncEnabled);
 
@@ -42,9 +42,9 @@ public sealed class WebhookProcessor(
 
         var groups = rows
             .Where(r => r.Event is not (WebhookRoute.Installation or WebhookRoute.Organization))
-            .GroupBy(r => (r.InstallationId, Repository: r.RepositoryFullName?.ToLowerInvariant()));
+            .GroupBy(r => (r.InstallationId, Repository: r.RepositoryId));
         foreach (var group in groups)
-            await HandleAsync(group.ToList(), ct, () => HandleRepositoryAsync(group.Key.InstallationId, group.First().RepositoryFullName, ct));
+            await HandleAsync(group.ToList(), ct, () => HandleRepositoryAsync(group.Key.InstallationId, group.Key.Repository, ct));
         return rows.Count;
     }
 
@@ -65,7 +65,7 @@ public sealed class WebhookProcessor(
              where delivery_id in (select delivery_id from webhook_deliveries
                                     where processed_at is null and available_at <= now()
                                     order by received_at limit 100 for update skip locked)
-            returning delivery_id, event, action, installation_id, repository_full_name, subject_user_id, account_login, attempts
+            returning delivery_id, event, action, installation_id, repository_id, subject_user_id, account_id, attempts
             """, new { lease = Lease }, cancellationToken: ct))).AsList();
     }
 
@@ -119,13 +119,13 @@ public sealed class WebhookProcessor(
         installationId is null
             ? null
             : await conn.QuerySingleOrDefaultAsync<Connection>(new CommandDefinition("""
-                select id, tenant_id, account_login from github_connections
+                select id, tenant_id, account_id from github_connections
                  where installation_id = @installationId and disconnected_at is null
                 """, new { installationId }, cancellationToken: ct));
 
-    private async Task<string> HandleRepositoryAsync(long? installationId, string? fullName, CancellationToken ct)
+    private async Task<string> HandleRepositoryAsync(long? installationId, long? repositoryId, CancellationToken ct)
     {
-        if (installationId is null || string.IsNullOrEmpty(fullName))
+        if (installationId is null || repositoryId is null)
             return "ignored: incomplete";
         if (!app.Value.CanReadInstallations)
             return "ignored: github_app_not_configured";
@@ -141,8 +141,8 @@ public sealed class WebhookProcessor(
             var row = await conn.QuerySingleOrDefaultAsync<RepoLookup>(
                 new CommandDefinition("""
                     select id, full_name, last_synced_at, sync_enabled from repositories
-                     where tenant_id = @tenantId and connection_id = @connectionId and lower(full_name) = lower(@fullName)
-                    """, new { tenantId = connection.TenantId, connectionId = connection.Id, fullName }, cancellationToken: ct));
+                     where tenant_id = @tenantId and connection_id = @connectionId and github_repo_id = @repositoryId
+                    """, new { tenantId = connection.TenantId, connectionId = connection.Id, repositoryId }, cancellationToken: ct));
             repo = row is null ? null : new SyncRunner.RepoRow(row.Id, row.FullName, row.LastSyncedAt);
             enabled = row?.SyncEnabled ?? false;
         }
@@ -171,7 +171,7 @@ public sealed class WebhookProcessor(
         var connection = await ActiveConnectionAsync(conn, row.InstallationId, ct);
         if (connection is null)
             return "ignored: unknown_installation";
-        if (row.SubjectUserId is null || !string.Equals(connection.AccountLogin, row.AccountLogin, StringComparison.OrdinalIgnoreCase))
+        if (row.SubjectUserId is null || connection.AccountId != row.AccountId)
             return "ignored: other_account";
         var changed = await conn.ExecuteAsync(new CommandDefinition(
             row.Action == "member_removed"

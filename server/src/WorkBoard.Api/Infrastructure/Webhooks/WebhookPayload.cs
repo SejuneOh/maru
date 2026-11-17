@@ -31,9 +31,9 @@ public sealed record WebhookRoute(
     string Event,
     string? Action,
     long? InstallationId,
-    string? RepositoryFullName,
+    long? RepositoryId,
     long? SubjectUserId,
-    string? AccountLogin)
+    long? AccountId)
 {
     public const string Installation = "installation";
     public const string Organization = "organization";
@@ -81,9 +81,9 @@ public sealed record WebhookRoute(
             eventName,
             action,
             Long(installation, "id"),
-            Str(repository, "full_name"),
+            Long(repository, "id"),
             Long(membership, "id"),
-            Str(organization, "login"));
+            Long(organization, "id"));
     }
 
     private static JsonElement? Obj(JsonElement? parent, string name) =>

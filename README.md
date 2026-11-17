@@ -68,7 +68,7 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 
 ### 웹훅 (실시간 반영)
 
-`GitHub__App__WebhookSecret`이 있어야 웹훅이 켜집니다. 비어 있으면 `POST /api/github/webhook`은 503이고, 주기 동기화(10분)만 동작합니다. 켜면 주기 동기화는 60분 간격의 보정 작업이 됩니다.
+`GitHub__App__WebhookSecret`이 있어야 웹훅이 켜집니다. 비어 있거나 `Sync:Enabled=false`이면 `POST /api/github/webhook`은 503이고 아무것도 저장하지 않습니다. 주기 동기화는 기본 10분이고, 최근 30분 안에 검증된 전달이 있을 때만 60분 간격의 보정 작업이 됩니다. 전달이 끊기면 다시 10분으로 돌아갑니다(`Sync:IntervalMinutes`로 직접 지정하면 그 값만 씁니다).
 
 1. 임의의 긴 문자열을 만들어 `GitHub:App:WebhookSecret`(환경 변수 `GitHub__App__WebhookSecret`)에 넣고 API를 다시 시작합니다. 예: `openssl rand -hex 32`
 2. 로컬에서 받으려면 터널로 API(`localhost:5080`)를 공개합니다(예: `cloudflared tunnel --url http://localhost:5080`).

@@ -52,12 +52,12 @@
 
 `POST /api/github/webhook`이 GitHub App 웹훅을 받습니다. 요청 형식과 응답 코드는 `docs/api-contract.md`의 "GitHub webhook"에 있습니다.
 
-- 진위 확인은 `X-Hub-Signature-256`(원문 바이트에 대한 HMAC-SHA256, 상수 시간 비교)뿐입니다. 비밀은 `GitHub__App__WebhookSecret`이고, 없으면 엔드포인트는 503으로 아무것도 하지 않습니다. 서명이 틀리거나 없으면 401이며 DB에 닿지 않습니다. 본문은 2 MB까지입니다.
+- 진위 확인은 `X-Hub-Signature-256`(원문 바이트에 대한 HMAC-SHA256, 상수 시간 비교)뿐입니다. 비밀은 `GitHub__App__WebhookSecret`이고, 없거나 `Sync:Enabled=false`(큐를 비울 워커가 꺼짐)이면 엔드포인트는 503으로 아무것도 저장하지 않습니다. 서명이 틀리거나 없으면 401이며 DB에 닿지 않습니다. 본문은 2 MB까지입니다.
 - 중복은 `X-GitHub-Delivery`로 거릅니다. `webhook_deliveries`의 기본 키가 곧 중복 방지이고, 요청은 행 하나만 넣고 바로 응답합니다(GitHub 제한 10초). 본문은 저장하지 않고 라우팅에 필요한 값(이벤트, 동작, 설치 id, 저장소 이름, 구성원 id, 계정 로그인)만 둡니다. 처리는 `WebhookWorker`가 큐처럼 비웁니다. 처리된 행은 14일 뒤 지웁니다.
 - 이슈, 댓글, PR, 리뷰, 마일스톤, 라벨 이벤트는 페이로드를 쓰지 않고 해당 저장소를 마지막 동기화 이후로 다시 읽어 `MirrorWriter`로 반영합니다. 일부 필드만 담긴 페이로드를 믿지 않고, 주기 동기화와 같은 경로라 "오래된 것이 새것을 덮지 않음", `issue_events`, `PendingLink` 규칙이 그대로 적용됩니다.
 - `installation.deleted`, `installation.suspend`는 연결에 `disconnected_at`을 찍어 동기화와 쓰기를 멈춥니다. 연결 화면은 "연결 끊김"으로 보여 줍니다. `installation.unsuspend`는 되돌립니다. 새 설치(`created`)는 기존 연결 흐름이 맡으므로 웹훅은 무시합니다.
-- `organization.member_removed`는 `members.removed_at`을 찍고, `member_added`는 지웁니다. 구성원 행과 접근 권한은 그대로이고 `GET /api/members`의 `removedAt`과 새 이슈 담당자 목록에만 반영됩니다. 조직 연결(#40)이 생기면 접근 정책을 다시 정합니다.
-- 주기 동기화는 일일 보정으로 남습니다. 웹훅 비밀이 있으면 기본 간격이 10분에서 60분으로 늘어납니다(`Sync:IntervalMinutes`로 직접 지정 가능).
+- `organization.member_removed`는 연결의 `account_id`가 `organization.id`와 같을 때 `members.removed_at`을 찍고, `member_added`는 지웁니다. 이 표시는 회사(테넌트) 전체에 걸린 것이고 조직별로 나누지 않습니다. 구성원 행과 접근 권한은 그대로이며 `GET /api/members`의 `removedAt`과 새 이슈 담당자 목록에만 반영됩니다. 조직별 처리와 접근 정책은 조직 연결(#40)과 함께 정합니다. 지금은 조직으로 저장된 연결이 없어(`account_type`이 항상 `user`) 실제로는 효과가 없습니다.
+- 주기 동기화는 일일 보정으로 남습니다. 기본 10분이고, 최근 30분 안에 검증된 전달이 있을 때만 60분으로 늘어납니다. `Sync:IntervalMinutes`를 지정하면 그 값을 그대로 씁니다.
 
 ## 확인할 것
 

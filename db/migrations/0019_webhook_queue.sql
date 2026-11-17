@@ -3,9 +3,9 @@
 alter table webhook_deliveries
   add column action               text,
   add column installation_id      bigint,
-  add column repository_full_name text,
+  add column repository_id        bigint,
   add column subject_user_id      bigint,
-  add column account_login        text,
+  add column account_id           bigint,
   add column attempts             int not null default 0,
   add column available_at         timestamptz not null default now(),
   add column result               text;
