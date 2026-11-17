@@ -107,7 +107,42 @@ export type GithubConnection = {
   disconnectedAt: string | null;
   /** Current organization members; null for personal accounts or when the members could not be read. */
   orgMemberCount: number | null;
+  /** How the board reaches GitHub: the GitHub App or a personal access token. */
+  authKind: "app" | "token";
+  /** Token connections only. The token itself is never returned. */
+  tokenLast4: string | null;
+  /** GitHub login the token writes as. */
+  tokenOwnerLogin: string | null;
+  tokenExpiresAt: string | null;
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | null;
+  /** Classic scopes; empty for a fine-grained token. */
+  tokenScopes: string[] | null;
 };
+
+/** `POST /api/connections/github-token` body. The token is sent once and never returned. */
+export type ConnectGithubTokenRequest = { token: string; organization: string };
+
+/** `PUT /api/connections/{id}/github-token` body. */
+export type ReplaceGithubTokenRequest = { token: string };
+
+/** Error codes of the token connection endpoints (`error` field). */
+export type ConnectGithubTokenError =
+  | "invalid_request"
+  | "admin_only"
+  | "not_found"
+  | "invalid_token"
+  | "unsupported_token"
+  | "not_your_account"
+  | "token_scope_too_broad" // also `scopes`: the refused scopes
+  | "token_scope_missing" // also `missing`
+  | "not_org_member"
+  | "org_membership_inactive"
+  | "org_access_denied"
+  | "sso_not_authorized" // also `ssoUrl`
+  | "organization_mismatch"
+  | "account_connected"
+  | "credential_store_not_configured"
+  | "github_unavailable";
 
 /** The company's open organization install request (GitHub `setup_action=request`). */
 export type ConnectionRequest = {
@@ -242,6 +277,7 @@ export type BoardChangeError =
   | "field_disabled"
   | "repository_archived"
   | "github_write_not_granted"
+  | "credential_missing"
   | "github_unavailable"
   | "request_in_progress"
   | "idempotency_key_reused";
@@ -285,6 +321,7 @@ export type CreateIssueError =
   | "not_found"
   | "repository_archived"
   | "github_write_not_granted"
+  | "credential_missing"
   | "assignee_not_collaborator"
   | "github_unavailable"
   | "request_in_progress"
@@ -302,6 +339,7 @@ export type SetAssigneesError =
   | "not_found"
   | "repository_archived"
   | "github_write_not_granted"
+  | "credential_missing"
   | "assignee_not_collaborator"
   | "github_unavailable"
   | "request_in_progress"
@@ -326,6 +364,7 @@ export type AddCommentError =
   | "not_found"
   | "repository_archived"
   | "github_write_not_granted"
+  | "credential_missing"
   | "github_unavailable"
   | "request_in_progress"
   | "idempotency_key_reused";

@@ -97,7 +97,7 @@ export function IssuePanel() {
   const assignHere = assign && assign.issueId === issueId ? assign : null;
   const people = members.data ?? [];
   // Our posted comments show at once; a refetch that already has one replaces it. One saved without an id
-  // (mirrorPending) is matched by author, GitHub's creation time and text once the sync brings it.
+  // (mirrorPending) is matched by author, GitHub's creation time and text (when both sides have it) once the sync brings it.
   const conversation: ConversationItem[] = shown
     ? [
         ...shown.comments.map((c) => ({ ...c, mirrorPending: false })),
@@ -106,7 +106,7 @@ export function IssuePanel() {
             !shown.comments.some((x) =>
               c.id
                 ? x.id === c.id
-                : x.author.githubLogin === c.author.githubLogin && Date.parse(x.createdAt) === Date.parse(c.createdAt) && x.body === c.body,
+                : x.author.githubLogin === c.author.githubLogin && Date.parse(x.createdAt) === Date.parse(c.createdAt) && sameBody(x.body, c.body),
             ),
         ),
       ]
@@ -429,7 +429,11 @@ export function IssuePanel() {
                     <div className="mb-1 text-small text-muted">
                       <span className="font-medium text-ink-soft">{fmt.person(c.author)}</span> · <span>{fmt.relativeDays(c.createdAt)}</span>
                     </div>
-                    <p className="whitespace-pre-wrap text-ink-soft">{c.body}</p>
+                    {c.body ? (
+                      <p className="whitespace-pre-wrap text-ink-soft">{c.body}</p>
+                    ) : (
+                      <p className="text-small text-muted">{p.comment.bodyOnGithub}</p>
+                    )}
                     {c.mirrorPending && <p className="mt-1 text-meta text-muted">{p.comment.pending}</p>}
                   </li>
                 ))}
@@ -442,6 +446,9 @@ export function IssuePanel() {
     </>
   );
 }
+
+// A connection that does not store bodies mirrors "" while the replayed answer carries null, so an empty side matches anything.
+const sameBody = (a: string | null, b: string | null) => !a || !b || a === b;
 
 type ConversationItem = Pick<PostedComment, "id" | "author" | "body" | "createdAt" | "mirrorPending">;
 

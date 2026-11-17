@@ -105,10 +105,11 @@ public class MigratorTests
     public async Task Credential_migration_applies_after_later_ones_on_an_existing_database_and_before_them_on_a_fresh_one()
     {
         const string Credentials = "0009_github_credentials";
+        const string Metadata = "0010_credential_metadata";
         var all = EmbeddedSql.Migrations().ToList();
 
         await using var existing = await ScratchDb.CreateAsync();
-        var first = await new Migrator(existing.ConnectionString, all.Where(m => m.Name != Credentials).ToList()).RunAsync();
+        var first = await new Migrator(existing.ConnectionString, all.Where(m => m.Name != Credentials && m.Name != Metadata).ToList()).RunAsync();
         await existing.ExecAsync("""
             insert into tenants (id, name) values ('10000000-0000-0000-0000-0000000000bb', 'Existing');
             insert into github_connections (tenant_id, account_id, account_login, account_type)
@@ -116,7 +117,7 @@ public class MigratorTests
             """);
         var second = await Real(existing).RunAsync();
 
-        Assert.Equal([Credentials], second.Applied);
+        Assert.Equal([Credentials, Metadata], second.Applied);
         Assert.DoesNotContain(Credentials, first.Applied);
         Assert.Equal("app", await existing.ScalarAsync<string>("select auth_kind from github_connections"));
         Assert.True(await existing.ScalarAsync<bool>("select store_bodies from github_connections"));

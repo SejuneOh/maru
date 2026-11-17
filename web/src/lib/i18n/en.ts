@@ -279,6 +279,7 @@ export const en: Dict = {
       submitting: "Sending",
       resend: "Send the same comment again",
       pending: "Posted on GitHub. The board saves it after the next sync.",
+      bodyOnGithub: "The text is on GitHub.",
       lockedNote: "GitHub may already have this comment, so editing is locked. Sending the same comment again won't post it twice.",
       lockedHelp: "Cancel to unlock and send it as a new comment next time. Before you cancel, check whether it's already on GitHub.",
       checkOnGitHub: "Check on GitHub",

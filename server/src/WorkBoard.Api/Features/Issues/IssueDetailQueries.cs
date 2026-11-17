@@ -12,12 +12,16 @@ public static class IssueDetailQueries
             return null;
 
         var bodyRow = await s.QuerySingleOrDefaultAsync<BodyRow>("""
-            select i.body, gu.login as author_login
+            select i.body, gu.login as author_login,
+                   (select k.owner_login from repositories r
+                      join github_credentials k on k.tenant_id = r.tenant_id and k.connection_id = r.connection_id
+                     where r.id = i.repository_id) as token_owner_login
               from issues i
               left join github_users gu on gu.github_user_id = i.author_github_id
              where i.id = @id
             """, new { id });
-        var body = bodyRow?.Body is { } raw && app.IsBot(bodyRow.AuthorLogin) && BoardFooter.Strip(raw) is { } own
+        var body = bodyRow?.Body is { } raw && BoardFooter.Strip(raw) is { } own
+                   && WroteForBoard(app, bodyRow.AuthorLogin, bodyRow.TokenOwnerLogin, own.HasMarker)
             ? own.Body
             : bodyRow?.Body;
 
@@ -44,7 +48,11 @@ public static class IssueDetailQueries
             """, new { id });
 
         var comments = await s.QueryAsync<CommentRow>("""
-            select c.id, m.github_login, m.display_name, gu.login as author_login, c.body, c.github_created_at as created_at
+            select c.id, m.github_login, m.display_name, gu.login as author_login, c.body, c.github_created_at as created_at,
+                   (select k.owner_login from issues i
+                      join repositories r on r.id = i.repository_id
+                      join github_credentials k on k.tenant_id = r.tenant_id and k.connection_id = r.connection_id
+                     where i.id = c.issue_id) as token_owner_login
               from comments c
               left join members m on m.github_user_id = c.author_github_id
               left join github_users gu on gu.github_user_id = c.author_github_id
@@ -90,7 +98,11 @@ public static class IssueDetailQueries
     private static async Task<List<CommentDto>> CommentsAsync(TenantSession s, IEnumerable<CommentRow> rows, GitHubAppOptions app)
     {
         var all = rows
-            .Select(r => (Row: r, Own: r.GithubLogin is null && app.IsBot(r.AuthorLogin) ? BoardFooter.Strip(r.Body) : null))
+            .Select(r => (Row: r, Own: BoardFooter.Strip(r.Body) is { } own
+                                       && ((r.GithubLogin is null && app.IsBot(r.AuthorLogin))
+                                           || (own.HasMarker && IsTokenOwner(r.AuthorLogin, r.TokenOwnerLogin)))
+                ? BoardFooter.Strip(r.Body)
+                : null))
             .ToList();
         var logins = all.Where(b => b.Own is not null).Select(b => b.Own!.Value.Login.ToLowerInvariant()).Distinct().ToArray();
         var names = logins.Length == 0
@@ -105,8 +117,16 @@ public static class IssueDetailQueries
             .ToList();
     }
 
+    // The App's bot wrote it, or the token owner of a token connection did through the board (marker present).
+    private static bool WroteForBoard(GitHubAppOptions app, string? author, string? tokenOwner, bool hasMarker) =>
+        app.IsBot(author) || (hasMarker && IsTokenOwner(author, tokenOwner));
+
+    private static bool IsTokenOwner(string? author, string? tokenOwner) =>
+        tokenOwner is not null && string.Equals(author, tokenOwner, StringComparison.OrdinalIgnoreCase);
+
     private sealed class BodyRow
     {
+        public string? TokenOwnerLogin { get; set; }
         public string? Body { get; set; }
         public string? AuthorLogin { get; set; }
     }
@@ -146,6 +166,7 @@ public static class IssueDetailQueries
 
     private sealed class CommentRow
     {
+        public string? TokenOwnerLogin { get; set; }
         public Guid Id { get; set; }
         public string? GithubLogin { get; set; }
         public string? DisplayName { get; set; }

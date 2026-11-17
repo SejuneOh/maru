@@ -30,7 +30,7 @@ public sealed class WebhookProcessor(
         string DeliveryId, string Event, string? Action, long? InstallationId, long? RepositoryId,
         long? SubjectUserId, long? AccountId, int Attempts);
 
-    private sealed record Connection(Guid Id, Guid TenantId, long AccountId);
+    private sealed record Connection(Guid Id, Guid TenantId, long AccountId, string AuthKind, string AccountLogin);
 
     private sealed record RepoLookup(Guid Id, string FullName, DateTime? LastSyncedAt, bool SyncEnabled);
 
@@ -120,7 +120,7 @@ public sealed class WebhookProcessor(
         installationId is null
             ? null
             : await conn.QuerySingleOrDefaultAsync<Connection>(new CommandDefinition("""
-                select id, tenant_id, account_id from github_connections
+                select id, tenant_id, account_id, auth_kind, account_login from github_connections
                  where installation_id = @installationId and disconnected_at is null
                 """, new { installationId }, cancellationToken: ct));
 
@@ -155,7 +155,7 @@ public sealed class WebhookProcessor(
         await using var scope = scopes.CreateAsyncScope();
         var source = scope.ServiceProvider.GetRequiredService<IGitHubSource>();
         await runner.SyncRepositoryAsync(
-            source, writer, new GitHubConnectionRef(connection.TenantId, connection.Id, GitHubAuthKind.App, installationId.Value), repo, ct);
+            source, writer, new GitHubConnectionRef(connection.TenantId, connection.Id, connection.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, installationId.Value, connection.AccountLogin), repo, ct);
         return "synced";
     }
 
@@ -182,9 +182,13 @@ public sealed class WebhookProcessor(
     private static async Task<string> DisconnectAsync(NpgsqlConnection conn, long? installationId, CancellationToken ct)
     {
         var tenants = (await conn.QueryAsync<Guid>(new CommandDefinition("""
-            update github_connections set disconnected_at = now()
-             where installation_id = @installationId and disconnected_at is null
-            returning tenant_id
+            with gone as (
+              update github_connections set disconnected_at = now()
+               where installation_id = @installationId and disconnected_at is null
+              returning id, tenant_id),
+            dropped as (
+              delete from github_credentials k using gone g where k.tenant_id = g.tenant_id and k.connection_id = g.id)
+            select tenant_id from gone
             """, new { installationId }, cancellationToken: ct))).AsList();
         await OrgMembers.RecomputeTenantsAsync(conn, tenants, ct);
         return tenants.Count > 0 ? "disconnected" : "ignored: unknown_installation";

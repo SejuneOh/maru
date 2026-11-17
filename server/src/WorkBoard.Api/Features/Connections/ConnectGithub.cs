@@ -136,9 +136,9 @@ public static class ConnectGithub
 
     private sealed record Saved(Guid Id, bool Created);
 
-    private sealed record ExistingRow(Guid Id, Guid TenantId);
+    private sealed record ExistingRow(Guid Id, Guid TenantId, string AuthKind);
 
-    // Null when the account or installation is actively connected to another tenant.
+    // Null when the account or installation is actively connected to another tenant, or the account is connected with a token.
     private static async Task<Saved?> SaveAsync(
         NpgsqlDataSource sync, Guid tenantId, long installationId, GitHubInstallation installation, bool organization,
         CancellationToken ct)
@@ -153,9 +153,9 @@ public static class ConnectGithub
         };
 
         var existing = await conn.QuerySingleOrDefaultAsync<ExistingRow>(new CommandDefinition(
-            "select id, tenant_id from github_connections where account_id = @accountId and disconnected_at is null for update",
+            "select id, tenant_id, auth_kind from github_connections where account_id = @accountId and disconnected_at is null for update",
             args, tx, cancellationToken: ct));
-        if (existing is not null && existing.TenantId != tenantId)
+        if (existing is not null && (existing.TenantId != tenantId || existing.AuthKind == "token"))
             return null;
 
         try

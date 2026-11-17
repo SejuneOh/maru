@@ -56,13 +56,13 @@ public static class SyncEndpoints
         var caller = user.Identity;
         if (caller.Member.Role != "admin")
             return Error(StatusCodes.Status403Forbidden, "admin_only");
-        if (!app.Value.CanReadInstallations)
-            return Error(StatusCodes.Status503ServiceUnavailable, "github_app_not_configured");
 
         await using (var conn = await sync.OpenConnectionAsync(ct))
         {
             if (!await ConnectedAsync(conn, caller.TenantId, ct))
                 return Error(StatusCodes.Status409Conflict, "not_connected");
+            if (!app.Value.CanReadInstallations && !await ConnectedAsync(conn, caller.TenantId, ct, tokenOnly: true))
+                return Error(StatusCodes.Status503ServiceUnavailable, "github_app_not_configured");
         }
 
         return runner.TryStart(caller.TenantId) is null
@@ -70,11 +70,12 @@ public static class SyncEndpoints
             : Results.Json(new SyncStarted(true), statusCode: StatusCodes.Status202Accepted);
     }
 
-    private static async Task<bool> ConnectedAsync(NpgsqlConnection conn, Guid tenantId, CancellationToken ct) =>
+    private static async Task<bool> ConnectedAsync(NpgsqlConnection conn, Guid tenantId, CancellationToken ct, bool tokenOnly = false) =>
         await conn.ExecuteScalarAsync<bool>(new CommandDefinition("""
             select exists (select 1 from github_connections
-                            where tenant_id = @tenantId and disconnected_at is null and installation_id is not null)
-            """, new { tenantId }, cancellationToken: ct));
+                            where tenant_id = @tenantId and disconnected_at is null
+                              and ((installation_id is not null and not @tokenOnly) or auth_kind = 'token'))
+            """, new { tenantId, tokenOnly }, cancellationToken: ct));
 
     private static IResult Error(int status, string code) => Results.Json(new ErrorBody(code), statusCode: status);
 }

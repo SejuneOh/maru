@@ -34,17 +34,25 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
         ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Post, IssuesUrl(repo),
             new { title, body = WithFooter(body, actorLogin, marker), labels, assignees }, ct));
 
-    // Without a configured Slug this App's own items cannot be told apart, so the answer is unknown.
-    private GitHubAppOptions OwnApp() =>
-        options.Value.BotLogin is null
+    // Recognises what this connection wrote: the App's bot, or the token owner for a token connection.
+    // Without a Slug or a recorded token owner the connection's own items cannot be told apart, so the answer is unknown.
+    private Func<string?, bool> OwnAuthor(GitHubConnectionRef connection)
+    {
+        if (connection.Kind == GitHubAuthKind.Token)
+            return connection.TokenOwnerLogin is { Length: > 0 } owner
+                ? login => string.Equals(login, owner, StringComparison.OrdinalIgnoreCase)
+                : throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+                    "The token owner is not recorded, so the connection's own items cannot be recognised.");
+        return options.Value.BotLogin is null
             ? throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
                 "GitHub:App:Slug is not set, so the App's own items cannot be recognised.")
-            : options.Value;
+            : options.Value.IsBot;
+    }
 
     public async Task<SourceIssue?> FindCreatedIssueAsync(
         GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct)
     {
-        var app = OwnApp();
+        var isOwn = OwnAuthor(repo.Connection);
         for (var page = 1; page <= LookupMaxPages; page++)
         {
             var issues = await SendAsync<List<RestIssue>>(repo, HttpMethod.Get,
@@ -53,7 +61,7 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
             {
                 if (issue.CreatedAt < since)
                     return null;
-                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true && app.IsBot(issue.User?.Login))
+                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true && isOwn(issue.User?.Login))
                     return ToIssue(issue);
             }
             if (issues.Count < LookupPageSize)
@@ -76,14 +84,14 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
     public async Task<SourceComment?> FindCreatedCommentAsync(
         GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct)
     {
-        var app = OwnApp();
+        var isOwn = OwnAuthor(repo.Connection);
         var from = Uri.EscapeDataString(since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
         for (var page = 1; page <= LookupMaxPages; page++)
         {
             var comments = await SendAsync<List<RestComment>>(repo, HttpMethod.Get,
                 $"{IssueUrl(repo, number)}/comments?since={from}&per_page={LookupPageSize}&page={page}", null, ct);
             foreach (var c in comments)
-                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true && app.IsBot(c.User?.Login))
+                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true && isOwn(c.User?.Login))
                     return ToComment(c, number);
             if (comments.Count < LookupPageSize)
                 return null;
@@ -119,7 +127,11 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
             }
             catch (GitHubSourceException e)
             {
-                throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "GitHub token request failed.", inner: e);
+                throw new GitHubWriteException(
+                    repo.Connection.Kind == GitHubAuthKind.Token && e.Kind == GitHubSourceErrorKind.Unauthorized
+                        ? GitHubWriteErrorKind.CredentialMissing
+                        : GitHubWriteErrorKind.Unavailable,
+                    "GitHub token request failed.", inner: e);
             }
 
             using var request = new HttpRequestMessage(method, url)
@@ -146,6 +158,8 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
 
             using (response)
             {
+                if (response.StatusCode == HttpStatusCode.Unauthorized && repo.Connection.Kind == GitHubAuthKind.Token)
+                    throw new GitHubWriteException(GitHubWriteErrorKind.CredentialMissing, "GitHub rejected the stored token.");
                 if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
                 {
                     credentials.Invalidate(repo.Connection);
