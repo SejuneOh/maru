@@ -165,7 +165,7 @@ mkdir -p ~/.config/work-board && umask 077
 printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.config/work-board/credential-keys.json
 ```
 
-`appsettings.Local.json`의 `GitHub:Credentials:KeyFile`에 그 경로를 넣습니다. 키 교체는 새 버전 키를 추가하고 `current`를 올린 뒤 `CredentialStore.ReencryptAsync()`로 기존 행을 새 키로 다시 암호화합니다. 옛 버전 키는 그 뒤에 지웁니다. 키를 잃으면 저장된 토큰은 복구할 수 없고 사용자가 다시 등록해야 합니다.
+`appsettings.Local.json`의 `GitHub:Credentials:KeyFile`에 그 경로를 넣습니다. 키 교체는 새 버전 키를 추가하고 `current`를 올린 뒤 `CredentialStore.ReencryptAsync()`로 기존 행을 새 키로 다시 암호화합니다. 옛 버전 키는 `ReencryptAsync`가 돌려준 `Skipped`가 0이고 `select count(*) from github_credentials where key_version <> <current>`도 0일 때만 지웁니다. 건너뛴 행이 남은 채 옛 키를 지우면 그 토큰은 복구할 수 없습니다. 키를 잃으면 저장된 토큰은 복구할 수 없고 사용자가 다시 등록해야 합니다.
 
 ## 토큰으로 조직 연결 (#75)
 
@@ -194,3 +194,14 @@ printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.con
 2. 테스트용 조직(개인 소유, 회사 조직 아님)에서 GitHub Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token으로 갑니다. Resource owner를 그 조직으로 고르고(조직이 토큰 승인을 요구하면 승인), Repository access는 필요한 저장소 또는 All repositories, 권한은 Metadata(read), Issues(read and write), Pull requests(read), Contents(read)로 둡니다. 만료일은 짧게 잡습니다.
 3. 조직이 SAML SSO를 쓰면 토큰의 Configure SSO에서 조직을 승인합니다.
 4. 관리자로 로그인한 상태에서 `POST /api/connections/github-token`에 `{"token": "...", "organization": "<조직 로그인>"}`을 보냅니다. 클래식 토큰을 쓰려면 `repo`와 `read:org`만 체크합니다.
+
+## 토큰 상태와 인계 (#77)
+
+토큰 연결의 토큰은 `active`, `expired`, `revoked`, `invalid`, `token_required`(저장된 토큰 없음) 중 하나입니다. 전이 표와 오류 코드는 [api-contract.md](api-contract.md)의 "Token health"에 있습니다.
+
+- 만료일이 지나면 동기화 시작 때 `expired`로 바꾸고 그 연결을 읽지 않습니다. 화면용 응답은 동기화 전에도 `expired`로 보여 주고, 만료 7일 전부터 `tokenExpiresSoon`이 켜집니다.
+- GitHub이 토큰에 401을 주면(동기화, 쓰기, 조직 가져오기 모두) 바로 `revoked`로 바꾸고 다시 시도하지 않습니다. 그 사이 새 토큰이 저장됐다면 그 토큰은 건드리지 않습니다.
+- 동기화는 토큰 연결마다 소유자가 조직의 active 구성원인지 확인합니다. 먼저 저장된 조직 id로 현재 로그인을 조회해 이름이 바뀌었으면 `account_login`을 고칩니다. 404나 비활성 응답이 처음 나오면 토큰은 두고 `invalid`로 멈추고, 같은 토큰으로 다음 확인에서도 같으면 토큰을 지우고 `token_required`로 둡니다(사이에 통과하면 `active`로 복귀). 확인 결과로 하는 모든 전이는 저장된 토큰이 확인한 토큰과 같을 때만 적용합니다. 소유자가 회사에서 빠진 경우(`members.left_at`)에는 바로 토큰을 지웁니다. 토큰 연결에는 조직 웹훅이 오지 않아 동기화 시점 확인이 기준입니다.
+- 인계: 다른 관리자가 `PUT .../github-token`으로 토큰을 바꿉니다. 소유자 확인이 새 관리자 기준으로 다시 돌고, 멈춘 연결이 `active`로 돌아와 선택된 저장소 동기화가 이어집니다.
+- 속도 제한: REST와 GraphQL 버킷을 따로 보고, 둘 중 하나라도 남은 요청이 500 미만이면 그 연결만 제한이 풀릴 때까지 쉽니다(App 연결은 영향 없음). 저장소 목록, 레이블, 마일스톤은 ETag(`If-None-Match`)로 읽어 304는 한도에 세지 않습니다.
+- 모든 전이는 `audit_log`에 남고 토큰 문자열은 들어가지 않습니다.

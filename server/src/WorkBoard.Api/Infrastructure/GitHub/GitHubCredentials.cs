@@ -2,7 +2,8 @@ using WorkBoard.Api.Infrastructure.Credentials;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubCredentials(IGitHubInstallationTokens installationTokens, CredentialStore store) : IGitHubCredentials
+public sealed class GitHubCredentials(
+    IGitHubInstallationTokens installationTokens, CredentialStore store, ILogger<GitHubCredentials>? logger = null) : IGitHubCredentials
 {
     public async Task<GitHubCredential> GetAsync(GitHubConnectionRef connection, CancellationToken ct)
     {
@@ -16,9 +17,17 @@ public sealed class GitHubCredentials(IGitHubInstallationTokens installationToke
         try
         {
             var token = await store.OpenAsync(connection.TenantId, connection.ConnectionId, ct);
-            return token is null
-                ? throw new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential.")
-                : new GitHubCredential(token, GitHubAuthKind.Token);
+            if (token is not null)
+                return new GitHubCredential(token, GitHubAuthKind.Token);
+
+            var state = await store.GetStateAsync(connection.TenantId, connection.ConnectionId, ct);
+            throw state?.Status switch
+            {
+                "expired" => new GitHubSourceException(GitHubSourceErrorKind.CredentialExpired, "The stored token has expired."),
+                "revoked" => new GitHubSourceException(GitHubSourceErrorKind.CredentialRevoked, "The stored token was rejected by GitHub."),
+                "invalid" => new GitHubSourceException(GitHubSourceErrorKind.CredentialInvalid, "GitHub refuses the stored token for the organization."),
+                _ => new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential."),
+            };
         }
         catch (Exception e) when (e is CredentialException or CredentialKeyException)
         {
@@ -30,5 +39,20 @@ public sealed class GitHubCredentials(IGitHubInstallationTokens installationToke
     {
         if (connection is { Kind: GitHubAuthKind.App, InstallationId: { } installationId })
             installationTokens.Invalidate(installationId);
+    }
+
+    public async Task ReportRejectedAsync(GitHubConnectionRef connection, string token, CancellationToken ct)
+    {
+        if (connection.Kind != GitHubAuthKind.Token)
+            return;
+        try
+        {
+            await store.RevokeAsync(connection.TenantId, connection.ConnectionId, token, ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Recording the 401 must not turn the credential_revoked outcome into a server error.
+            logger?.LogError("Recording a rejected token failed ({Kind})", e.GetType().Name);
+        }
     }
 }

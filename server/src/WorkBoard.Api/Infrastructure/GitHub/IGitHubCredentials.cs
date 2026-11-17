@@ -22,4 +22,8 @@ public interface IGitHubCredentials
 
     // Drops a cached token, e.g. after GitHub answered 401 for it.
     void Invalidate(GitHubConnectionRef connection);
+
+    // GitHub answered 401 for a token connection's token: marks the stored credential revoked (only while it still
+    // holds that token). Does nothing for App connections.
+    Task ReportRejectedAsync(GitHubConnectionRef connection, string token, CancellationToken ct) => Task.CompletedTask;
 }

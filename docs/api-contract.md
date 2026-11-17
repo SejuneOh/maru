@@ -40,6 +40,10 @@ Write endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) use these standard codes, alw
 | 502 | `github_unavailable` | GitHub returned a 5xx or hit its rate limit, or the App token could not be obtained |
 | 504 | `github_unavailable` | the GitHub call got no answer: network error, the client's own 30 second timeout, or the 60 second call limit |
 | 403 | `github_write_not_granted` | the GitHub App lacks the permission the write needs (GitHub answered 403 with a permission message; a rate-limit or other 403 is `github_unavailable`) |
+| 409 | `credential_missing` | a token connection has no stored token (token needed) |
+| 409 | `credential_revoked` | a token connection's token was rejected by GitHub (401); replace it |
+| 409 | `credential_invalid` | GitHub refuses a token connection's token for the organization (SAML SSO not authorized, owner not a member); replace it |
+| 409 | `credential_expired` | a token connection's token has passed its expiry; replace it |
 | 409 | `field_disabled` | priority or size is switched off for the tenant |
 | 409 | `repository_archived` | the write would call GitHub on an archived repository |
 | 422 | `assignee_not_collaborator` | GitHub rejected an assignee who cannot be assigned in that repository |
@@ -184,9 +188,52 @@ organization), `502 github_unavailable`, `503 credential_store_not_configured` (
 
 Writes through a token connection show the token owner as the GitHub author; the board's "작성: @member" line names
 the member. The duplicate check after a retried write recognises the token owner's login (the App's `<slug>[bot]`
-for App connections). A write on a token connection without a usable token answers `409 credential_missing`.
+for App connections). A write on a token connection without a usable token answers `409 credential_missing` (no token
+stored), `409 credential_revoked` (GitHub answered 401), `409 credential_invalid` (owner check failed, see "Token health") or `409 credential_expired`, without calling GitHub.
 Sync and the new-issue repository list include token connections; the organization's repositories come from
 `GET /orgs/{org}/repos`, but only repositories selected through "Organization import" are read (see below). Webhooks do not reach token connections, so they rely on the periodic sync.
+
+### Token health
+
+A token connection reports `tokenStatus` on `GET /api/connections` and the write responses: `active`, `expired`,
+`revoked`, `invalid` or `token_required` (no token stored). An `active` token past `tokenExpiresAt` is reported as
+`expired` at once, even before a sync marks it. Other fields: `tokenExpiresSoon` (active and expiring within 7 days),
+`tokenDaysLeft` (whole days left, rounded up, null without an expiry or when not active) and `syncPausedUntil`
+(rate-limit pause, see below; null when not paused). App connections have `tokenStatus: null`, `tokenExpiresSoon: false`.
+
+Transitions (each writes an `audit_log` row without a member and without token text, target type `connection`):
+
+| From | Trigger | To | `audit_log` action |
+| --- | --- | --- | --- |
+| `active`, `invalid` | `expires_at` passed (checked at the start of every sync run) | `expired` | `connection.token_expired` |
+| `active` | GitHub answered 401 for that token (sync, write, organization import, or the owner check), no retry | `revoked` | `connection.token_revoked` |
+| `active` | the owner check finds the organization refuses the token (SAML SSO not authorized, policy), or the owner is not a member (404) or not an active member (`state` other than `active`) for the first time | `invalid` (token kept) | `connection.token_invalid` (reason `sso_not_authorized`, `org_access_denied`, `owner_not_member`, `owner_not_active`) |
+| `invalid` | the next owner check passes | `active` | `connection.token_recovered` |
+| `invalid` (reason `owner_not_member` or `owner_not_active`) | the next owner check says "not a member" or "not active" again for the same token | `token_required` (token deleted) | `connection.token_released`, reason `owner_left_organization` |
+| any | the token owner left the company (`members.left_at`, set by `DELETE /api/members/{id}`; any sync run also sweeps) | `token_required` (token deleted) | `connection.token_released`, reason `owner_left_company` |
+| `expired`, `revoked`, `invalid`, `token_required` | `PUT /api/connections/{id}/github-token` | `active` | `connection.token_replace` (with `previousStatus`) |
+
+Every transition that follows a GitHub answer about a specific token (401, owner check, recovery, deletion) locks the
+credential row and applies only if the stored token is still the one that was asked about; a token replaced in the
+meantime is left alone. A single 404 can come from a renamed organization or a withdrawn fine-grained approval, so
+losing membership needs two checks in a row for the same token (the checks run on `invalid` tokens too, one per sync
+run, and a passing check in between resets the count). Before the membership question the organization is looked up
+by its stored id (`GET /organizations/{id}`); a changed login updates `account_login` (`connection.org_renamed`). Syncing skips a token
+connection unless its token is `active` and unexpired, so a stopped connection makes no GitHub call and no `sync_runs`
+row. Writes answer `credential_missing`, `credential_revoked`, `credential_invalid` or `credential_expired`. Selected
+repositories and mirrored data are kept. Handover: another admin replaces the token with `PUT`; the same checks run for
+the replacing admin (`403 not_your_account` unless the token belongs to them), and the connection syncs again at the
+next run, with the rate-limit pause cleared. The #40 organization webhooks do not reach token connections, so owner
+membership is checked at sync time: one `GET /user/memberships/orgs/{org}` and one `GET /orgs/{org}/repos?per_page=1` with the owner's token per run.
+
+Rate limits: GitHub allows 5,000 requests per hour to one user, shared with the owner's other activity. Token
+connections only: GitHub counts REST and GraphQL separately, and a run tracks both (`X-RateLimit-Remaining` of REST
+answers, `rateLimit.remaining` of GraphQL answers). When either is below 500 it stops reading further repositories, and
+the connection is skipped until the later reset time of the low bucket(s) (`syncPausedUntil`; at least 1 minute and at
+most 1 hour from now). `sync_runs.rate_limit_remaining` records the lower of the two. A `RateLimited` answer pauses the connection until its retry time (15 minutes when
+unknown). Manual runs obey the pause. The repository list, labels and milestones of token connections are read with
+`If-None-Match`; a 304 does not count against the limit. ETags and bodies are kept in server memory per connection and
+token (32 MB in total, bodies above 1 MB are not kept, the oldest entries are dropped first), so a restart only costs full requests.
 
 ### Organization import
 
@@ -632,13 +679,16 @@ A background service syncs every tenant with an active connection that has an `i
 installation's repositories, upserts them (`sync_enabled` defaults to true) and reads each enabled repository with
 `since = last_synced_at - 2 minutes` (full read on the first run). One run per tenant at a time. Each run writes one
 `sync_runs` row per connection; GitHub errors and a missing App key are recorded there, never thrown. A repository
-that fails does not stop the others, except on `RateLimited` and `Unauthorized`, which end the run.
+that fails does not stop the others, except on `RateLimited`, `Unauthorized`, `CredentialRevoked`, `CredentialInvalid` and `CredentialExpired`, which end the run.
 
 `GET /api/sync/status` (any member) -> `200`:
 ```
 { "connected": true, "running": false, "lastSyncedAt": "ISO" | null, "lastResult": "ok" | "failed" | null,
-  "lastError": "short text" | null, "rateLimitRemaining": 4990 | null, "nextRunAt": "ISO" | null }
+  "lastError": "short text" | null, "rateLimitRemaining": 4990 | null, "nextRunAt": "ISO" | null,
+  "tokens": [ { "connectionId": "uuid", "accountLogin": "acme", "tokenStatus": "active" | "invalid" | "expired" | "revoked" | "token_required",
+                "tokenExpiresAt": "ISO" | null, "tokenExpiresSoon": false, "tokenDaysLeft": 30 | null, "syncPausedUntil": "ISO" | null } ] }
 ```
+`tokens` has one entry per active token connection (see "Token health"); it is empty without any.
 `connected` is false when the tenant has no active connection with an installation; the other fields are then null/false.
 `lastSyncedAt` is the time of the most recent successful repository sync (not the last attempt); `lastResult`, `lastError` and `rateLimitRemaining` come from the most
 recent finished run. `nextRunAt` is null while the periodic loop is off.
@@ -783,7 +833,8 @@ type GithubConnection = {
   orgMemberCount: number | null;   // current organization members; null for personal accounts or when unread
   authKind: "app" | "token";
   tokenLast4: string | null; tokenOwnerLogin: string | null; tokenExpiresAt: string | null;   // token connections only
-  tokenStatus: "active" | "invalid" | "expired" | "revoked" | null; tokenScopes: string[] | null;
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required" | null; tokenScopes: string[] | null;
+  tokenExpiresSoon: boolean; tokenDaysLeft: number | null; syncPausedUntil: string | null;
 };
 
 type ConnectionRequest = { id: string; requestedAt: string; requestedByLogin: string | null; accountLogin: string | null };

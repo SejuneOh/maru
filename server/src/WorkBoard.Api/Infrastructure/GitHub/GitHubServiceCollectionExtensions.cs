@@ -25,6 +25,7 @@ public static class GitHubServiceCollectionExtensions
         services.AddSingleton<Credentials.CredentialCipher>();
         services.AddSingleton<Credentials.CredentialStore>();
         services.AddSingleton<IGitHubCredentials, GitHubCredentials>();
+        services.AddSingleton<GitHubEtagCache>();
         services.AddHttpClient<IGitHubWriter, GitHubWriter>(c =>
         {
             // Below Idempotency.CallTimeout, so the client times out first and takes the same 504 path.

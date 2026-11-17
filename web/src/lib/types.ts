@@ -114,7 +114,13 @@ export type GithubConnection = {
   /** GitHub login the token writes as. */
   tokenOwnerLogin: string | null;
   tokenExpiresAt: string | null;
-  tokenStatus: "active" | "invalid" | "expired" | "revoked" | null;
+  /** `token_required`: no token stored (owner left, or never set). Null for App connections. */
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required" | null;
+  /** Active and expiring within 7 days. */
+  tokenExpiresSoon: boolean;
+  tokenDaysLeft: number | null;
+  /** Rate-limit pause of the periodic sync; null when not paused. */
+  syncPausedUntil: string | null;
   /** Classic scopes; empty for a fine-grained token. */
   tokenScopes: string[] | null;
 };
@@ -197,6 +203,9 @@ export type OrganizationImportError =
   | "admin_only"
   | "not_found"
   | "credential_missing"
+  | "credential_revoked"
+  | "credential_invalid"
+  | "credential_expired"
   | "unknown_repository" // also `ids`
   | "unknown_team" // also `slugs`
   | "github_rate_limited"
@@ -355,6 +364,9 @@ export type BoardChangeError =
   | "repository_archived"
   | "github_write_not_granted"
   | "credential_missing"
+  | "credential_revoked"
+  | "credential_invalid"
+  | "credential_expired"
   | "github_unavailable"
   | "request_in_progress"
   | "idempotency_key_reused";
@@ -399,6 +411,9 @@ export type CreateIssueError =
   | "repository_archived"
   | "github_write_not_granted"
   | "credential_missing"
+  | "credential_revoked"
+  | "credential_invalid"
+  | "credential_expired"
   | "assignee_not_collaborator"
   | "github_unavailable"
   | "request_in_progress"
@@ -417,6 +432,9 @@ export type SetAssigneesError =
   | "repository_archived"
   | "github_write_not_granted"
   | "credential_missing"
+  | "credential_revoked"
+  | "credential_invalid"
+  | "credential_expired"
   | "assignee_not_collaborator"
   | "github_unavailable"
   | "request_in_progress"
@@ -442,6 +460,9 @@ export type AddCommentError =
   | "repository_archived"
   | "github_write_not_granted"
   | "credential_missing"
+  | "credential_revoked"
+  | "credential_invalid"
+  | "credential_expired"
   | "github_unavailable"
   | "request_in_progress"
   | "idempotency_key_reused";
@@ -647,6 +668,18 @@ export type SyncStatus = {
   lastError: string | null;
   rateLimitRemaining: number | null;
   nextRunAt: string | null;
+  tokens: TokenHealth[];
+};
+
+/** One active token connection in `GET /api/sync/status`. */
+export type TokenHealth = {
+  connectionId: string;
+  accountLogin: string;
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required";
+  tokenExpiresAt: string | null;
+  tokenExpiresSoon: boolean;
+  tokenDaysLeft: number | null;
+  syncPausedUntil: string | null;
 };
 
 /** `POST /api/sync/run` errors (`error` field). */

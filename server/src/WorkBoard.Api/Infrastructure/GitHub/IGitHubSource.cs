@@ -8,6 +8,11 @@ public enum GitHubSourceErrorKind
     RateLimited,
     GraphQl,
     Unexpected,
+
+    // Token connections: the stored token was rejected by GitHub (revoked), refused for the organization (invalid), or has expired.
+    CredentialRevoked,
+    CredentialInvalid,
+    CredentialExpired,
 }
 
 public sealed class GitHubSourceException(GitHubSourceErrorKind kind, string message, DateTimeOffset? retryAt = null, Exception? inner = null)
@@ -90,6 +95,7 @@ public sealed record SourceComment(
 
 // Issues, PullRequests and Comments are ordered by UpdatedAt ascending and hold only items updated
 // at or after the requested timestamp. Milestones and Labels are always the full repository lists.
+// RateLimit is the REST (core) bucket, GraphQlRateLimit the separate GraphQL bucket; each is null when not seen.
 public sealed record RepositorySnapshot(
     SourceRepository Repository,
     IReadOnlyList<SourceMilestone> Milestones,
@@ -97,7 +103,8 @@ public sealed record RepositorySnapshot(
     IReadOnlyList<SourceIssue> Issues,
     IReadOnlyList<SourcePullRequest> PullRequests,
     IReadOnlyList<SourceComment> Comments,
-    RateLimitInfo? RateLimit);
+    RateLimitInfo? RateLimit,
+    RateLimitInfo? GraphQlRateLimit = null);
 
 public sealed record RepositoryList(IReadOnlyList<SourceRepository> Repositories, RateLimitInfo? RateLimit);
 

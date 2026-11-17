@@ -19,6 +19,9 @@ public sealed record GithubConnection(
     string? TokenOwnerLogin,
     DateTime? TokenExpiresAt,
     string? TokenStatus,
+    bool TokenExpiresSoon,
+    int? TokenDaysLeft,
+    DateTime? SyncPausedUntil,
     [property: System.Text.Json.Serialization.JsonIgnore] string? TokenScopesText)
 {
     public string[]? TokenScopes => TokenScopesText is null ? null : TokenScopesText.Length == 0 ? [] : TokenScopesText.Split(',');
@@ -36,7 +39,16 @@ public static class ConnectionsEndpoints
             where o.tenant_id = c.tenant_id and o.connection_id = c.id and o.removed_at is null)
         end as org_member_count,
         c.auth_kind, k.last4 as token_last4, k.owner_login as token_owner_login, k.expires_at as token_expires_at,
-        k.status as token_status, array_to_string(k.scopes, ',') as token_scopes_text
+        case when c.auth_kind = 'token' then
+          case when k.status is null then 'token_required'
+               when k.status in ('active', 'invalid') and k.expires_at <= now() then 'expired'
+               else k.status end
+        end as token_status,
+        coalesce(k.status = 'active' and k.expires_at > now() and k.expires_at <= now() + interval '7 days', false) as token_expires_soon,
+        case when k.status = 'active' and k.expires_at is not null
+             then greatest(0, ceil(extract(epoch from (k.expires_at - now())) / 86400))::int end as token_days_left,
+        case when c.auth_kind = 'token' and c.sync_not_before > now() then c.sync_not_before end as sync_paused_until,
+        array_to_string(k.scopes, ',') as token_scopes_text
         """;
 
     // The stored token's metadata; never the token itself.

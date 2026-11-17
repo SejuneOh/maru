@@ -54,6 +54,19 @@ public sealed class GitHubTokenClient(HttpClient http) : IGitHubTokenClient
         return new OrgAccess(OrgAccessStatus.Active, o.Id, o.Login);
     }
 
+    public async Task<OrgRef?> GetOrganizationByIdAsync(string token, long organizationId, CancellationToken ct)
+    {
+        using var response = await SendAsync(token, $"{ApiBase}/organizations/{organizationId}", ct);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.NotFound)
+            return null;
+        if (response.StatusCode == HttpStatusCode.Forbidden && GitHubHttp.ReadRateLimit(response)?.Remaining != 0
+            && response.Headers.RetryAfter is null)
+            return null;
+        GitHubHttp.EnsureSuccess(response);
+        var body = await ReadAsync<OrganizationResponse>(response, ct);
+        return body is { Id: > 0, Login.Length: > 0 } ? new OrgRef(body.Id, body.Login) : null;
+    }
+
     // A 403 that is not a rate limit: SAML SSO not authorized for the token, or an organization policy.
     private static OrgAccess? Refused(HttpResponseMessage response)
     {

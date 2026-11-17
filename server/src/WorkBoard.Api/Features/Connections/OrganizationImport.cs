@@ -90,6 +90,12 @@ public static class OrganizationImport
             ApiErrors.Of(StatusCodes.Status429TooManyRequests, GithubRateLimited),
         GitHubSourceException { Kind: GitHubSourceErrorKind.Unauthorized } =>
             ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialMissing),
+        GitHubSourceException { Kind: GitHubSourceErrorKind.CredentialRevoked } =>
+            ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialRevoked),
+        GitHubSourceException { Kind: GitHubSourceErrorKind.CredentialInvalid } =>
+            ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialInvalid),
+        GitHubSourceException { Kind: GitHubSourceErrorKind.CredentialExpired } =>
+            ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialExpired),
         GitHubSourceException or HttpRequestException => ApiErrors.GithubUnavailableResult(),
         TaskCanceledException => ApiErrors.GithubUnavailableResult(),
         _ => null,

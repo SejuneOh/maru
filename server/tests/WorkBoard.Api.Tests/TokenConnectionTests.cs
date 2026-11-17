@@ -528,8 +528,9 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
     public async Task Sync_run_reads_a_token_connection_with_its_auth_kind_even_without_the_app()
     {
         await using var t = await TestTenant.CreateAsync(_factory);
-        var (login, _) = await AdminAsync(t);
+        var (login, adminId) = await AdminAsync(t);
         await t.ExecAsync("update github_connections set auth_kind = 'token', store_bodies = false where id = @id", new { id = t.ConnectionId });
+        await TokenFakes.AddCredentialAsync(_factory, t, adminId);
         var source = new RecordingSource { Repositories = [new SourceRepository(TestTenant.NextId(), "api", $"org-{t.Suffix}/api", "https://x/api", false)] };
         await t.ExecAsync("insert into repositories (tenant_id, connection_id, github_repo_id, name, full_name, sync_enabled) values (@tid, @cid, @gid, 'api', @full, true)",
             new { tid = t.Id, cid = t.ConnectionId, gid = source.Repositories[0].Id, full = source.Repositories[0].FullName });
@@ -543,6 +544,10 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
             {
                 s.RemoveAll<IGitHubSource>();
                 s.AddSingleton<IGitHubSource>(source);
+                s.RemoveAll<ICredentialKeys>();
+                s.AddSingleton<ICredentialKeys, TestKeys>();
+                s.RemoveAll<IGitHubTokenClient>();
+                s.AddSingleton<IGitHubTokenClient>(new FakeMembership());
             });
         }).CreateClient().WithDevUser(login);
 
@@ -700,7 +705,7 @@ public class TokenConnectionTests : IClassFixture<WebApplicationFactory<Program>
         var rejected = new GitHubWriter(new HttpClient(new Handler(_ => Json(HttpStatusCode.Unauthorized, "{}"))), credentials,
             Microsoft.Extensions.Options.Options.Create(new GitHubAppOptions()));
         var e = await Assert.ThrowsAsync<GitHubWriteException>(() => rejected.CloseIssueAsync(repo, 7, IssueCloseReason.Completed, default));
-        Assert.Equal(GitHubWriteErrorKind.CredentialMissing, e.Kind);
+        Assert.Equal(GitHubWriteErrorKind.CredentialRevoked, e.Kind);
     }
 
     [Fact]

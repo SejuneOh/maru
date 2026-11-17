@@ -8,7 +8,8 @@ using System.Text.RegularExpressions;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials credentials) : IGitHubSource, IGitHubOrgReader
+public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials credentials, GitHubEtagCache? etags = null)
+    : IGitHubSource, IGitHubOrgReader
 {
     private const string ApiBase = "https://api.github.com";
     private const int PageSize = 100;
@@ -81,7 +82,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         var org = connection.AccountLogin
             ?? throw new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "The token connection has no organization.");
         var (items, limit) = await GetRestPagesAsync<RestRepository>(
-            connection, $"{ApiBase}/orgs/{Uri.EscapeDataString(org)}/repos?type=all&sort=full_name", ct);
+            connection, $"{ApiBase}/orgs/{Uri.EscapeDataString(org)}/repos?type=all&sort=full_name", ct, useEtag: true);
         return new RepositoryList(items.Select(ToRepository).ToList(), limit);
     }
 
@@ -90,14 +91,15 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
     {
         var sinceText = since?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
         RateLimitInfo? limit = null;
+        RateLimitInfo? gqlLimit = null;
         SourceRepository? repository = null;
 
         var labelsRest = await GetRestPagesAsync<RestLabel>(
-            connection, $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/labels", ct);
+            connection, $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/labels", ct, useEtag: true);
         var milestonesRest = await GetRestPagesAsync<RestMilestone>(
             connection,
             $"{ApiBase}/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(name)}/milestones?state=all&sort=due_on",
-            ct);
+            ct, useEtag: true);
         limit = labelsRest.Limit ?? limit;
         limit = milestonesRest.Limit ?? limit;
 
@@ -111,7 +113,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         {
             var (data, rl) = await PostGraphQlAsync<IssuesData>(connection, IssuesQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor, ["since"] = sinceText }, ct);
-            limit = rl ?? limit;
+            gqlLimit = rl ?? gqlLimit;
             var repo = RequireRepository(data.Repository);
             repository ??= ToRepository(repo);
             var conn = repo.Issues ?? throw Unexpected();
@@ -128,7 +130,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         {
             var (data, rl) = await PostGraphQlAsync<PullRequestsData>(connection, PullRequestsQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor }, ct);
-            limit = rl ?? limit;
+            gqlLimit = rl ?? gqlLimit;
             var repo = RequireRepository(data.Repository);
             repository ??= ToRepository(repo);
             var conn = repo.PullRequests ?? throw Unexpected();
@@ -155,7 +157,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         limit = commentsRest.Limit ?? limit;
         var comments = commentsRest.Items.Select(ToComment).ToList();
 
-        return new RepositorySnapshot(repository!, milestones, labels, issues, pullRequests, comments, limit);
+        return new RepositorySnapshot(repository!, milestones, labels, issues, pullRequests, comments, limit, gqlLimit);
     }
 
     private static GitHubSourceException Unexpected() =>
@@ -166,12 +168,18 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
 
     // ---- transport ---------------------------------------------------------------------------
 
-    private async Task<HttpResponseMessage> SendAsync(GitHubConnectionRef connection, Func<HttpRequestMessage> build, CancellationToken ct)
+    private Task<HttpResponseMessage> SendAsync(GitHubConnectionRef connection, Func<HttpRequestMessage> build, CancellationToken ct) =>
+        SendAsync(connection, _ => build(), false, ct);
+
+    // build gets the token the request is sent with. A 304 is returned as is when allowNotModified is set.
+    // GitHub's 401 for a token connection's token is final: the credential is marked revoked and there is no retry.
+    private async Task<HttpResponseMessage> SendAsync(
+        GitHubConnectionRef connection, Func<string, HttpRequestMessage> build, bool allowNotModified, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
             var token = (await credentials.GetAsync(connection, ct)).Token;
-            using var request = build();
+            using var request = build(token);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
             request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
@@ -190,12 +198,20 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
                 throw new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "GitHub request timed out.", inner: e);
             }
 
+            if (response.StatusCode == HttpStatusCode.Unauthorized && connection.Kind == GitHubAuthKind.Token)
+            {
+                response.Dispose();
+                await credentials.ReportRejectedAsync(connection, token, ct);
+                throw new GitHubSourceException(GitHubSourceErrorKind.CredentialRevoked, "GitHub rejected the stored token.");
+            }
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
             {
                 response.Dispose();
                 credentials.Invalidate(connection);
                 continue;
             }
+            if (allowNotModified && response.StatusCode == HttpStatusCode.NotModified)
+                return response;
             try
             {
                 GitHubHttp.EnsureSuccess(response);
@@ -209,21 +225,67 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         }
     }
 
-    private async Task<(T Body, RateLimitInfo? Limit)> GetRestAsync<T>(GitHubConnectionRef connection, string url, CancellationToken ct)
+    // useEtag applies to token connections only: the request carries If-None-Match when the answer was seen before,
+    // and a 304 reuses the remembered body.
+    private async Task<(T Body, RateLimitInfo? Limit)> GetRestAsync<T>(
+        GitHubConnectionRef connection, string url, CancellationToken ct, bool useEtag = false)
     {
-        using var response = await SendAsync(connection, () => new HttpRequestMessage(HttpMethod.Get, url), ct);
-        return (await ReadBodyAsync<T>(response, ct), GitHubHttp.ReadRateLimit(response));
+        if (!useEtag || etags is null || connection.Kind != GitHubAuthKind.Token)
+        {
+            using var plain = await SendAsync(connection, () => new HttpRequestMessage(HttpMethod.Get, url), ct);
+            return (await ReadBodyAsync<T>(plain, ct), GitHubHttp.ReadRateLimit(plain));
+        }
+
+        string? key = null;
+        GitHubEtagCache.Entry? known = null;
+        using var response = await SendAsync(connection, token =>
+        {
+            key = GitHubEtagCache.Key(connection, token, url);
+            known = etags.Get(key);
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (known is not null)
+                request.Headers.TryAddWithoutValidation("If-None-Match", known.Etag);
+            return request;
+        }, true, ct);
+        var limit = GitHubHttp.ReadRateLimit(response);
+
+        if (response.StatusCode == HttpStatusCode.NotModified)
+        {
+            if (known is null)
+                throw Unexpected();
+            return (Deserialize<T>(known.Body), limit);
+        }
+
+        var text = await response.Content.ReadAsStringAsync(ct);
+        var body = Deserialize<T>(text);
+        if (response.Headers.ETag is { } etag)
+            etags.Set(key!, new GitHubEtagCache.Entry(etag.ToString(), text));
+        else
+            etags.Remove(key!);
+        return (body, limit);
+    }
+
+    private static T Deserialize<T>(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, Json) ?? throw Unexpected();
+        }
+        catch (JsonException e)
+        {
+            throw new GitHubSourceException(GitHubSourceErrorKind.Unexpected, "GitHub returned malformed JSON.", inner: e);
+        }
     }
 
     private async Task<(List<T> Items, RateLimitInfo? Limit)> GetRestPagesAsync<T>(
-        GitHubConnectionRef connection, string url, CancellationToken ct)
+        GitHubConnectionRef connection, string url, CancellationToken ct, bool useEtag = false)
     {
         var items = new List<T>();
         RateLimitInfo? limit = null;
         var sep = url.Contains('?') ? '&' : '?';
         for (var page = 1; ; page++)
         {
-            var (body, rl) = await GetRestAsync<List<T>>(connection, $"{url}{sep}per_page={PageSize}&page={page}", ct);
+            var (body, rl) = await GetRestAsync<List<T>>(connection, $"{url}{sep}per_page={PageSize}&page={page}", ct, useEtag);
             limit = rl ?? limit;
             items.AddRange(body);
             if (body.Count < PageSize)

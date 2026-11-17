@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using WorkBoard.Api.Infrastructure.Credentials;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Tests.Fakes;
 
@@ -81,6 +82,10 @@ public class OrganizationImportTests : IClassFixture<WebApplicationFactory<Progr
                 s.AddSingleton<IGitHubOrgReader>(fake);
                 s.RemoveAll<IGitHubSource>();
                 s.AddSingleton<IGitHubSource>(fake);
+                s.RemoveAll<ICredentialKeys>();
+                s.AddSingleton<ICredentialKeys, TestKeys>();
+                s.RemoveAll<IGitHubTokenClient>();
+                s.AddSingleton<IGitHubTokenClient>(new FakeMembership());
             });
         }).CreateClient().WithDevUser(login);
 
@@ -102,7 +107,8 @@ public class OrganizationImportTests : IClassFixture<WebApplicationFactory<Progr
     {
         var t = await TestTenant.CreateAsync(_factory);
         await t.ExecAsync("update github_connections set auth_kind = 'token', store_bodies = false where id = @id", new { id = t.ConnectionId });
-        var (login, _) = await AdminAsync(t);
+        var (login, adminId) = await AdminAsync(t);
+        await TokenFakes.AddCredentialAsync(_factory, t, adminId);
         var org = "org-" + t.Suffix;
         var fake = new FakeOrg
         {
