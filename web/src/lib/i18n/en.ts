@@ -511,6 +511,20 @@ export const en: Dict = {
       dayOf: (day, total) => `Day ${day} of ${total}`,
       length: (total) => `${total}-day cycle`,
       reviewAndProgress: (inReview, inProgress) => `In review ${inReview} · In progress ${inProgress}`,
+      trendTitle: "Remaining work",
+      remaining: "Remaining",
+      unit: (n: number) => (n === 1 ? " issue" : " issues"),
+      ideal: "Ideal",
+      byWeight: (pct) => `${pct}% left by size`,
+      gaps: "The line breaks on days with no record.",
+      trendEmpty: "Nothing recorded yet. Remaining work is recorded once a day; the line starts after the first record.",
+      point: (day, remaining, ideal) =>
+        [day, remaining === null ? "no record" : `${issues(remaining)} remaining`, ideal === null ? null : `ideal ${ideal}`]
+          .filter(Boolean)
+          .join(" · "),
+      tableCaption: (name) => `${name}: remaining issues and the ideal line by day`,
+      day: "Day",
+      noRecord: "No record",
     },
     actions: {
       title: "Meeting action items",
@@ -658,6 +672,13 @@ export const en: Dict = {
     project: "Project",
     filter: "Filter",
     notesLink: "Meeting notes for this project →",
+    weekly: "Finished per week",
+    thisWeek: "This week",
+    weeksAgo: (n) => `${n} weeks ago`,
+    unit: (n) => (n === 1 ? " issue" : " issues"),
+    weeklyAria: (items) => `Finished in the last 8 weeks: ${items}`,
+    weekItem: (week, n) => `week of ${week}: ${issues(n)}`,
+    weeklyError: "Couldn't load the weekly finished work.",
   },
 
   notes: {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { WeeklyDone } from "@/components/Charts";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
 import { StatusColumns } from "@/components/StatusColumns";
@@ -11,7 +12,7 @@ import { useEditedIssues } from "@/lib/boardEdits";
 import { NO_FILTERS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useFormat, useT } from "@/lib/i18n";
 import { STATUS_ORDER, isCanceled, percent } from "@/lib/labels";
-import type { BoardIssue, MeetingNoteSummary, Member, Project, StatusCounts } from "@/lib/types";
+import type { BoardIssue, DoneByWeek, MeetingNoteSummary, Member, Project, StatusCounts } from "@/lib/types";
 
 function countByStatus(issues: BoardIssue[]): StatusCounts {
   const c: StatusCounts = { todo: 0, inProgress: 0, inReview: 0, done: 0 };
@@ -42,6 +43,7 @@ export default function ProjectsBoardPage() {
   );
   const boardEdited = useEditedIssues(board.data);
   const notes = useApi<MeetingNoteSummary[]>("/api/meeting-notes");
+  const weekly = useApi<DoneByWeek>("/api/projects/done-by-week");
   const members = useApi<Member[]>(filters.person ? "/api/members" : null);
 
   const error = projects.error ?? all.error ?? notes.error;
@@ -127,6 +129,14 @@ export default function ProjectsBoardPage() {
                   {total > 0 ? progressLine(counts, t) : ""}
                   {total > 0 && pt.breakdown(counts.inProgress, counts.inReview, counts.todo)}
                 </p>
+                {weekly.data ? (
+                  <WeeklyDone
+                    weeks={weekly.data.weeks}
+                    done={weekly.data.projects.find((w) => w.projectId === p.id)?.done ?? weekly.data.weeks.map(() => 0)}
+                  />
+                ) : weekly.error ? (
+                  <p className="mt-3 border-t border-rule pt-2.5 text-small text-muted">{pt.weeklyError}</p>
+                ) : null}
                 {recentNotes.length > 0 && (
                   <ul className="mt-3 border-t border-rule pt-2.5 text-small text-muted">
                     {recentNotes.map((n) => (
