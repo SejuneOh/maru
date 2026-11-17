@@ -13,6 +13,7 @@ using WorkBoard.Api.Features.Search;
 using WorkBoard.Api.Features.Sprints;
 using WorkBoard.Api.Features.Sync;
 using WorkBoard.Api.Features.Tenants;
+using WorkBoard.Api.Features.Webhooks;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Data.Migrations;
 using WorkBoard.Api.Infrastructure.GitHub;
@@ -64,6 +65,7 @@ open.MapHealth();
 if (app.Environment.IsDevelopment())
     open.MapDevUsers();
 open.MapTenants();
+open.MapWebhooks();
 
 var authed = app.MapGroup("/api").AddEndpointFilter<CurrentMemberFilter>();
 authed.MapMe();

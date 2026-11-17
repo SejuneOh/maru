@@ -61,7 +61,25 @@ public sealed class SyncRunner(
 
     private sealed record ConnectionRow(Guid Id, long InstallationId);
 
-    private sealed record RepoRow(Guid Id, string FullName, DateTime? LastSyncedAt);
+    public sealed record RepoRow(Guid Id, string FullName, DateTime? LastSyncedAt);
+
+    // Reads what changed in one repository since its last sync and applies it through the MirrorWriter.
+    // Shared by the periodic run and the webhook worker.
+    public async Task<(MirrorResult Result, int? RateLimitRemaining)> SyncRepositoryAsync(
+        IGitHubSource source, MirrorWriter writer, Guid tenantId, Guid connectionId, long installationId, RepoRow repo,
+        CancellationToken ct)
+    {
+        var startedAt = time.GetUtcNow();
+        var slash = repo.FullName.IndexOf('/');
+        DateTimeOffset? since = repo.LastSyncedAt is { } last
+            ? new DateTimeOffset(DateTime.SpecifyKind(last, DateTimeKind.Utc)) - Overlap
+            : null;
+        var snapshot = await source.ReadRepositoryAsync(
+            installationId, repo.FullName[..slash], repo.FullName[(slash + 1)..], since, ct);
+        var result = await writer.ApplyAsync(tenantId, connectionId, snapshot, ct);
+        await MarkSyncedAsync(tenantId, repo.Id, startedAt, since, result);
+        return (result, snapshot.RateLimit?.Remaining);
+    }
 
     private async Task RunTenantAsync(Guid tenantId, CancellationToken ct)
     {
@@ -99,21 +117,14 @@ public sealed class SyncRunner(
             var repos = await EnabledRepositoriesAsync(tenantId, connection.Id, list.Repositories.Select(r => r.Id).ToArray(), ct);
             foreach (var repo in repos)
             {
-                var startedAt = time.GetUtcNow();
-                var slash = repo.FullName.IndexOf('/');
-                DateTimeOffset? since = repo.LastSyncedAt is { } last
-                    ? new DateTimeOffset(DateTime.SpecifyKind(last, DateTimeKind.Utc)) - Overlap
-                    : null;
                 try
                 {
-                    var snapshot = await source.ReadRepositoryAsync(
-                        connection.InstallationId, repo.FullName[..slash], repo.FullName[(slash + 1)..], since, ct);
-                    remaining = snapshot.RateLimit?.Remaining ?? remaining;
-                    var result = await writer.ApplyAsync(tenantId, connection.Id, snapshot, ct);
+                    var (result, left) = await SyncRepositoryAsync(
+                        source, writer, tenantId, connection.Id, connection.InstallationId, repo, ct);
+                    remaining = left ?? remaining;
                     issues += result.Issues;
                     pullRequests += result.PullRequests;
                     comments += result.Comments;
-                    await MarkSyncedAsync(tenantId, repo.Id, startedAt, since, result);
                 }
                 catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                 {

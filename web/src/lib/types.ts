@@ -16,6 +16,8 @@ export type Member = {
   displayName: string | null;
   avatarUrl: string | null;
   role: "admin" | "member";
+  /** Set when GitHub reported the person left the connected organization; null otherwise. Only `GET /api/members` fills it. */
+  removedAt?: string | null;
 };
 
 export type Me = {

@@ -6,7 +6,7 @@ using WorkBoard.Api.Infrastructure.Identity;
 
 namespace WorkBoard.Api.Infrastructure.Sync;
 
-// Syncs every connected tenant each Sync:IntervalMinutes, then records today's sprint_daily rows.
+// Syncs every connected tenant each Sync:IntervalMinutes (10, or 60 while webhook deliveries arrive), then records today's sprint_daily rows.
 public sealed class SyncWorker(
     SyncRunner runner,
     SprintDailyRecorder sprintDaily,
@@ -34,7 +34,7 @@ public sealed class SyncWorker(
                 if (app.Value.CanReadInstallations)
                     await RunAllAsync(ct);
                 await sprintDaily.RecordTodayAsync(ct);
-                var interval = options.Value.Interval;
+                var interval = await IntervalAsync(ct);
                 runner.NextRunAt = time.GetUtcNow() + interval;
                 await Task.Delay(interval, time, ct);
             }
@@ -46,6 +46,29 @@ public sealed class SyncWorker(
         {
             logger.LogError(e, "Sync loop stopped");
         }
+    }
+
+    public static readonly TimeSpan DeliveryWindow = TimeSpan.FromMinutes(30);
+
+    // The long interval applies only while a verified delivery was stored within DeliveryWindow.
+    public async Task<TimeSpan> IntervalAsync(CancellationToken ct)
+    {
+        var recent = false;
+        if (options.Value.IntervalMinutes is null && app.Value.WebhooksEnabled)
+        {
+            try
+            {
+                await using var conn = await sync.OpenConnectionAsync(ct);
+                recent = await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "select exists (select 1 from webhook_deliveries where received_at > now() - @window)",
+                    new { window = DeliveryWindow }, cancellationToken: ct));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                logger.LogWarning(e, "Reading webhook activity failed");
+            }
+        }
+        return options.Value.IntervalFor(recent);
     }
 
     private async Task RunAllAsync(CancellationToken ct)

@@ -66,6 +66,18 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 | `GitHub__App__PrivateKeyPath` | 내려받은 `.pem` 경로. 절대 경로 또는 API 폴더 기준 상대 경로. `*.pem`은 `.gitignore`에 있음 |
 | `GitHub__App__Slug` | App 주소의 이름. **필수**: API가 `<Slug>[bot]`으로 App이 쓴 댓글·본문을 알아보고(작성자 표시), 중단된 요청을 다시 보낼 때 이미 만든 이슈·댓글을 찾는 데 씀. 비우면 작성자가 봇으로 보이고, 이어받는 재시도는 504로 멈춤. 화면의 설치 링크에도 씀 |
 
+### 웹훅 (실시간 반영)
+
+`GitHub__App__WebhookSecret`이 있어야 웹훅이 켜집니다. 비어 있거나 `Sync:Enabled=false`이면 `POST /api/github/webhook`은 503이고 아무것도 저장하지 않습니다. 주기 동기화는 기본 10분이고, 최근 30분 안에 검증된 전달이 있을 때만 60분 간격의 보정 작업이 됩니다. 전달이 끊기면 다시 10분으로 돌아갑니다(`Sync:IntervalMinutes`로 직접 지정하면 그 값만 씁니다).
+
+1. 임의의 긴 문자열을 만들어 `GitHub:App:WebhookSecret`(환경 변수 `GitHub__App__WebhookSecret`)에 넣고 API를 다시 시작합니다. 예: `openssl rand -hex 32`
+2. 로컬에서 받으려면 터널로 API(`localhost:5080`)를 공개합니다(예: `cloudflared tunnel --url http://localhost:5080`).
+3. GitHub → Settings → Developer settings → GitHub Apps → App → General → Webhook: **Active**를 켜고, Webhook URL에 `https://<터널 주소>/api/github/webhook`, Secret에 1번의 값을 넣고 저장합니다.
+4. Permissions & events의 Subscribe to events에서 Issues, Issue comment, Pull request, Pull request review, Pull request review comment, Milestone, Label, Sub issues, Organization(조직 구성원 읽기 권한 필요)을 선택합니다. `installation` 이벤트는 항상 전달됩니다.
+5. Advanced 탭의 Recent Deliveries에서 `ping`이 200인지 확인합니다. 서명이 틀리면 401입니다.
+
+자세한 동작은 [docs/auth-and-github.md](docs/auth-and-github.md)와 `docs/api-contract.md`의 "GitHub webhook"에 있습니다.
+
 샘플 사용자: `haneul-dev`(acme-health 관리자), `other-org-dev`(globex-labs). 두 번째 사용자로 바꾸면 첫 번째 회사의 데이터가 하나도 보이지 않아야 합니다.
 
 ## DB 마이그레이션
