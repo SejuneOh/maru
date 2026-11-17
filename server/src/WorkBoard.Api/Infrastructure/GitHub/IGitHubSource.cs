@@ -8,6 +8,10 @@ public enum GitHubSourceErrorKind
     RateLimited,
     GraphQl,
     Unexpected,
+
+    // Token connections: the stored token was rejected by GitHub or lost access (revoked, invalid), or has expired.
+    CredentialRevoked,
+    CredentialExpired,
 }
 
 public sealed class GitHubSourceException(GitHubSourceErrorKind kind, string message, DateTimeOffset? retryAt = null, Exception? inner = null)

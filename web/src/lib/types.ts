@@ -114,7 +114,13 @@ export type GithubConnection = {
   /** GitHub login the token writes as. */
   tokenOwnerLogin: string | null;
   tokenExpiresAt: string | null;
-  tokenStatus: "active" | "invalid" | "expired" | "revoked" | null;
+  /** `token_required`: no token stored (owner left, or never set). Null for App connections. */
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required" | null;
+  /** Active and expiring within 7 days. */
+  tokenExpiresSoon: boolean;
+  tokenDaysLeft: number | null;
+  /** Rate-limit pause of the periodic sync; null when not paused. */
+  syncPausedUntil: string | null;
   /** Classic scopes; empty for a fine-grained token. */
   tokenScopes: string[] | null;
 };
@@ -647,6 +653,18 @@ export type SyncStatus = {
   lastError: string | null;
   rateLimitRemaining: number | null;
   nextRunAt: string | null;
+  tokens: TokenHealth[];
+};
+
+/** One active token connection in `GET /api/sync/status`. */
+export type TokenHealth = {
+  connectionId: string;
+  accountLogin: string;
+  tokenStatus: "active" | "invalid" | "expired" | "revoked" | "token_required";
+  tokenExpiresAt: string | null;
+  tokenExpiresSoon: boolean;
+  tokenDaysLeft: number | null;
+  syncPausedUntil: string | null;
 };
 
 /** `POST /api/sync/run` errors (`error` field). */

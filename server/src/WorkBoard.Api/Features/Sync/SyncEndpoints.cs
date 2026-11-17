@@ -14,7 +14,18 @@ public sealed record SyncStatus(
     string? LastResult,
     string? LastError,
     int? RateLimitRemaining,
-    DateTimeOffset? NextRunAt);
+    DateTimeOffset? NextRunAt,
+    IReadOnlyList<TokenHealthStatus> Tokens);
+
+// One row per active token connection; empty when the company has none. Fields read like those of GET /api/connections.
+public sealed record TokenHealthStatus(
+    Guid ConnectionId,
+    string AccountLogin,
+    string TokenStatus,
+    DateTime? TokenExpiresAt,
+    bool TokenExpiresSoon,
+    int? TokenDaysLeft,
+    DateTime? SyncPausedUntil);
 
 public sealed record SyncStarted(bool Started);
 
@@ -35,7 +46,7 @@ public static class SyncEndpoints
         var tenantId = user.Identity.TenantId;
         await using var conn = await sync.OpenConnectionAsync(ct);
         if (!await ConnectedAsync(conn, tenantId, ct))
-            return Results.Ok(new SyncStatus(false, false, null, null, null, null, null));
+            return Results.Ok(new SyncStatus(false, false, null, null, null, null, null, []));
 
         var lastSyncedAt = await conn.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
             "select max(last_synced_at) from repositories where tenant_id = @tenantId", new { tenantId }, cancellationToken: ct));
@@ -45,8 +56,24 @@ public static class SyncEndpoints
              order by started_at desc limit 1
             """, new { tenantId }, cancellationToken: ct));
 
+        var tokens = (await conn.QueryAsync<TokenHealthStatus>(new CommandDefinition("""
+            select c.id as ConnectionId, c.account_login as AccountLogin,
+                   case when k.status is null then 'token_required'
+                        when k.status = 'active' and k.expires_at <= now() then 'expired'
+                        else k.status end as TokenStatus,
+                   k.expires_at as TokenExpiresAt,
+                   coalesce(k.status = 'active' and k.expires_at > now() and k.expires_at <= now() + interval '7 days', false) as TokenExpiresSoon,
+                   case when k.status = 'active' and k.expires_at is not null
+                        then greatest(0, ceil(extract(epoch from (k.expires_at - now())) / 86400))::int end as TokenDaysLeft,
+                   case when c.sync_not_before > now() then c.sync_not_before end as SyncPausedUntil
+              from github_connections c
+              left join github_credentials k on k.tenant_id = c.tenant_id and k.connection_id = c.id
+             where c.tenant_id = @tenantId and c.disconnected_at is null and c.auth_kind = 'token'
+             order by c.account_login
+            """, new { tenantId }, cancellationToken: ct))).AsList();
+
         return Results.Ok(new SyncStatus(
-            true, runner.IsRunning(tenantId), lastSyncedAt, last?.Status, last?.Error, last?.RateLimitRemaining, runner.NextRunAt));
+            true, runner.IsRunning(tenantId), lastSyncedAt, last?.Status, last?.Error, last?.RateLimitRemaining, runner.NextRunAt, tokens));
     }
 
     private static async Task<IResult> RunAsync(

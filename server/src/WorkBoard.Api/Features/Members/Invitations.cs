@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using WorkBoard.Api.Features.Me;
 using WorkBoard.Api.Features.Tenants;
+using WorkBoard.Api.Infrastructure.Credentials;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -211,7 +212,24 @@ public static class Invitations
         });
 
     // The row stays (left_at) so history keeps the name. Open invitations the person created are revoked with it.
-    private static Task<IResult> RemoveMemberAsync(Guid id, HttpContext http, ICurrentUser user, TenantDb db, IAuditLog audit, CancellationToken ct) =>
+    private static async Task<IResult> RemoveMemberAsync(
+        Guid id, HttpContext http, ICurrentUser user, TenantDb db, IAuditLog audit, CredentialStore credentials,
+        ILoggerFactory logs, CancellationToken ct)
+    {
+        var result = await RemoveMemberCoreAsync(id, http, user, db, audit, ct);
+        // Deletes the token of a connection whose owner has now left; a refused or repeated removal changes nothing.
+        try
+        {
+            await credentials.ReleaseDepartedOwnersAsync(user.Identity.TenantId, CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            logs.CreateLogger(typeof(Invitations)).LogError("Releasing tokens of a removed member failed ({Kind})", e.GetType().Name);
+        }
+        return result;
+    }
+
+    private static Task<IResult> RemoveMemberCoreAsync(Guid id, HttpContext http, ICurrentUser user, TenantDb db, IAuditLog audit, CancellationToken ct) =>
         AdminWriteAsync(http, user, db, ct, async s =>
         {
             // Locks every active admin, so two admins removing each other cannot both succeed.

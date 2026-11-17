@@ -14,6 +14,8 @@ public static class GitHubWriteErrors
             GitHubWriteErrorKind.AssigneeNotCollaborator => (StatusCodes.Status422UnprocessableEntity, ApiErrors.AssigneeNotCollaborator),
             GitHubWriteErrorKind.InvalidRequest => (StatusCodes.Status422UnprocessableEntity, ApiErrors.InvalidRequest),
             GitHubWriteErrorKind.CredentialMissing => (StatusCodes.Status409Conflict, ApiErrors.CredentialMissing),
+            GitHubWriteErrorKind.CredentialRevoked => (StatusCodes.Status409Conflict, ApiErrors.CredentialRevoked),
+            GitHubWriteErrorKind.CredentialExpired => (StatusCodes.Status409Conflict, ApiErrors.CredentialExpired),
             GitHubWriteErrorKind.NotFound => (StatusCodes.Status404NotFound, ApiErrors.NotFound),
             _ => (e.NoResponse ? StatusCodes.Status504GatewayTimeout : StatusCodes.Status502BadGateway, ApiErrors.GithubUnavailable),
         };

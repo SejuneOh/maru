@@ -128,9 +128,13 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
             catch (GitHubSourceException e)
             {
                 throw new GitHubWriteException(
-                    repo.Connection.Kind == GitHubAuthKind.Token && e.Kind == GitHubSourceErrorKind.Unauthorized
-                        ? GitHubWriteErrorKind.CredentialMissing
-                        : GitHubWriteErrorKind.Unavailable,
+                    repo.Connection.Kind != GitHubAuthKind.Token ? GitHubWriteErrorKind.Unavailable : e.Kind switch
+                    {
+                        GitHubSourceErrorKind.Unauthorized => GitHubWriteErrorKind.CredentialMissing,
+                        GitHubSourceErrorKind.CredentialRevoked => GitHubWriteErrorKind.CredentialRevoked,
+                        GitHubSourceErrorKind.CredentialExpired => GitHubWriteErrorKind.CredentialExpired,
+                        _ => GitHubWriteErrorKind.Unavailable,
+                    },
                     "GitHub token request failed.", inner: e);
             }
 
@@ -159,7 +163,10 @@ public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials
             using (response)
             {
                 if (response.StatusCode == HttpStatusCode.Unauthorized && repo.Connection.Kind == GitHubAuthKind.Token)
-                    throw new GitHubWriteException(GitHubWriteErrorKind.CredentialMissing, "GitHub rejected the stored token.");
+                {
+                    await credentials.ReportRejectedAsync(repo.Connection, token, ct);
+                    throw new GitHubWriteException(GitHubWriteErrorKind.CredentialRevoked, "GitHub rejected the stored token.");
+                }
                 if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
                 {
                     credentials.Invalidate(repo.Connection);

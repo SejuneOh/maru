@@ -110,9 +110,11 @@ public static class ConnectGithubToken
             return await FailAsync(db, audit, log, "replace", connection.AccountLogin, token,
                 new Failure(StatusCodes.Status422UnprocessableEntity, "organization_mismatch"), id);
 
+        string? previous;
         try
         {
-            if (!await ReplaceStoredAsync(sync, store, caller.TenantId, caller.Member.Id, connection, token, v, ct))
+            previous = await ReplaceStoredAsync(sync, store, caller.TenantId, caller.Member.Id, connection, token, v, ct);
+            if (previous is null)
                 return ConnectGithub.Error(StatusCodes.Status404NotFound, ApiErrors.NotFound);
         }
         catch (Exception e) when (e is CredentialKeyException or CredentialException)
@@ -120,7 +122,11 @@ public static class ConnectGithubToken
             return ConnectGithub.Error(StatusCodes.Status503ServiceUnavailable, CredentialStoreNotConfigured);
         }
 
-        await AuditAsync(db, audit, log, "connection.token_replace", id, TokenFacts(v, token, "replace"));
+        await AuditAsync(db, audit, log, "connection.token_replace", id, new
+        {
+            operation = "replace", organization = v.OrgLogin, tokenKind = v.Kind, last4 = Last4(token), scopes = v.Scopes,
+            expiresAt = v.ExpiresAt, owner = v.OwnerLogin, previousStatus = previous,
+        });
         await using var conn = await sync.OpenConnectionAsync(ct);
         return Results.Ok(await ConnectionsEndpoints.ReadAsync(conn, caller.TenantId, id, ct));
     }
@@ -268,7 +274,9 @@ public static class ConnectGithubToken
 
     // Re-checks under a row lock that the connection is still the active token connection of that account: a delete
     // that ran while the token was being verified must not get a new token.
-    private static async Task<bool> ReplaceStoredAsync(
+    // Returns the credential's status before the replacement ("token_required" when none was stored), or null when the
+    // connection is gone. The new token is active, and a rate-limit pause of the connection ends.
+    private static async Task<string?> ReplaceStoredAsync(
         NpgsqlDataSource sync, CredentialStore store, Guid tenantId, Guid memberId, TokenConnection connection, string token,
         Verified v, CancellationToken ct)
     {
@@ -280,10 +288,16 @@ public static class ConnectGithubToken
                for update
             """, new { tenantId, connection.Id, connection.AccountId }, tx, cancellationToken: ct));
         if (locked is null)
-            return false;
+            return null;
+        var previous = await conn.QuerySingleOrDefaultAsync<string?>(new CommandDefinition(
+            "select status from github_credentials where tenant_id = @tenantId and connection_id = @id for update",
+            new { tenantId, connection.Id }, tx, cancellationToken: ct)) ?? "token_required";
         await store.SaveAsync(conn, tx, tenantId, connection.Id, memberId, token, v.Scopes, v.ExpiresAt, v.OwnerLogin, ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            "update github_connections set sync_not_before = null where tenant_id = @tenantId and id = @id",
+            new { tenantId, connection.Id }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
-        return true;
+        return previous;
     }
 
     private static async Task<TokenConnection?> FindActiveAsync(NpgsqlDataSource sync, Guid tenantId, Guid id, CancellationToken ct)

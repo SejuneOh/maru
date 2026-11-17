@@ -16,9 +16,16 @@ public sealed class GitHubCredentials(IGitHubInstallationTokens installationToke
         try
         {
             var token = await store.OpenAsync(connection.TenantId, connection.ConnectionId, ct);
-            return token is null
-                ? throw new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential.")
-                : new GitHubCredential(token, GitHubAuthKind.Token);
+            if (token is not null)
+                return new GitHubCredential(token, GitHubAuthKind.Token);
+
+            var state = await store.GetStateAsync(connection.TenantId, connection.ConnectionId, ct);
+            throw state?.Status switch
+            {
+                "expired" => new GitHubSourceException(GitHubSourceErrorKind.CredentialExpired, "The stored token has expired."),
+                "revoked" or "invalid" => new GitHubSourceException(GitHubSourceErrorKind.CredentialRevoked, "The stored token was rejected by GitHub."),
+                _ => new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential."),
+            };
         }
         catch (Exception e) when (e is CredentialException or CredentialKeyException)
         {
@@ -30,5 +37,18 @@ public sealed class GitHubCredentials(IGitHubInstallationTokens installationToke
     {
         if (connection is { Kind: GitHubAuthKind.App, InstallationId: { } installationId })
             installationTokens.Invalidate(installationId);
+    }
+
+    public async Task ReportRejectedAsync(GitHubConnectionRef connection, string token, CancellationToken ct)
+    {
+        if (connection.Kind != GitHubAuthKind.Token)
+            return;
+        try
+        {
+            await store.RevokeAsync(connection.TenantId, connection.ConnectionId, token, ct);
+        }
+        catch (Exception e) when (e is CredentialException or CredentialKeyException)
+        {
+        }
     }
 }

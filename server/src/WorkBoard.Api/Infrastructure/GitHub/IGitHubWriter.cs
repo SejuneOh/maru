@@ -8,8 +8,14 @@ public enum GitHubWriteErrorKind
     NotFound,
     Unavailable,
 
-    // A token connection has no usable token: none stored, expired, or rejected by GitHub.
+    // A token connection has no stored token (token needed).
     CredentialMissing,
+
+    // The stored token was rejected by GitHub (401) or lost access to the organization; it has to be replaced.
+    CredentialRevoked,
+
+    // The stored token's expiry has passed; it has to be replaced.
+    CredentialExpired,
 }
 
 // Messages carry the HTTP status only, never request or response data.
