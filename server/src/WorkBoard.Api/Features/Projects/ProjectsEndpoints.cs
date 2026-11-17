@@ -1,4 +1,5 @@
 using WorkBoard.Api.Infrastructure.Data;
+using WorkBoard.Api.Infrastructure.Writes;
 
 namespace WorkBoard.Api.Features.Projects;
 
@@ -12,6 +13,10 @@ public static class ProjectsEndpoints
     {
         api.MapGet("/projects/done-by-week", async (TenantDb db, CancellationToken ct) =>
             Results.Ok(await db.ReadAsync(DoneByWeekQuery.BuildAsync, ct)));
+        api.MapGet("/projects/{id:guid}/schedule", async (Guid id, TenantDb db, CancellationToken ct) =>
+            await db.ReadAsync(s => ScheduleQuery.BuildAsync(s, id), ct) is { } schedule
+                ? Results.Ok(schedule)
+                : ApiErrors.NotFoundResult());
         api.MapGet("/projects", async (TenantDb db, CancellationToken ct) =>
         {
             var (projects, repos) = await db.ReadAsync(async s => (
