@@ -3,6 +3,8 @@ namespace WorkBoard.Api.Infrastructure.GitHub;
 // Scopes is null for a token that sends no X-OAuth-Scopes header (fine-grained tokens).
 public sealed record TokenIdentity(GitHubUser User, IReadOnlyList<string>? Scopes, DateTimeOffset? ExpiresAt);
 
+public sealed record OrgRef(long Id, string Login);
+
 public enum OrgAccessStatus
 {
     Active,
@@ -25,4 +27,9 @@ public interface IGitHubTokenClient
     // The caller's membership in the organization and whether the token can list its repositories.
     // Null when GitHub rejects the token.
     Task<OrgAccess?> GetOrganizationAccessAsync(string token, string organization, CancellationToken ct);
+
+    // The organization's current login by its numeric id, to follow a rename. Null when GitHub does not show it to the
+    // token (or the implementation cannot look it up).
+    Task<OrgRef?> GetOrganizationByIdAsync(string token, long organizationId, CancellationToken ct) =>
+        Task.FromResult<OrgRef?>(null);
 }

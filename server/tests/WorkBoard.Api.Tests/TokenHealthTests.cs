@@ -302,10 +302,13 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(0, s.Source.Lists);
     }
 
+    private static Task<int> CredentialCountAsync(TestTenant t) =>
+        t.ScalarAsync<int>("select count(*)::int from github_credentials where connection_id = @id", new { id = t.ConnectionId });
+
     [DbTheory]
-    [InlineData(OrgAccessStatus.NotMember)]
-    [InlineData(OrgAccessStatus.NotActive)]
-    public async Task An_owner_who_lost_organization_membership_loses_the_token_at_the_next_sync(OrgAccessStatus status)
+    [InlineData(OrgAccessStatus.NotMember, "owner_not_member")]
+    [InlineData(OrgAccessStatus.NotActive, "owner_not_active")]
+    public async Task A_first_not_a_member_answer_keeps_the_token_invalid_and_a_second_one_deletes_it(OrgAccessStatus status, string reason)
     {
         var s = await SetupAsync();
         await using var _ = s;
@@ -315,13 +318,141 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
 
         Assert.Equal(1, s.Membership.Checks);
         Assert.Equal(0, s.Source.Lists);
-        Assert.Equal(0, await s.T.ScalarAsync<int>("select count(*)::int from github_credentials where connection_id = @id", new { id = s.T.ConnectionId }));
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Equal(reason, await s.T.ScalarAsync<string>("select invalid_reason from github_credentials where connection_id = @id", new { id = s.T.ConnectionId }));
+        Assert.Equal("invalid", (await ConnectionAsync(s)).GetProperty("tokenStatus").GetString());
+        var first = await AuditAsync(s.T);
+        Assert.Contains("connection.token_invalid", first);
+        Assert.DoesNotContain("token_released", first);
+
+        await RunSyncAsync(s);
+
+        Assert.Equal(0, s.Source.Lists);
+        Assert.Equal(0, await CredentialCountAsync(s.T));
         Assert.Equal("token_required", (await ConnectionAsync(s)).GetProperty("tokenStatus").GetString());
         var audit = await AuditAsync(s.T);
         Assert.Contains("owner_left_organization", audit);
         Assert.DoesNotContain(TokenFakes.Token, audit);
-        var run = await s.T.QueryAsync("select status, error from sync_runs where connection_id = @id", new { id = s.T.ConnectionId });
-        Assert.StartsWith("token_required", (string)Assert.Single(run).error);
+        var runs = await s.T.QueryAsync("select error from sync_runs where connection_id = @id order by started_at", new { id = s.T.ConnectionId });
+        var errors = runs.Select(r => (string)r.error).ToList();
+        Assert.Single(errors, e => e.StartsWith("credential_invalid"));
+        Assert.Single(errors, e => e.StartsWith("token_required"));
+    }
+
+    [DbFact]
+    public async Task A_passing_check_between_two_not_a_member_answers_resets_the_count()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        s.Membership.Access = new OrgAccess(OrgAccessStatus.NotMember);
+        await RunSyncAsync(s);
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+
+        s.Membership.Access = new OrgAccess(OrgAccessStatus.Active, s.Membership.OrgId, "org");
+        await RunSyncAsync(s);
+        Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Null(await s.T.ScalarAsync<string?>("select invalid_reason from github_credentials where connection_id = @id", new { id = s.T.ConnectionId }));
+        Assert.Equal(1, s.Source.Lists);
+        Assert.Contains("connection.token_recovered", await AuditAsync(s.T));
+
+        s.Membership.Access = new OrgAccess(OrgAccessStatus.NotMember);
+        await RunSyncAsync(s);
+
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Equal(1, await CredentialCountAsync(s.T));
+    }
+
+    [DbFact]
+    public async Task A_renamed_organization_updates_the_login_and_loses_nothing()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        var oldLogin = "org-" + s.T.Suffix;
+        var newLogin = "renamed-" + s.T.Suffix;
+        s.Membership.RequireLogin = newLogin;
+        s.Membership.CurrentLogin = newLogin;
+        s.Membership.Access = new OrgAccess(OrgAccessStatus.Active);
+
+        await RunSyncAsync(s);
+
+        Assert.Equal([newLogin], s.Membership.CheckedLogins.ToArray());
+        Assert.Equal(newLogin, await s.T.ScalarAsync<string>("select account_login from github_connections where id = @id", new { id = s.T.ConnectionId }));
+        Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Equal(1, s.Source.Lists);
+        Assert.Contains("connection.org_renamed", await AuditAsync(s.T));
+        Assert.DoesNotContain(oldLogin, string.Join(",", s.Membership.CheckedLogins));
+    }
+
+    [DbFact]
+    public async Task A_stale_login_without_an_id_lookup_is_only_invalid_never_deleted_by_one_answer()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        s.Membership.RequireLogin = "renamed-" + s.T.Suffix;
+
+        await RunSyncAsync(s);
+
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+        Assert.Equal(1, await CredentialCountAsync(s.T));
+    }
+
+    [DbFact]
+    public async Task A_token_replaced_while_the_membership_question_was_in_flight_is_left_alone()
+    {
+        foreach (var answer in new OrgAccess?[]
+                 {
+                     new(OrgAccessStatus.NotMember), new(OrgAccessStatus.SsoRequired), null,
+                 })
+        {
+            var s = await SetupAsync();
+            await using var _ = s;
+            var memberId = await s.T.ScalarAsync<Guid>("select id from members where tenant_id = @tid and github_user_id = @u", new { tid = s.T.Id, u = s.UserId });
+            // A second NotMember would delete the old token, so start from an invalid one.
+            if (answer is { Status: OrgAccessStatus.NotMember })
+                await s.T.ExecAsync("update github_credentials set status = 'invalid', invalid_reason = 'owner_not_member' where connection_id = @id", new { id = s.T.ConnectionId });
+            s.Membership.Access = answer;
+            s.Membership.During = () => TokenFakes.Store(_factory).SaveAsync(s.T.Id, s.T.ConnectionId, memberId, Replacement, [], null);
+
+            await RunSyncAsync(s);
+
+            Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
+            Assert.Equal(Replacement, await TokenFakes.Store(_factory).OpenAsync(s.T.Id, s.T.ConnectionId));
+        }
+    }
+
+    [DbFact]
+    public async Task Release_and_mark_invalid_apply_only_to_the_token_that_was_checked()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        var store = TokenFakes.Store(_factory);
+        var memberId = await s.T.ScalarAsync<Guid>("select id from members where tenant_id = @tid and github_user_id = @u", new { tid = s.T.Id, u = s.UserId });
+        await store.SaveAsync(s.T.Id, s.T.ConnectionId, memberId, Replacement, [], null);
+
+        Assert.False(await store.ReleaseAsync(s.T.Id, s.T.ConnectionId, TokenFakes.Token, "x"));
+        Assert.False(await store.MarkInvalidAsync(s.T.Id, s.T.ConnectionId, TokenFakes.Token, "x"));
+        Assert.False(await store.ReactivateAsync(s.T.Id, s.T.ConnectionId, TokenFakes.Token));
+        Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
+
+        Assert.True(await store.MarkInvalidAsync(s.T.Id, s.T.ConnectionId, Replacement, "sso_not_authorized"));
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
+        Assert.True(await store.ReleaseAsync(s.T.Id, s.T.ConnectionId, Replacement, "owner_left_organization"));
+        Assert.Equal(0, await CredentialCountAsync(s.T));
+    }
+
+    [DbFact]
+    public async Task A_failure_while_recording_a_401_is_logged_not_thrown()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        var broken = new CredentialStore(
+            new Npgsql.NpgsqlDataSourceBuilder("Host=127.0.0.1;Port=1;Database=x;Username=x;Password=x;Timeout=1").Build(),
+            new CredentialCipher(new TestKeys()));
+        var credentials = new GitHubCredentials(new FakeInstallationTokens(), broken);
+
+        await credentials.ReportRejectedAsync(Repo(s.T).Connection, TokenFakes.Token, default);
+
+        Assert.Equal("active", await TokenFakes.StatusOfAsync(s.T));
     }
 
     [DbFact]
@@ -336,6 +467,10 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
         Assert.Equal(0, s.Source.Lists);
         Assert.Contains("sso_not_authorized", await AuditAsync(s.T));
+
+        await RunSyncAsync(s);
+        Assert.Equal(1, await CredentialCountAsync(s.T));
+        Assert.Equal("invalid", await TokenFakes.StatusOfAsync(s.T));
     }
 
     [DbFact]
@@ -348,6 +483,7 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         await RunSyncAsync(s);
 
         Assert.Equal(0, s.Source.Lists);
+        Assert.Equal("revoked", await TokenFakes.StatusOfAsync(s.T));
     }
 
     // ---- handover ------------------------------------------------------------------------------
@@ -367,6 +503,8 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
             await s.T.ExecAsync("update github_credentials set status = @state where connection_id = @id", new { state, id = s.T.ConnectionId });
         var (otherLogin, otherId) = await s.T.AddMemberAsync("admin2");
         await s.T.ExecAsync("update members set role = 'admin' where tenant_id = @tid and github_user_id = @otherId", new { tid = s.T.Id, otherId });
+        if (state == "invalid")
+            s.Membership.Access = new OrgAccess(OrgAccessStatus.SsoRequired);
         await RunSyncAsync(s);
         Assert.Equal(0, s.Source.Lists);
 
@@ -428,6 +566,38 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(2, s.Source.Lists);
         Assert.Equal([$"org-{s.T.Suffix}/api"], s.Source.Reads.ToArray());
         Assert.Equal(JsonValueKind.Null, (await ConnectionAsync(s)).GetProperty("syncPausedUntil").ValueKind);
+    }
+
+    [DbFact]
+    public async Task A_low_graphql_bucket_pauses_the_connection_even_when_rest_is_fine()
+    {
+        var s = await SetupAsync();
+        await using var _ = s;
+        var source = new GraphQlLowSource(s.Source.Repositories);
+        var client = s.Other(s.Login, source);
+
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync("/api/sync/run", null)).StatusCode);
+        await TokenFakes.WaitSyncIdleAsync(client);
+
+        Assert.Equal(1, source.Reads);
+        Assert.NotNull(await s.T.ScalarAsync<DateTime?>("select sync_not_before from github_connections where id = @id", new { id = s.T.ConnectionId }));
+        Assert.Equal(50, await s.T.ScalarAsync<int>("select rate_limit_remaining from sync_runs where connection_id = @id", new { id = s.T.ConnectionId }));
+    }
+
+    private sealed class GraphQlLowSource(List<SourceRepository> repos) : IGitHubSource
+    {
+        public int Reads;
+
+        public Task<RepositoryList> ListRepositoriesAsync(GitHubConnectionRef connection, CancellationToken ct) =>
+            Task.FromResult(new RepositoryList(repos, new RateLimitInfo(4900, null)));
+
+        public Task<RepositorySnapshot> ReadRepositoryAsync(
+            GitHubConnectionRef connection, string owner, string name, DateTimeOffset? since, CancellationToken ct)
+        {
+            Reads++;
+            return Task.FromResult(new RepositorySnapshot(repos.Single(r => r.FullName == $"{owner}/{name}"), [], [], [], [], [],
+                new RateLimitInfo(4900, null), new RateLimitInfo(50, DateTimeOffset.UtcNow.AddMinutes(30))));
+        }
     }
 
     [DbFact]
@@ -567,5 +737,25 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
         var second = await source.ListRepositoriesAsync(TokenConn, default);
 
         Assert.Equal(123, second.RateLimit!.Remaining);
+    }
+
+    [Fact]
+    public void The_etag_cache_evicts_the_oldest_entries_within_its_byte_budget_and_skips_large_bodies()
+    {
+        var cache = new GitHubEtagCache(budgetBytes: 1000, maxBodyBytes: 300);
+        var body = new string('x', 200);
+        for (var i = 0; i < 10; i++)
+            cache.Set("k" + i, new GitHubEtagCache.Entry("\"e\"", body));
+
+        Assert.InRange(cache.Bytes, 1, 1000);
+        Assert.Null(cache.Get("k0"));
+        Assert.NotNull(cache.Get("k9"));
+        Assert.InRange(cache.Count, 1, 4);
+
+        cache.Set("big", new GitHubEtagCache.Entry("\"e\"", new string('y', 301)));
+        Assert.Null(cache.Get("big"));
+
+        cache.Set("k9", new GitHubEtagCache.Entry("\"e\"", new string('z', 301)));
+        Assert.Null(cache.Get("k9"));
     }
 }

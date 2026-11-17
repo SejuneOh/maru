@@ -2,7 +2,8 @@ using WorkBoard.Api.Infrastructure.Credentials;
 
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
-public sealed class GitHubCredentials(IGitHubInstallationTokens installationTokens, CredentialStore store) : IGitHubCredentials
+public sealed class GitHubCredentials(
+    IGitHubInstallationTokens installationTokens, CredentialStore store, ILogger<GitHubCredentials>? logger = null) : IGitHubCredentials
 {
     public async Task<GitHubCredential> GetAsync(GitHubConnectionRef connection, CancellationToken ct)
     {
@@ -47,8 +48,10 @@ public sealed class GitHubCredentials(IGitHubInstallationTokens installationToke
         {
             await store.RevokeAsync(connection.TenantId, connection.ConnectionId, token, ct);
         }
-        catch (Exception e) when (e is CredentialException or CredentialKeyException)
+        catch (Exception e) when (e is not OperationCanceledException)
         {
+            // Recording the 401 must not turn the credential_revoked outcome into a server error.
+            logger?.LogError("Recording a rejected token failed ({Kind})", e.GetType().Name);
         }
     }
 }

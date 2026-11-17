@@ -68,7 +68,7 @@ public sealed class SyncRunner(
             cancellationToken: ct));
     }
 
-    private sealed record ConnectionRow(Guid Id, long? InstallationId, string AuthKind, string AccountLogin);
+    private sealed record ConnectionRow(Guid Id, long? InstallationId, string AuthKind, string AccountLogin, long AccountId);
 
     private static GitHubConnectionRef Ref(Guid tenantId, ConnectionRow c) =>
         new(tenantId, c.Id, c.AuthKind == "token" ? GitHubAuthKind.Token : GitHubAuthKind.App, c.InstallationId, c.AccountLogin);
@@ -77,7 +77,7 @@ public sealed class SyncRunner(
 
     // Reads what changed in one repository since its last sync and applies it through the MirrorWriter.
     // Shared by the periodic run and the webhook worker.
-    public async Task<(MirrorResult Result, RateLimitInfo? RateLimit)> SyncRepositoryAsync(
+    public async Task<(MirrorResult Result, RateLimitInfo? RateLimit, RateLimitInfo? GraphQlRateLimit)> SyncRepositoryAsync(
         IGitHubSource source, MirrorWriter writer, GitHubConnectionRef connection, RepoRow repo,
         CancellationToken ct)
     {
@@ -90,7 +90,7 @@ public sealed class SyncRunner(
             connection, repo.FullName[..slash], repo.FullName[(slash + 1)..], since, ct);
         var result = await writer.ApplyAsync(connection.TenantId, connection.ConnectionId, snapshot, ct);
         await MarkSyncedAsync(connection.TenantId, repo.Id, startedAt, since, result);
-        return (result, snapshot.RateLimit);
+        return (result, snapshot.RateLimit, snapshot.GraphQlRateLimit);
     }
 
     private async Task RunTenantAsync(Guid tenantId, CancellationToken ct)
@@ -109,13 +109,13 @@ public sealed class SyncRunner(
         await using (var conn = await sync.OpenConnectionAsync(ct))
         {
             connections = (await conn.QueryAsync<ConnectionRow>(new CommandDefinition("""
-                select c.id, c.installation_id, c.auth_kind, c.account_login from github_connections c
+                select c.id, c.installation_id, c.auth_kind, c.account_login, c.account_id from github_connections c
                  where c.tenant_id = @tenantId and c.disconnected_at is null
                    and ((c.installation_id is not null and @appReady)
                         or (c.auth_kind = 'token'
                             and (c.sync_not_before is null or c.sync_not_before <= now())
                             and exists (select 1 from github_credentials k
-                                         where k.tenant_id = c.tenant_id and k.connection_id = c.id and k.status = 'active'
+                                         where k.tenant_id = c.tenant_id and k.connection_id = c.id and k.status in ('active', 'invalid')
                                            and (k.expires_at is null or k.expires_at > now()))))
                  order by c.created_at
                 """, new { tenantId, appReady = app.Value.CanReadInstallations }, cancellationToken: ct))).AsList();
@@ -129,7 +129,7 @@ public sealed class SyncRunner(
     {
         var runId = await StartRunAsync(tenantId, connection.Id);
         var (issues, pullRequests, comments) = (0, 0, 0);
-        RateLimitInfo? limit = null;
+        RateLimitInfo? rest = null, graphQl = null;
         DateTimeOffset? pauseUntil = null;
         var isToken = connection.AuthKind == "token";
         var errors = new List<string>();
@@ -140,26 +140,31 @@ public sealed class SyncRunner(
             var source = scope.ServiceProvider.GetRequiredService<IGitHubSource>();
             var writer = scope.ServiceProvider.GetRequiredService<MirrorWriter>();
 
-            if (isToken && await CheckOwnerAsync(scope.ServiceProvider, tenantId, connection, ct) is { } stopped)
+            if (isToken)
             {
-                errors.Add(stopped);
+                var (stopped, current) = await CheckOwnerAsync(scope.ServiceProvider, tenantId, connection, ct);
+                connection = current;
+                if (stopped is not null)
+                    errors.Add(stopped);
             }
-            else
+
+            if (errors.Count == 0)
             {
                 var list = await source.ListRepositoriesAsync(Ref(tenantId, connection), ct);
-                limit = list.RateLimit ?? limit;
+                rest = list.RateLimit ?? rest;
                 await writer.UpsertRepositoriesAsync(tenantId, connection.Id, list.Repositories, ct);
 
                 var repos = await EnabledRepositoriesAsync(tenantId, connection.Id, list.Repositories.Select(r => r.Id).ToArray(), ct);
                 foreach (var repo in repos)
                 {
-                    if (isToken && limit?.Remaining < LowRateLimitRemaining)
+                    if (isToken && IsLow(rest, graphQl))
                         break;
                     try
                     {
-                        var (result, left) = await SyncRepositoryAsync(
+                        var (result, left, leftGraphQl) = await SyncRepositoryAsync(
                             source, writer, Ref(tenantId, connection), repo, ct);
-                        limit = left ?? limit;
+                        rest = left ?? rest;
+                        graphQl = leftGraphQl ?? graphQl;
                         issues += result.Issues;
                         pullRequests += result.PullRequests;
                         comments += result.Comments;
@@ -192,14 +197,29 @@ public sealed class SyncRunner(
 
         if (isToken)
         {
-            if (limit?.Remaining < LowRateLimitRemaining)
-                pauseUntil ??= limit.ResetAt ?? time.GetUtcNow() + DefaultPause;
+            if (IsLow(rest, graphQl))
+                pauseUntil ??= LowResetAt(rest, graphQl) ?? time.GetUtcNow() + DefaultPause;
             if (pauseUntil is { } until)
                 await PauseAsync(tenantId, connection.Id, until);
         }
 
-        await FinishRunAsync(runId, errors, issues, pullRequests, comments, limit?.Remaining);
+        var remaining = (rest?.Remaining, graphQl?.Remaining) switch
+        {
+            ({ } r, { } g) => Math.Min(r, g),
+            ({ } r, null) => r,
+            (null, { } g) => g,
+            _ => (int?)null,
+        };
+        await FinishRunAsync(runId, errors, issues, pullRequests, comments, remaining);
     }
+
+    // GitHub keeps separate buckets for REST and GraphQL. Either one running low pauses the connection, because a run
+    // uses both.
+    private static bool IsLow(params RateLimitInfo?[] buckets) =>
+        buckets.Any(b => b?.Remaining < LowRateLimitRemaining);
+
+    private static DateTimeOffset? LowResetAt(params RateLimitInfo?[] buckets) =>
+        buckets.Where(b => b?.Remaining < LowRateLimitRemaining && b.ResetAt is not null).Max(b => b!.ResetAt);
 
     private DateTimeOffset? PauseFor(GitHubSourceException e) =>
         e.Kind == GitHubSourceErrorKind.RateLimited ? e.RetryAt ?? time.GetUtcNow() + DefaultPause : null;
@@ -215,32 +235,70 @@ public sealed class SyncRunner(
             """, new { tenantId, connectionId, until = until.UtcDateTime });
     }
 
-    // Asks GitHub, with the stored token, whether its owner is still an active member of the organization. Null when
-    // the connection may sync; otherwise the reason it stopped. A token whose owner left is deleted (token needed).
-    private async Task<string?> CheckOwnerAsync(IServiceProvider services, Guid tenantId, ConnectionRow connection, CancellationToken ct)
+    private async Task<ConnectionRow> RefreshLoginAsync(Guid tenantId, ConnectionRow connection, string login, CancellationToken ct)
+    {
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            "update github_connections set account_login = @login where tenant_id = @tenantId and id = @id",
+            new { tenantId, id = connection.Id, login }, tx, cancellationToken: ct));
+        await conn.ExecuteAsync(new CommandDefinition("""
+            insert into audit_log (tenant_id, action, target_type, target_id, after)
+            values (@tenantId, 'connection.org_renamed', 'connection', @id, cast(@after as jsonb))
+            """, new { tenantId, id = connection.Id, after = JsonSerializer.Serialize(new { from = connection.AccountLogin, to = login }) },
+            tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+        return connection with { AccountLogin = login };
+    }
+
+    // Asks GitHub, with the stored token, whether its owner is still an active member of the organization. Stop is
+    // null when the connection may sync; otherwise the reason it stopped. The organization is first looked up by its
+    // stored id, so a renamed organization updates account_login instead of looking like lost membership.
+    //
+    // "Not a member" and "membership not active" take two checks in a row for the same token: the first marks the
+    // token invalid (kept, sync stops), the next one that says the same deletes it (token needed). A passing check in
+    // between makes the token active again and resets the count. A rejected token (401) is revoked at once. Every
+    // transition applies only while the stored token is still the one that was checked.
+    private async Task<(string? Stop, ConnectionRow Connection)> CheckOwnerAsync(
+        IServiceProvider services, Guid tenantId, ConnectionRow connection, CancellationToken ct)
     {
         var credentials = services.GetRequiredService<IGitHubCredentials>();
         var github = services.GetRequiredService<IGitHubTokenClient>();
         var reference = Ref(tenantId, connection);
-        var token = (await credentials.GetAsync(reference, ct)).Token;
+        var target = await credentialStore.OpenForCheckAsync(tenantId, connection.Id, ct)
+            ?? throw new GitHubSourceException(GitHubSourceErrorKind.Unauthorized, "The connection has no usable credential.");
+        var token = target.Token;
+
+        if (await github.GetOrganizationByIdAsync(token, connection.AccountId, ct) is { } org
+            && !string.Equals(org.Login, connection.AccountLogin, StringComparison.Ordinal))
+            connection = await RefreshLoginAsync(tenantId, connection, org.Login, ct);
 
         var access = await github.GetOrganizationAccessAsync(token, connection.AccountLogin, ct);
         if (access is null)
         {
             await credentials.ReportRejectedAsync(reference, token, ct);
-            return "credential_revoked: GitHub rejected the stored token";
+            return ("credential_revoked: GitHub rejected the stored token", connection);
         }
+
         switch (access.Status)
         {
             case OrgAccessStatus.Active:
-                return null;
+                if (target.Status == "invalid")
+                    await credentialStore.ReactivateAsync(tenantId, connection.Id, token, ct);
+                return (null, connection);
             case OrgAccessStatus.NotMember or OrgAccessStatus.NotActive:
-                await credentialStore.ReleaseAsync(tenantId, connection.Id, "owner_left_organization", ct);
-                return "token_required: the token owner is no longer an active member of the organization";
+                var reason = access.Status == OrgAccessStatus.NotMember ? "owner_not_member" : "owner_not_active";
+                if (target.Status == "invalid" && target.InvalidReason is "owner_not_member" or "owner_not_active")
+                {
+                    await credentialStore.ReleaseAsync(tenantId, connection.Id, token, "owner_left_organization", ct);
+                    return ("token_required: the token owner is no longer an active member of the organization", connection);
+                }
+                await credentialStore.MarkInvalidAsync(tenantId, connection.Id, token, reason, ct);
+                return ($"credential_invalid: {reason}, the token is deleted if the next check says the same", connection);
             default:
-                await credentialStore.MarkInvalidAsync(tenantId, connection.Id,
+                await credentialStore.MarkInvalidAsync(tenantId, connection.Id, token,
                     access.Status == OrgAccessStatus.SsoRequired ? "sso_not_authorized" : "org_access_denied", ct);
-                return "credential_invalid: GitHub refuses the token for the organization";
+                return ("credential_invalid: GitHub refuses the token for the organization", connection);
         }
     }
 

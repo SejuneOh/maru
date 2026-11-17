@@ -91,6 +91,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
     {
         var sinceText = since?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
         RateLimitInfo? limit = null;
+        RateLimitInfo? gqlLimit = null;
         SourceRepository? repository = null;
 
         var labelsRest = await GetRestPagesAsync<RestLabel>(
@@ -112,7 +113,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         {
             var (data, rl) = await PostGraphQlAsync<IssuesData>(connection, IssuesQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor, ["since"] = sinceText }, ct);
-            limit = rl ?? limit;
+            gqlLimit = rl ?? gqlLimit;
             var repo = RequireRepository(data.Repository);
             repository ??= ToRepository(repo);
             var conn = repo.Issues ?? throw Unexpected();
@@ -129,7 +130,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         {
             var (data, rl) = await PostGraphQlAsync<PullRequestsData>(connection, PullRequestsQuery,
                 new Dictionary<string, object?> { ["owner"] = owner, ["name"] = name, ["cursor"] = cursor }, ct);
-            limit = rl ?? limit;
+            gqlLimit = rl ?? gqlLimit;
             var repo = RequireRepository(data.Repository);
             repository ??= ToRepository(repo);
             var conn = repo.PullRequests ?? throw Unexpected();
@@ -156,7 +157,7 @@ public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials cre
         limit = commentsRest.Limit ?? limit;
         var comments = commentsRest.Items.Select(ToComment).ToList();
 
-        return new RepositorySnapshot(repository!, milestones, labels, issues, pullRequests, comments, limit);
+        return new RepositorySnapshot(repository!, milestones, labels, issues, pullRequests, comments, limit, gqlLimit);
     }
 
     private static GitHubSourceException Unexpected() =>

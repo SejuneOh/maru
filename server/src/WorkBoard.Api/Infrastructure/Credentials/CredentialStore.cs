@@ -38,7 +38,7 @@ public sealed class CredentialStore(
                set owner_member_id = excluded.owner_member_id, ciphertext = excluded.ciphertext, nonce = excluded.nonce,
                    key_version = excluded.key_version, scopes = excluded.scopes, expires_at = excluded.expires_at,
                    last4 = excluded.last4, owner_login = excluded.owner_login,
-                   status = 'active', last_checked_at = null, last_used_at = null, updated_at = now()
+                   status = 'active', invalid_reason = null, last_checked_at = null, last_used_at = null, updated_at = now()
              where github_credentials.tenant_id = excluded.tenant_id
             """, new
         {
@@ -97,28 +97,83 @@ public sealed class CredentialStore(
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        var row = await conn.QuerySingleOrDefaultAsync<Row>(new CommandDefinition("""
-            select ciphertext as Ciphertext, nonce as Nonce, key_version as KeyVersion from github_credentials
-             where tenant_id = @tenantId and connection_id = @connectionId and status = 'active' for update
-            """, new { tenantId, connectionId }, tx, cancellationToken: ct));
-        if (row is null)
-            return false;
-        var stored = cipher.Open(new SealedCredential(row.Ciphertext, row.Nonce, row.KeyVersion), tenantId, connectionId);
-        if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(stored), Encoding.UTF8.GetBytes(rejectedToken)))
+        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, rejectedToken, ct) is null)
             return false;
         await TransitionAsync(conn, tx, tenantId, connectionId, "revoked", "connection.token_revoked", "github_401", ct);
         await tx.CommitAsync(ct);
         return true;
     }
 
-    // GitHub no longer accepts the token for the organization (SAML SSO authorization lost, organization policy).
-    public async Task<bool> MarkInvalidAsync(Guid tenantId, Guid connectionId, string reason, CancellationToken ct = default)
+    // GitHub refuses checkedToken for the organization (answers about that token only). reason is kept so the next
+    // owner check can tell a repeat. A no-op when the stored token is no longer checkedToken.
+    public async Task<bool> MarkInvalidAsync(
+        Guid tenantId, Guid connectionId, string checkedToken, string reason, CancellationToken ct = default)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        var changed = await TransitionAsync(conn, tx, tenantId, connectionId, "invalid", "connection.token_invalid", reason, ct);
+        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, checkedToken, ct) is not { } locked)
+            return false;
+        var changed = await TransitionAsync(conn, tx, tenantId, connectionId, "invalid", "connection.token_invalid", reason, ct,
+            skipAuditWhen: locked.Status == "invalid" && locked.InvalidReason == reason);
         await tx.CommitAsync(ct);
         return changed;
+    }
+
+    // The owner check passed for checkedToken after it had been marked invalid: active again, reason cleared.
+    public async Task<bool> ReactivateAsync(Guid tenantId, Guid connectionId, string checkedToken, CancellationToken ct = default)
+    {
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, checkedToken, ct) is not { Status: "invalid" })
+            return false;
+        await conn.ExecuteAsync(new CommandDefinition("""
+            update github_credentials set status = 'active', invalid_reason = null, last_checked_at = now(), updated_at = now()
+             where tenant_id = @tenantId and connection_id = @connectionId
+            """, new { tenantId, connectionId }, tx, cancellationToken: ct));
+        await AuditAsync(conn, tx, tenantId, "connection.token_recovered", connectionId, new { reason = "owner_check_passed" }, ct);
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
+    public sealed record CheckTarget(string Token, string Status, string? InvalidReason);
+
+    // The token to run the owner check with: stored as active or invalid and not expired. Null otherwise.
+    public async Task<CheckTarget?> OpenForCheckAsync(Guid tenantId, Guid connectionId, CancellationToken ct = default)
+    {
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        var row = await conn.QuerySingleOrDefaultAsync<CheckRow>(new CommandDefinition("""
+            select ciphertext as Ciphertext, nonce as Nonce, key_version as KeyVersion, status as Status, invalid_reason as InvalidReason
+              from github_credentials
+             where tenant_id = @tenantId and connection_id = @connectionId
+               and status in ('active', 'invalid') and (expires_at is null or expires_at > now())
+            """, new { tenantId, connectionId }, cancellationToken: ct));
+        return row is null
+            ? null
+            : new CheckTarget(cipher.Open(new SealedCredential(row.Ciphertext, row.Nonce, row.KeyVersion), tenantId, connectionId),
+                row.Status, row.InvalidReason);
+    }
+
+    private sealed record CheckRow(byte[] Ciphertext, byte[] Nonce, int KeyVersion, string Status, string? InvalidReason);
+
+    private sealed record Locked(string Status, string? InvalidReason);
+
+    // Locks the credential row and returns its state only while it is active or invalid and still holds token. Every
+    // transition that follows a GitHub answer about a specific token goes through this, so a token replaced while
+    // GitHub was being asked is left alone.
+    private async Task<Locked?> LockIfSameTokenAsync(
+        NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, Guid connectionId, string token, CancellationToken ct)
+    {
+        var row = await conn.QuerySingleOrDefaultAsync<CheckRow>(new CommandDefinition("""
+            select ciphertext as Ciphertext, nonce as Nonce, key_version as KeyVersion, status as Status, invalid_reason as InvalidReason
+              from github_credentials
+             where tenant_id = @tenantId and connection_id = @connectionId and status in ('active', 'invalid') for update
+            """, new { tenantId, connectionId }, tx, cancellationToken: ct));
+        if (row is null)
+            return null;
+        var stored = cipher.Open(new SealedCredential(row.Ciphertext, row.Nonce, row.KeyVersion), tenantId, connectionId);
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(stored), Encoding.UTF8.GetBytes(token))
+            ? new Locked(row.Status, row.InvalidReason)
+            : null;
     }
 
     // Marks every active credential of the company whose expires_at has passed as expired; returns how many.
@@ -136,11 +191,15 @@ public sealed class CredentialStore(
         return due.Count;
     }
 
-    // Deletes the credential, leaving the connection without a token ("token needed"). Returns whether one existed.
-    public async Task<bool> ReleaseAsync(Guid tenantId, Guid connectionId, string reason, CancellationToken ct = default)
+    // Deletes the credential, leaving the connection without a token ("token needed"), but only while it still holds
+    // checkedToken. Returns whether it was deleted.
+    public async Task<bool> ReleaseAsync(
+        Guid tenantId, Guid connectionId, string checkedToken, string reason, CancellationToken ct = default)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
+        if (await LockIfSameTokenAsync(conn, tx, tenantId, connectionId, checkedToken, ct) is null)
+            return false;
         var released = (await conn.QueryAsync<Released>(new CommandDefinition("""
             delete from github_credentials
              where tenant_id = @tenantId and connection_id = @connectionId
@@ -180,16 +239,19 @@ public sealed class CredentialStore(
 
     private static async Task<bool> TransitionAsync(
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, Guid connectionId, string status, string action, string reason,
-        CancellationToken ct)
+        CancellationToken ct, bool skipAuditWhen = false)
     {
         var row = await conn.QuerySingleOrDefaultAsync<Released>(new CommandDefinition("""
-            update github_credentials set status = @status, last_checked_at = now(), updated_at = now()
-             where tenant_id = @tenantId and connection_id = @connectionId and status = 'active'
+            update github_credentials
+               set status = @status, invalid_reason = case when @status = 'invalid' then @reason end,
+                   last_checked_at = now(), updated_at = now()
+             where tenant_id = @tenantId and connection_id = @connectionId and status in ('active', 'invalid')
             returning connection_id as ConnectionId, last4 as Last4, owner_login as OwnerLogin, status as Status
-            """, new { tenantId, connectionId, status }, tx, cancellationToken: ct));
+            """, new { tenantId, connectionId, status, reason }, tx, cancellationToken: ct));
         if (row is null)
             return false;
-        await AuditAsync(conn, tx, tenantId, action, connectionId, new { reason, last4 = row.Last4, owner = row.OwnerLogin }, ct);
+        if (!skipAuditWhen)
+            await AuditAsync(conn, tx, tenantId, action, connectionId, new { reason, last4 = row.Last4, owner = row.OwnerLogin }, ct);
         return true;
     }
 

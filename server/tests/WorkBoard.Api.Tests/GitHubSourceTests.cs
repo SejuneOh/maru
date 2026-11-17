@@ -141,7 +141,7 @@ public class GitHubSourceTests
         Assert.Equal((801L, 3, "open"), (milestone.Id, milestone.Number, milestone.State));
         Assert.Equal(901, Assert.Single(snap.Labels).Id);
 
-        Assert.Equal(new RateLimitInfo(4970, DateTimeOffset.Parse("2026-01-01T01:00:00Z")), snap.RateLimit);
+        Assert.Equal(new RateLimitInfo(4970, DateTimeOffset.Parse("2026-01-01T01:00:00Z")), snap.GraphQlRateLimit);
         Assert.All(handler.Requests, r => Assert.StartsWith("Bearer tok-", r.Auth));
     }
 

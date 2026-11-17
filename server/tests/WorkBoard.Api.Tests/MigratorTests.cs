@@ -107,10 +107,11 @@ public class MigratorTests
         const string Credentials = "0009_github_credentials";
         const string Metadata = "0010_credential_metadata";
         const string OrgImport = "0024_org_import_selection";
+        const string InvalidReason = "0026_credential_invalid_reason";
         var all = EmbeddedSql.Migrations().ToList();
 
         await using var existing = await ScratchDb.CreateAsync();
-        var first = await new Migrator(existing.ConnectionString, all.Where(m => m.Name != Credentials && m.Name != Metadata && m.Name != OrgImport).ToList()).RunAsync();
+        var first = await new Migrator(existing.ConnectionString, all.Where(m => m.Name != Credentials && m.Name != Metadata && m.Name != OrgImport && m.Name != InvalidReason).ToList()).RunAsync();
         await existing.ExecAsync("""
             insert into tenants (id, name) values ('10000000-0000-0000-0000-0000000000bb', 'Existing');
             insert into github_connections (tenant_id, account_id, account_login, account_type)
@@ -118,7 +119,7 @@ public class MigratorTests
             """);
         var second = await Real(existing).RunAsync();
 
-        Assert.Equal([Credentials, Metadata, OrgImport], second.Applied);
+        Assert.Equal([Credentials, Metadata, OrgImport, InvalidReason], second.Applied);
         Assert.DoesNotContain(Credentials, first.Applied);
         Assert.Equal("app", await existing.ScalarAsync<string>("select auth_kind from github_connections"));
         Assert.True(await existing.ScalarAsync<bool>("select store_bodies from github_connections"));

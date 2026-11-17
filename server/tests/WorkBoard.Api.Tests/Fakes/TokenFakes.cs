@@ -26,11 +26,31 @@ public sealed class FakeMembership : IGitHubTokenClient
 
     public Task<TokenIdentity?> GetIdentityAsync(string token, CancellationToken ct) => Task.FromResult(Identity);
 
-    public Task<OrgAccess?> GetOrganizationAccessAsync(string token, string organization, CancellationToken ct)
+    // Runs while the membership question is "in flight", e.g. to replace the stored token meanwhile.
+    public Func<Task>? During { get; set; }
+
+    // When set, only this login is a known organization: asking for another one answers NotMember (a stale name).
+    public string? RequireLogin { get; set; }
+
+    // The organization's current login by id; null when the lookup is not available.
+    public string? CurrentLogin { get; set; }
+
+    public List<string> CheckedLogins { get; } = [];
+
+    public async Task<OrgAccess?> GetOrganizationAccessAsync(string token, string organization, CancellationToken ct)
     {
         Interlocked.Increment(ref Checks);
-        return Task.FromResult(Access is { Status: OrgAccessStatus.Active } a ? a with { OrgId = OrgId, OrgLogin = organization } : Access);
+        lock (CheckedLogins)
+            CheckedLogins.Add(organization);
+        if (During is { } hook)
+            await hook();
+        if (RequireLogin is not null && !string.Equals(RequireLogin, organization, StringComparison.Ordinal))
+            return new OrgAccess(OrgAccessStatus.NotMember);
+        return Access is { Status: OrgAccessStatus.Active } a ? a with { OrgId = OrgId, OrgLogin = organization } : Access;
     }
+
+    public Task<OrgRef?> GetOrganizationByIdAsync(string token, long organizationId, CancellationToken ct) =>
+        Task.FromResult(CurrentLogin is null ? null : new OrgRef(organizationId, CurrentLogin));
 
     public long OrgId { get; set; } = 1;
 }

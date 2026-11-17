@@ -206,12 +206,18 @@ Transitions (each writes an `audit_log` row without a member and without token t
 | --- | --- | --- | --- |
 | `active` | `expires_at` passed (checked at the start of every sync run) | `expired` | `connection.token_expired` |
 | `active` | GitHub answered 401 for that token (sync, write, organization import, or the owner check), no retry | `revoked` | `connection.token_revoked` |
-| `active` | the owner check finds the organization refuses the token (SAML SSO not authorized, policy) | `invalid` | `connection.token_invalid` |
+| `active` | the owner check finds the organization refuses the token (SAML SSO not authorized, policy), or the owner is not a member (404) or not an active member (`state` other than `active`) for the first time | `invalid` (token kept) | `connection.token_invalid` (reason `sso_not_authorized`, `org_access_denied`, `owner_not_member`, `owner_not_active`) |
+| `invalid` | the next owner check passes | `active` | `connection.token_recovered` |
+| `invalid` (reason `owner_not_member` or `owner_not_active`) | the next owner check says "not a member" or "not active" again for the same token | `token_required` (token deleted) | `connection.token_released`, reason `owner_left_organization` |
 | any | the token owner left the company (`members.left_at`, set by `DELETE /api/members/{id}`; any sync run also sweeps) | `token_required` (token deleted) | `connection.token_released`, reason `owner_left_company` |
-| any | the owner check finds the owner is not an active organization member (404 or `state` other than `active`) | `token_required` (token deleted) | `connection.token_released`, reason `owner_left_organization` |
 | `expired`, `revoked`, `invalid`, `token_required` | `PUT /api/connections/{id}/github-token` | `active` | `connection.token_replace` (with `previousStatus`) |
 
-A 401 marks the token `revoked` only if the stored token is still the one that was rejected. Syncing skips a token
+Every transition that follows a GitHub answer about a specific token (401, owner check, recovery, deletion) locks the
+credential row and applies only if the stored token is still the one that was asked about; a token replaced in the
+meantime is left alone. A single 404 can come from a renamed organization or a withdrawn fine-grained approval, so
+losing membership needs two checks in a row for the same token (the checks run on `invalid` tokens too, one per sync
+run, and a passing check in between resets the count). Before the membership question the organization is looked up
+by its stored id (`GET /organizations/{id}`); a changed login updates `account_login` (`connection.org_renamed`). Syncing skips a token
 connection unless its token is `active` and unexpired, so a stopped connection makes no GitHub call and no `sync_runs`
 row. Writes answer `credential_missing`, `credential_revoked` (also for `invalid`) or `credential_expired`. Selected
 repositories and mirrored data are kept. Handover: another admin replaces the token with `PUT`; the same checks run for
@@ -220,12 +226,13 @@ next run, with the rate-limit pause cleared. The #40 organization webhooks do no
 membership is checked at sync time: one `GET /user/memberships/orgs/{org}` and one `GET /orgs/{org}/repos?per_page=1` with the owner's token per run.
 
 Rate limits: GitHub allows 5,000 requests per hour to one user, shared with the owner's other activity. Token
-connections only: when a run sees `X-RateLimit-Remaining` (or GraphQL `rateLimit.remaining`) below 500, it stops reading
-further repositories, and the connection is skipped until the limit's reset time (`syncPausedUntil`; at least 1 minute
-and at most 1 hour from now). A `RateLimited` answer pauses the connection until its retry time (15 minutes when
+connections only: GitHub counts REST and GraphQL separately, and a run tracks both (`X-RateLimit-Remaining` of REST
+answers, `rateLimit.remaining` of GraphQL answers). When either is below 500 it stops reading further repositories, and
+the connection is skipped until the later reset time of the low bucket(s) (`syncPausedUntil`; at least 1 minute and at
+most 1 hour from now). `sync_runs.rate_limit_remaining` records the lower of the two. A `RateLimited` answer pauses the connection until its retry time (15 minutes when
 unknown). Manual runs obey the pause. The repository list, labels and milestones of token connections are read with
 `If-None-Match`; a 304 does not count against the limit. ETags and bodies are kept in server memory per connection and
-token, so a restart only costs full requests.
+token (32 MB in total, bodies above 1 MB are not kept, the oldest entries are dropped first), so a restart only costs full requests.
 
 ### Organization import
 
