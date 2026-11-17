@@ -78,6 +78,20 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 
 자세한 동작은 [docs/auth-and-github.md](docs/auth-and-github.md)와 `docs/api-contract.md`의 "GitHub webhook"에 있습니다.
 
+### 조직 연결
+
+조직 연결은 설치 토큰으로 조직 구성원을 확인하므로 App에 조직 권한이 하나 더 필요합니다.
+
+1. GitHub → Settings → Developer settings → GitHub Apps → App → **Permissions & events** → Organization permissions → **Members**를 **Read-only**로 바꾸고 저장합니다.
+2. 이미 설치한 조직이 있으면 그 조직 소유자가 Installed GitHub Apps 화면에서 **Review request** → **Accept new permissions**로 승인합니다. 승인 전에는 조직 연결이 `422 org_members_not_granted`입니다.
+3. General → **Request user authorization (OAuth) during installation**이 켜져 있어야 합니다(개인 연결과 같음). Setup URL은 웹의 `/connect/github`입니다.
+
+개인 테스트 조직으로 확인하는 방법(실제 회사 조직에는 설치하지 않습니다):
+
+1. 개인 계정으로 GitHub에서 무료 조직을 하나 만듭니다(New organization → Free). 만든 사람이 소유자입니다.
+2. 소유자가 직접 연결: 업무 보드 설정 → "GitHub 연결하기" → 설치 화면에서 그 조직 선택 → 돌아오면 "연결되었습니다"와 조직 구성원 수가 보입니다.
+3. 승인 대기 후 연결: 두 번째 GitHub 계정을 그 조직의 일반 구성원(Member)으로 초대하고, 그 계정으로 업무 보드에 회사를 만들어 "GitHub 연결하기"로 같은 조직에 설치를 요청합니다. 돌아오면 "관리자에게 승인을 요청했습니다"가 보입니다. 소유자 계정으로 조직 Settings → GitHub Apps의 요청을 승인한 뒤, 두 번째 계정이 설정에서 "다시 확인"을 누르면 연결됩니다. 같은 조직은 한 회사에만 연결되고 이미 설치된 조직에는 요청이 생기지 않으므로, 2번과 3번은 서로 다른 테스트 조직으로 시험합니다.
+
 샘플 사용자: `haneul-dev`(acme-health 관리자), `other-org-dev`(globex-labs). 두 번째 사용자로 바꾸면 첫 번째 회사의 데이터가 하나도 보이지 않아야 합니다.
 
 ## DB 마이그레이션

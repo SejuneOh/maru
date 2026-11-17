@@ -412,6 +412,52 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
+    public async Task Removal_from_one_organization_does_not_mark_someone_still_in_another()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var installation = await InstallAsync(t);
+        var accountId = await t.ScalarAsync<long>("select account_id from github_connections where id = @c", new { c = t.ConnectionId });
+        var second = Guid.NewGuid();
+        var secondAccount = TestTenant.NextId();
+        var secondInstallation = TestTenant.NextId();
+        await t.ExecAsync("""
+            insert into github_connections (id, tenant_id, account_id, account_login, account_type, installation_id)
+            values (@second, @tid, @secondAccount, 'second-org', 'organization', @secondInstallation)
+            """, new { second, tid = t.Id, secondAccount, secondInstallation });
+        var (login, userId) = await t.AddMemberAsync("both");
+        await t.ExecAsync("""
+            insert into github_org_members (tenant_id, connection_id, github_user_id, github_login)
+            values (@tid, @first, @userId, @login), (@tid, @second, @userId, @login)
+            """, new { tid = t.Id, first = t.ConnectionId, second, userId, login });
+        var (client, host) = Host(login: t.ViewerLogin);
+        object Payload(string action, long installationId, long org) => new
+        {
+            action, installation = new { id = installationId }, organization = new { id = org },
+            membership = new { user = new { id = userId } },
+        };
+        async Task<JsonValueKind> RemovedAsync()
+        {
+            var list = await client.GetFromJsonAsync<JsonElement>("/api/members");
+            return list.EnumerateArray().Single(m => m.GetProperty("githubLogin").GetString() == login).GetProperty("removedAt").ValueKind;
+        }
+
+        await PostAsync(client, "organization", Payload("member_removed", installation, accountId));
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.Null, await RemovedAsync());
+        Assert.NotNull(await t.ScalarAsync<DateTime?>(
+            "select removed_at from github_org_members where connection_id = @c and github_user_id = @userId",
+            new { c = t.ConnectionId, userId }));
+
+        await PostAsync(client, "organization", Payload("member_removed", secondInstallation, secondAccount));
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.String, await RemovedAsync());
+
+        await PostAsync(client, "organization", Payload("member_added", secondInstallation, secondAccount));
+        await DrainAsync(host);
+        Assert.Equal(JsonValueKind.Null, await RemovedAsync());
+    }
+
+    [DbFact]
     public async Task While_sync_is_disabled_the_endpoint_does_not_queue()
     {
         await using var t = await TestTenant.CreateAsync(_factory);

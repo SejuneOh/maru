@@ -38,6 +38,30 @@ public class ConnectGithubTests : IClassFixture<WebApplicationFactory<Program>>
 
         public Task<GitHubInstallation?> GetInstallationAsync(long installationId, CancellationToken ct) =>
             ThrowOnInstallation is { } e ? Task.FromException<GitHubInstallation?>(e) : Task.FromResult(Installation);
+
+        public List<GitHubAppInstallation> AppInstallations { get; set; } = [];
+
+        // By installation id; anything not listed is NotMember.
+        public Dictionary<long, OrgMembership> Memberships { get; set; } = [];
+        public List<(long InstallationId, string Org, long UserId, string Login)> MembershipCalls { get; } = [];
+
+        // Null answers as an installation without "Members: read".
+        public List<GitHubUser>? OrgMembers { get; set; } = [];
+
+        public Task<IReadOnlyList<GitHubAppInstallation>> ListAppInstallationsAsync(CancellationToken ct) =>
+            Throw is { } e ? Task.FromException<IReadOnlyList<GitHubAppInstallation>>(e)
+                : Task.FromResult<IReadOnlyList<GitHubAppInstallation>>(AppInstallations);
+
+        public Task<OrgMembership> GetOrganizationMembershipAsync(
+            long installationId, string organization, long userId, string login, CancellationToken ct)
+        {
+            lock (MembershipCalls)
+                MembershipCalls.Add((installationId, organization, userId, login));
+            return Task.FromResult(Memberships.GetValueOrDefault(installationId, OrgMembership.NotMember));
+        }
+
+        public Task<IReadOnlyList<GitHubUser>?> ListOrganizationMembersAsync(long installationId, string organization, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<GitHubUser>?>(OrgMembers);
     }
 
     private readonly WebApplicationFactory<Program> _factory;
@@ -190,17 +214,306 @@ public class ConnectGithubTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("invalid_code", await ErrorAsync(response));
     }
 
+    // The admin's login and id, a fake whose installation is an organization with the given membership, and its id.
+    private static async Task<(string Login, long UserId, FakeGitHub Fake, long InstallationId, long OrgId)> OrgOwnerAsync(
+        TestTenant tenant, OrgMembership membership = OrgMembership.Owner)
+    {
+        var (login, fake, installationId, userId) = await AdminAsync(tenant);
+        var orgId = TestTenant.NextId();
+        fake.Installation = new GitHubInstallation(orgId, "test-org-" + tenant.Suffix, "Organization", "all");
+        fake.Memberships[installationId] = membership;
+        return (login, userId, fake, installationId, orgId);
+    }
+
     [DbFact]
-    public async Task Organization_installation_gets_422()
+    public async Task Organization_owner_connects_and_members_are_imported()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, userId, fake, installationId, orgId) = await OrgOwnerAsync(tenant);
+        var (_, stays) = await tenant.AddMemberAsync("stays");
+        fake.OrgMembers = [new GitHubUser(userId, login), new GitHubUser(stays, "stays"), new GitHubUser(TestTenant.NextId(), "outsider")];
+
+        var response = await PostAsync(Client(fake, login), installationId);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("organization", body.GetProperty("accountType").GetString());
+        Assert.Equal(orgId, body.GetProperty("accountId").GetInt64());
+        Assert.Equal(3, body.GetProperty("orgMemberCount").GetInt32());
+        Assert.Equal((installationId, fake.Installation!.AccountLogin, userId, login), fake.MembershipCalls.Single());
+        Assert.Equal(0, await tenant.ScalarAsync<long>(
+            "select count(*) from members where tenant_id = @tid and github_login = 'outsider'", new { tid = tenant.Id }));
+        var list = await Client(fake, login).GetFromJsonAsync<JsonElement>("/api/connections");
+        Assert.Equal(3, list.EnumerateArray().Single(c => c.GetProperty("accountId").GetInt64() == orgId)
+            .GetProperty("orgMemberCount").GetInt32());
+    }
+
+    [DbFact]
+    public async Task Import_marks_a_member_missing_from_the_organization_as_removed()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, userId, fake, installationId, _) = await OrgOwnerAsync(tenant);
+        var first = await PostAsync(Client(fake, login), installationId);
+        var connectionId = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var (_, left) = await tenant.AddMemberAsync("left");
+        await tenant.ExecAsync(
+            "insert into github_org_members (tenant_id, connection_id, github_user_id) values (@tid, @connectionId, @left)",
+            new { tid = tenant.Id, connectionId, left });
+        fake.OrgMembers = [new GitHubUser(userId, login)];
+
+        var again = await PostAsync(Client(fake, login), installationId);
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.NotNull(await tenant.ScalarAsync<DateTime?>(
+            "select removed_at from members where tenant_id = @tid and github_user_id = @left", new { tid = tenant.Id, left }));
+        Assert.Null(await tenant.ScalarAsync<DateTime?>(
+            "select removed_at from members where tenant_id = @tid and github_user_id = @userId", new { tid = tenant.Id, userId }));
+    }
+
+    [DbFact]
+    public async Task Organization_without_members_permission_still_connects_without_a_count()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, _, fake, installationId, _) = await OrgOwnerAsync(tenant);
+        fake.OrgMembers = null;
+
+        var response = await PostAsync(Client(fake, login), installationId);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("orgMemberCount").ValueKind);
+    }
+
+    [DbTheory]
+    [InlineData(OrgMembership.Member, 403, "not_org_owner")]
+    [InlineData(OrgMembership.NotMember, 403, "not_org_member")]
+    [InlineData(OrgMembership.NotGranted, 422, "org_members_not_granted")]
+    public async Task Organization_installation_needs_an_owner(OrgMembership membership, int status, string error)
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, _, fake, installationId, orgId) = await OrgOwnerAsync(tenant, membership);
+
+        var response = await PostAsync(Client(fake, login), installationId);
+
+        Assert.Equal(status, (int)response.StatusCode);
+        Assert.Equal(error, await ErrorAsync(response));
+        Assert.Equal(0, await tenant.ScalarAsync<long>(
+            "select count(*) from github_connections where account_id = @orgId", new { orgId }));
+    }
+
+    [DbFact]
+    public async Task Enterprise_installation_gets_422()
     {
         await using var tenant = await TestTenant.CreateAsync(_factory);
         var (login, fake, installationId, _) = await AdminAsync(tenant);
-        fake.Installation = new GitHubInstallation(TestTenant.NextId(), "some-org", "Organization", "all");
+        fake.Installation = new GitHubInstallation(TestTenant.NextId(), "some-enterprise", "Enterprise", "all");
 
         var response = await PostAsync(Client(fake, login), installationId);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("organization_not_supported", await ErrorAsync(response));
+        Assert.Equal("unsupported_account", await ErrorAsync(response));
+    }
+
+    private static Task<HttpResponseMessage> CheckAsync(HttpClient client, long? accountId = null) =>
+        client.PostAsJsonAsync("/api/connections/github/request/check", new { accountId });
+
+    private static GitHubAppInstallation OrgInstall(long id, long orgId, string login, DateTimeOffset createdAt) =>
+        new(id, orgId, login, "Organization", "selected", createdAt);
+
+    [DbFact]
+    public async Task Request_is_stored_once_and_shown_to_members()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+        var client = Client(fake, login);
+
+        var first = await client.PostAsync("/api/connections/github/request", null);
+        var second = await client.PostAsync("/api/connections/github/request", null);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var state = await Client(fake, tenant.ViewerLogin).GetFromJsonAsync<JsonElement>("/api/connections/github/request");
+        Assert.Equal(login, state.GetProperty("request").GetProperty("requestedByLogin").GetString());
+        Assert.Equal(1, await tenant.ScalarAsync<long>(
+            "select count(*) from github_connection_requests where tenant_id = @tid", new { tid = tenant.Id }));
+        await using var other = await TestTenant.CreateAsync(_factory);
+        var elsewhere = await Client(fake, other.ViewerLogin).GetFromJsonAsync<JsonElement>("/api/connections/github/request");
+        Assert.Equal(JsonValueKind.Null, elsewhere.GetProperty("request").ValueKind);
+
+        var cancel = await client.DeleteAsync("/api/connections/github/request");
+        Assert.Equal(HttpStatusCode.NoContent, cancel.StatusCode);
+        var after = await client.GetFromJsonAsync<JsonElement>("/api/connections/github/request");
+        Assert.Equal(JsonValueKind.Null, after.GetProperty("request").ValueKind);
+    }
+
+    [DbFact]
+    public async Task Request_and_check_need_an_admin()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var client = Client(new FakeGitHub(), tenant.ViewerLogin);
+
+        var create = await client.PostAsync("/api/connections/github/request", null);
+        var check = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+        Assert.Equal("admin_only", await ErrorAsync(create));
+        Assert.Equal(HttpStatusCode.Forbidden, check.StatusCode);
+    }
+
+    [DbFact]
+    public async Task Check_without_a_request_is_404()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+
+        var response = await CheckAsync(Client(fake, login));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("no_request", await ErrorAsync(response));
+    }
+
+    [DbFact]
+    public async Task Check_stays_pending_until_the_owner_approves_then_connects()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, userId, fake, _, _) = await OrgOwnerAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+        var orgId = TestTenant.NextId();
+        var installationId = TestTenant.NextId();
+        var olderInstall = TestTenant.NextId();
+        fake.AppInstallations = [OrgInstall(olderInstall, TestTenant.NextId(), "old-org", DateTimeOffset.UtcNow.AddDays(-3))];
+        fake.Memberships[olderInstall] = OrgMembership.Member;
+
+        var pending = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
+        Assert.Equal("pending", (await pending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        Assert.Empty(fake.MembershipCalls);
+
+        fake.AppInstallations.Add(OrgInstall(installationId, orgId, "approved-org", DateTimeOffset.UtcNow));
+        fake.Memberships[installationId] = OrgMembership.Member;
+        fake.OrgMembers = [new GitHubUser(userId, login)];
+        var connected = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.Created, connected.StatusCode);
+        var body = await connected.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("connected", body.GetProperty("status").GetString());
+        var connection = body.GetProperty("connection");
+        Assert.Equal(orgId, connection.GetProperty("accountId").GetInt64());
+        Assert.Equal("organization", connection.GetProperty("accountType").GetString());
+        Assert.Equal(installationId, connection.GetProperty("installationId").GetInt64());
+        Assert.Equal(1, connection.GetProperty("orgMemberCount").GetInt32());
+        Assert.Equal((installationId, "approved-org", userId, login), fake.MembershipCalls.Single());
+        var request = (await tenant.QueryAsync(
+            "select resolved_at, connection_id, account_login from github_connection_requests where tenant_id = @tid",
+            new { tid = tenant.Id })).Single();
+        Assert.NotNull(request.resolved_at);
+        Assert.Equal(connection.GetProperty("id").GetGuid(), (Guid)request.connection_id);
+        Assert.Equal("approved-org", (string)request.account_login);
+    }
+
+    [DbFact]
+    public async Task Check_ignores_organizations_the_admin_does_not_belong_to()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+        var installationId = TestTenant.NextId();
+        var orgId = TestTenant.NextId();
+        fake.AppInstallations = [OrgInstall(installationId, orgId, "strangers", DateTimeOffset.UtcNow)];
+
+        var response = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("pending", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        Assert.Equal(0, await tenant.ScalarAsync<long>(
+            "select count(*) from github_connections where account_id = @orgId", new { orgId }));
+    }
+
+    [DbFact]
+    public async Task Check_cannot_take_an_installation_connected_to_another_tenant()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        await using var other = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+        var installationId = TestTenant.NextId();
+        var orgId = TestTenant.NextId();
+        await other.ExecAsync("""
+            insert into github_connections (tenant_id, account_id, account_login, account_type, installation_id)
+            values (@tid, @orgId, 'taken-org', 'organization', @installationId)
+            """, new { tid = other.Id, orgId, installationId });
+        fake.AppInstallations = [OrgInstall(installationId, orgId, "taken-org", DateTimeOffset.UtcNow)];
+        fake.Memberships[installationId] = OrgMembership.Owner;
+
+        var response = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("account_connected", await ErrorAsync(response));
+        Assert.Empty(fake.MembershipCalls);
+        Assert.Equal(other.Id, await tenant.ScalarAsync<Guid>(
+            "select tenant_id from github_connections where account_id = @orgId", new { orgId }));
+    }
+
+    [DbFact]
+    public async Task Check_with_two_approved_organizations_asks_which_one()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+        var (a, b) = (TestTenant.NextId(), TestTenant.NextId());
+        var (orgA, orgB) = (TestTenant.NextId(), TestTenant.NextId());
+        fake.AppInstallations = [OrgInstall(a, orgA, "org-a", DateTimeOffset.UtcNow), OrgInstall(b, orgB, "org-b", DateTimeOffset.UtcNow)];
+        fake.Memberships[a] = OrgMembership.Member;
+        fake.Memberships[b] = OrgMembership.Member;
+
+        var ambiguous = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.Conflict, ambiguous.StatusCode);
+        var body = await ambiguous.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("multiple_organizations", body.GetProperty("error").GetString());
+        Assert.Equal(["org-a", "org-b"], body.GetProperty("organizations").EnumerateArray().Select(e => e.GetProperty("login").GetString()!).Order());
+
+        var picked = await CheckAsync(client, orgB);
+
+        Assert.Equal(HttpStatusCode.Created, picked.StatusCode);
+        Assert.Equal(orgB, (await picked.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("connection").GetProperty("accountId").GetInt64());
+    }
+
+    [DbFact]
+    public async Task Check_without_members_permission_is_422()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, fake, _, _) = await AdminAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+        var installationId = TestTenant.NextId();
+        fake.AppInstallations = [OrgInstall(installationId, TestTenant.NextId(), "no-perm", DateTimeOffset.UtcNow)];
+        fake.Memberships[installationId] = OrgMembership.NotGranted;
+
+        var response = await CheckAsync(client);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("org_members_not_granted", await ErrorAsync(response));
+    }
+
+    [DbFact]
+    public async Task Owner_connecting_directly_closes_the_open_request()
+    {
+        await using var tenant = await TestTenant.CreateAsync(_factory);
+        var (login, _, fake, installationId, _) = await OrgOwnerAsync(tenant);
+        var client = Client(fake, login);
+        await client.PostAsync("/api/connections/github/request", null);
+
+        var response = await PostAsync(client, installationId);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var state = await client.GetFromJsonAsync<JsonElement>("/api/connections/github/request");
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("request").ValueKind);
     }
 
     [DbFact]

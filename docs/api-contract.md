@@ -95,6 +95,10 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | GET | `/api/projects/{id}/schedule` | dev user | `ProjectSchedule` or 404, see below |
 | GET | `/api/connections` | dev user | `GithubConnection[]`, active first |
 | POST | `/api/connections/github` | dev user, admin | `GithubConnection` (`201` new, `200` existing updated) |
+| GET | `/api/connections/github/request` | dev user | `{ request: ConnectionRequest \| null }`, the company's open organization install request |
+| POST | `/api/connections/github/request` | dev user, admin | `ConnectionRequest` (`201` new, `200` already open) |
+| DELETE | `/api/connections/github/request` | dev user, admin | `204` (closes the open request, if any) |
+| POST | `/api/connections/github/request/check` | dev user, admin | `ConnectionRequestCheck` (`200` pending, `201`/`200` connected), see below |
 | GET | `/api/overview` | dev user | `Overview` |
 | GET | `/api/issues` | dev user | `BoardIssue[]` |
 | GET | `/api/issues/{id}` | dev user | `IssueDetail` or 404 |
@@ -129,16 +133,46 @@ afterwards. Errors: `401 unauthenticated` (no valid sign-in, or the GitHub ident
 `400 invalid_name` (also for a body that is not JSON), `409 tenant_limit` (the person already created 5
 tenants; tenants they only joined do not count).
 
-`POST /api/connections/github` connects the caller's personal GitHub account after they install the GitHub App.
+`POST /api/connections/github` connects a GitHub account after the caller installs the GitHub App on it.
 Body `{"code": "<oauth code>", "installationId": <number>}` (`application/json`), both from the redirect to
 `/connect/github`. The server exchanges `code` for a user token (never stored or logged), checks that the token's
-GitHub user is the caller and that the installation is in that user's installations, reads the account from the
-App's own installation record, then inserts (or, for the same tenant's active account, updates) the
-`github_connections` row on the `workboard_sync` role in one transaction. Response is the `GithubConnection`.
+GitHub user is the caller and that the installation is in that user's installations, and reads the account from the
+App's own installation record. A personal account must be the caller's own. An organization needs the caller to be
+an active **owner** of it: the server asks `GET /orgs/{org}/memberships/{login}` with that installation's token and
+compares the returned user id (not the login) with the caller's GitHub id. It then inserts (or, for the same
+tenant's active account, updates) the `github_connections` row on the `workboard_sync` role in one transaction; for an
+organization the same transaction closes the company's open install request. Organization members are then imported
+(`GET /orgs/{org}/members`, see "Organization members"); a failed import keeps the connection with `orgMemberCount: null`.
+Response is the `GithubConnection`.
 Errors: `400 invalid_request` (missing code or installationId, not JSON), `400 invalid_code`,
 `401 unauthenticated`, `403 admin_only`, `403 not_your_account`, `403 not_your_installation`,
-`409 account_connected` (active in another tenant), `422 organization_not_supported`,
+`403 not_org_owner` (an organization member, not an owner: use the request flow), `403 not_org_member`,
+`409 account_connected` (active in another tenant), `422 org_members_not_granted` (the installation lacks the
+"Members: read" organization permission), `422 unsupported_account` (neither a user nor an organization),
 `502 github_unavailable` (GitHub call failed), `503 github_app_not_configured`.
+
+When someone who is not an organization owner installs the App, GitHub records an install request and returns to
+`/connect/github?setup_action=request` without an installation id. The web then calls
+`POST /api/connections/github/request`: one open request per company (requester taken from the sign-in, never from
+the body; a second call returns the open one with `200`). `DELETE` closes it.
+
+`POST /api/connections/github/request/check` ("다시 확인") looks for the approved installation. Body is optional:
+`{"accountId": <organization id>}` narrows the search after a `multiple_organizations` answer. The server lists the
+App's installations with the App JWT (`GET /app/installations`) and keeps those that are organizations, were created no
+earlier than 5 minutes before the request, and are not actively connected anywhere. For each, it checks with that
+installation's token that the calling admin is an active member (owner or member; the user id must match). Exactly one
+match is linked like a direct install, and the request is closed. Response:
+`200 {"status": "pending", "connection": null}` when nothing matches yet, or
+`201 {"status": "connected", "connection": GithubConnection}` (`200` when it updated an existing row of the same company).
+Errors: `401`, `403 admin_only`, `404 no_request`, `409 account_connected` (every candidate is connected to a company already),
+`409 {"error": "multiple_organizations", "organizations": [{"accountId": <number>, "login": "<string>"}, ...]}`, `422 org_members_not_granted`
+(a candidate's installation lacks "Members: read"), `502 github_unavailable`, `503 github_app_not_configured`
+(App id or private key missing).
+
+Organization members: `github_org_members` keeps, per organization connection, the GitHub id and login of each member
+(imported on connect, then kept current by `organization` webhooks). They are for display only (the count in
+`GithubConnection.orgMemberCount`); a row never makes anyone a member of the company, which still needs an invitation.
+`orgMemberCount` is null for personal accounts and when the members could not be read.
 Settings `GitHub:App:AppId`, `ClientId`, `ClientSecret`, `PrivateKeyPath`, `Slug`.
 
 `GET /api/issues` query parameters, all optional:
@@ -543,7 +577,7 @@ lease, retries a failure up to 5 times with 30 s steps, and records the outcome 
 | `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `milestone`, `label`, `sub_issues` | The payload is not applied. The repository (matched by `repository.id`, so a rename does not drop events) is re-read through `IGitHubSource` since its `last_synced_at - 2 minutes` and applied by `MirrorWriter`, exactly like a periodic run (ordering rule, issue_events, PendingLink, label and milestone lists). Pending events of one repository share one read. Unknown installation, unknown repository (not listed by a sync yet) and `sync_enabled = false` are acknowledged and ignored. |
 | `installation` `deleted`, `suspend` | Active connections with that `installation_id` get `disconnected_at = now()`. Every sync query already skips disconnected connections, so syncing and board writes stop; the connection list shows it as disconnected. |
 | `installation` `unsuspend` | The most recently disconnected connection of that installation is reactivated unless the account or installation already has an active connection. |
-| `organization` `member_removed`, `member_added` | For the connection whose `account_id` equals `organization.id`: `members.removed_at` is set (or cleared) for that GitHub user id, tenant-wide (per-organization handling and access policy come with #40; no connection is an organization yet, so it has no effect today). A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
+| `organization` `member_removed`, `member_added` | For the active connection whose `installation_id` matches and whose `account_id` equals `organization.id`: that person's `github_org_members` row of this connection gets `removed_at` set (or cleared; a row is created when missing). `members.removed_at` is then derived for that GitHub user id: null while they are a current member of any active organization connection of the company, otherwise the time GitHub reported them gone. Someone removed from one organization but still in another connected one is not marked. A removed member stays in the data and keeps access; `GET /api/members` returns `removedAt` and the new-issue assignee options leave them out. |
 | everything else (`installation` `created`, `installation_repositories`, `push`, ...) | `202 ignored`. New repositories appear with the next periodic run. |
 
 ## Shapes
@@ -650,7 +684,13 @@ type Me = {
 type GithubConnection = {
   id: string; accountId: number; accountLogin: string; accountType: "organization" | "user"; installationId: number | null;
   repositorySelection: "all" | "selected" | null; createdAt: string; disconnectedAt: string | null;
+  orgMemberCount: number | null;   // current organization members; null for personal accounts or when unread
 };
+
+type ConnectionRequest = { id: string; requestedAt: string; requestedByLogin: string | null; accountLogin: string | null };
+type ConnectionRequestCheck =
+  | { status: "pending"; connection: null }
+  | { status: "connected"; connection: GithubConnection };
 
 type Project = { id: string; name: string; color: string | null; repositories: { id: string; name: string }[] };
 type DoneByWeek = { weeks: string[]; projects: { projectId: string; done: number[] }[] };   // done[i] belongs to weeks[i]

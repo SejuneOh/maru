@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using WorkBoard.Api.Features.Connections;
 using WorkBoard.Api.Infrastructure.GitHub;
 using WorkBoard.Api.Infrastructure.Identity;
 using WorkBoard.Api.Infrastructure.Sync;
@@ -173,12 +174,8 @@ public sealed class WebhookProcessor(
             return "ignored: unknown_installation";
         if (row.SubjectUserId is null || connection.AccountId != row.AccountId)
             return "ignored: other_account";
-        var changed = await conn.ExecuteAsync(new CommandDefinition(
-            row.Action == "member_removed"
-                ? "update members set removed_at = now() where tenant_id = @tenantId and github_user_id = @userId and removed_at is null"
-                : "update members set removed_at = null where tenant_id = @tenantId and github_user_id = @userId and removed_at is not null",
-            new { tenantId = connection.TenantId, userId = row.SubjectUserId }, cancellationToken: ct));
-        return changed > 0 ? "applied" : "ignored: unknown_member";
+        return await OrgMembers.ApplyEventAsync(
+            conn, connection.TenantId, connection.Id, row.SubjectUserId.Value, row.Action == "member_removed", ct);
     }
 
     private static async Task<string> DisconnectAsync(NpgsqlConnection conn, long? installationId, CancellationToken ct)
