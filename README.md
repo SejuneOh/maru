@@ -32,6 +32,8 @@ cd web && pnpm install && pnpm dev
 cd server && WORKBOARD_TEST_DB=1 dotnet test
 ```
 
+PR과 `dev`·`main` push마다 GitHub Actions(`ci`)가 같은 확인(web 린트·타입 검사·빌드, server 빌드·DB 테스트)을 돌립니다. 자세한 내용은 [CONTRIBUTING.md](CONTRIBUTING.md)의 "CI"에 있습니다.
+
 ### 테스트 DB
 
 통합 테스트는 개발용 DB와 따로 전용 DB를 쓰는 편이 안전합니다. 테스트가 만드는 임시 테넌트는 끝나면 지우지만, 시작할 때 마이그레이션과 샘플 데이터를 적용합니다.
