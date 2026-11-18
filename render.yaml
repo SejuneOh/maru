@@ -1,0 +1,29 @@
+# Render Blueprint for the API. The web is a static export on Cloudflare Pages and the database is Supabase,
+# so only the API runs on Render. Deploys are triggered by .github/workflows/deploy.yml after the migration,
+# which is why auto-deploy is off.
+services:
+  - type: web
+    name: maru-api
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    autoDeployTrigger: "off"
+    dockerfilePath: ./deploy/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ConnectionStrings__App
+        sync: false
+      - key: ConnectionStrings__Sync
+        sync: false
+      - key: Auth__Supabase__Url
+        sync: false
+      - key: Auth__Supabase__ServiceRoleKey
+        sync: false
+      - key: Web__BaseUrl
+        sync: false
+      - key: Web__AllowedOrigins__0
+        sync: false
