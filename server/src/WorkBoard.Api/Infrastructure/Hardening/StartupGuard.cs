@@ -37,7 +37,7 @@ public static class StartupGuard
         }
 
         foreach (var binding in NonLoopbackBindings(config))
-            warnings.Add($"The API listens on {binding}. The Cloudflare tunnel only needs http://127.0.0.1:<port>.");
+            warnings.Add($"The API listens on {binding}. Expose it only through a reverse proxy or the hosting platform's router; on a shared machine bind to http://127.0.0.1:<port>.");
 
         if (bypassProduction)
             return new GuardResult([], warnings);
