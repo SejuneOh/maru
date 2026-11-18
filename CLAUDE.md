@@ -1,4 +1,4 @@
-# work-board 작업 규칙 (AI 세션용)
+# Maru 작업 규칙 (AI 세션용)
 
 브랜치, 릴리스, 이슈·PR 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따릅니다. 요약:
 
@@ -10,7 +10,7 @@
 추가로 지킬 것:
 
 - 원격 작업(push, 이슈·PR 생성, 댓글, 병합, 저장소 설정 변경)은 매번 사용자에게 먼저 묻습니다.
-- 이 저장소는 GitHub 계정 `sejune-oh` 소유입니다. 공유 gh 활성 계정이 다를 수 있으니 `GH_TOKEN="$(gh auth token -u sejune-oh)"`로 실행합니다.
+- 이 저장소는 GitHub 계정 `SejuneOh` 소유입니다(`SejuneOh/maru`, 예전 `sejune-oh/work-board`). 공유 gh 활성 계정이 다를 수 있으니 gh는 `GH_TOKEN="$(gh auth token -u SejuneOh)"`로 실행합니다. 원격은 HTTPS(`https://github.com/SejuneOh/maru.git`)이고, 이 PC의 SSH 키는 다른 계정이라 SSH로는 push할 수 없습니다.
 - 공개 저장소입니다. 회사 이름, 실데이터, 회사 이메일을 넣지 않습니다.
 - 코드 주석에는 읽는 사람이 알아야 할 것만 씁니다. 변경 이유는 커밋 메시지에 씁니다.
 - API를 바꾸면 `docs/api-contract.md`와 `web/src/lib/types.ts`를 함께 고칩니다.

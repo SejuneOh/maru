@@ -15,7 +15,7 @@ export const ko = {
   langName: "한국어",
 
   app: {
-    title: "업무 보드",
+    title: "마루",
     description: "누가, 어느 프로젝트에서, 무엇을, 어디까지 했는지 한 화면에서",
   },
 
@@ -904,7 +904,7 @@ export const ko = {
     request: {
       label: "조직 설치 요청",
       title: "관리자에게 승인을 요청했습니다",
-      lead: "조직 소유자가 GitHub에서 설치를 승인한 뒤, 그 소유자가 업무 보드에 로그인해 \"다시 확인\"을 누르면 연결됩니다. 요청은 7일 동안 유지됩니다.",
+      lead: "조직 소유자가 GitHub에서 설치를 승인한 뒤, 그 소유자가 마루에 로그인해 \"다시 확인\"을 누르면 연결됩니다. 요청은 7일 동안 유지됩니다.",
       meta: (date: string, login: string | null) => (login ? `${date} · ${login} 님이 요청` : `${date} 요청`),
       check: "다시 확인",
       checking: "확인하는 중",
@@ -1008,7 +1008,7 @@ export const ko = {
       token_scope_too_broad: ["토큰 권한이 필요보다 넓습니다.", "클래식 토큰은 repo와 read:org만 켜고, fine-grained 토큰은 Contents 읽기, Issues 읽기·쓰기, Pull requests 읽기, Metadata 읽기, Members 읽기만 주세요."],
       token_scope_missing: ["토큰에 필요한 권한이 빠졌습니다.", "클래식 토큰은 repo와 read:org를 켜고, fine-grained 토큰은 Contents 읽기, Issues 읽기·쓰기, Pull requests 읽기, Metadata 읽기, Members 읽기를 주세요."],
       sso_not_authorized: ["조직의 SSO가 이 토큰을 아직 허락하지 않았습니다.", "GitHub에서 이 토큰의 SSO 승인을 마친 뒤 다시 시도해 주세요."],
-      not_your_account: ["이 토큰은 지금 로그인한 계정의 것이 아닙니다.", "업무 보드에 로그인한 GitHub 계정으로 만든 토큰을 넣어 주세요."],
+      not_your_account: ["이 토큰은 지금 로그인한 계정의 것이 아닙니다.", "마루에 로그인한 GitHub 계정으로 만든 토큰을 넣어 주세요."],
       not_org_member: ["토큰 주인이 이 조직의 구성원이 아닙니다.", "조직 이름을 확인하거나, 조직에 합류한 뒤 다시 시도해 주세요."],
       org_membership_inactive: ["조직 초대를 아직 수락하지 않았습니다.", "GitHub에서 조직 초대를 수락한 뒤 다시 시도해 주세요."],
       org_access_denied: ["조직이 이 토큰의 접근을 막았습니다.", "조직 설정에서 토큰 승인을 받은 뒤 다시 시도해 주세요."],
@@ -1086,7 +1086,7 @@ export const ko = {
     workingTitle: "GitHub 계정을 연결하는 중…",
     workingLead: "GitHub에서 받은 설치 정보를 확인하고 있습니다. 이 화면을 닫지 마세요.",
     doneTitle: "연결되었습니다",
-    doneLead: "이제 이 계정의 저장소를 업무 보드에서 읽어 옵니다.",
+    doneLead: "이제 이 계정의 저장소를 마루에서 읽어 옵니다.",
     redirecting: "잠시 뒤 설정 화면으로 이동합니다.",
     toSettings: "설정으로 가기",
     failedTitle: "GitHub 계정을 연결하지 못했습니다",
@@ -1098,10 +1098,10 @@ export const ko = {
     errors: {
       admin_only: ["관리자만 GitHub 계정을 연결할 수 있습니다.", "회사 관리자에게 연결을 부탁해 주세요."],
       invalid_code: ["GitHub에서 받은 확인 코드가 만료되었거나 이미 쓰였습니다.", "설정에서 처음부터 다시 연결해 주세요."],
-      not_your_account: ["GitHub에서 확인한 계정이 업무 보드에 로그인한 계정과 다릅니다.", "업무 보드에 로그인한 GitHub 계정으로 설치해 주세요."],
+      not_your_account: ["GitHub에서 확인한 계정이 마루에 로그인한 계정과 다릅니다.", "마루에 로그인한 GitHub 계정으로 설치해 주세요."],
       not_your_installation: ["이 설치는 로그인한 계정이 한 것이 아닙니다.", "본인 계정에 직접 설치한 뒤 다시 연결해 주세요."],
       not_org_owner: ["조직 소유자만 설치를 바로 연결할 수 있습니다.", "GitHub 설치 화면에서 설치를 요청하면 소유자 승인 뒤 \"다시 확인\"으로 연결됩니다."],
-      not_org_member: ["로그인한 GitHub 계정이 이 조직의 구성원이 아닙니다.", "조직에 합류한 계정으로 업무 보드에 로그인한 뒤 다시 연결해 주세요."],
+      not_org_member: ["로그인한 GitHub 계정이 이 조직의 구성원이 아닙니다.", "조직에 합류한 계정으로 마루에 로그인한 뒤 다시 연결해 주세요."],
       org_members_not_granted: ["GitHub App에 조직 구성원 읽기 권한이 아직 없습니다.", "App 소유자가 Members 읽기 권한을 추가하고, 조직 소유자가 새 권한을 승인한 뒤 다시 시도해 주세요."],
       unsupported_account: ["이 종류의 GitHub 계정은 연결할 수 없습니다.", "개인 계정이나 조직에 설치해 주세요."],
       no_request: ["열린 설치 요청이 없습니다.", "요청은 7일 뒤 만료됩니다. 설정에서 \"GitHub 연결하기\"로 다시 시작해 주세요."],

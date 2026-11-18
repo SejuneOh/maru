@@ -8,7 +8,7 @@ export const en: Dict = {
   langName: "English",
 
   app: {
-    title: "Work board",
+    title: "Maru",
     description: "Who is doing what, in which project, and how far along, on one screen",
   },
 
@@ -895,7 +895,7 @@ export const en: Dict = {
     request: {
       label: "Organization install request",
       title: "Approval requested from an owner",
-      lead: "After an organization owner approves the installation on GitHub, that owner signs in to Work board and presses \"Check again\" to connect it. The request stays open for 7 days.",
+      lead: "After an organization owner approves the installation on GitHub, that owner signs in to Maru and presses \"Check again\" to connect it. The request stays open for 7 days.",
       meta: (date: string, login: string | null) => (login ? `Requested ${date} by ${login}` : `Requested ${date}`),
       check: "Check again",
       checking: "Checking",
@@ -1079,7 +1079,7 @@ export const en: Dict = {
     workingTitle: "Connecting your GitHub account…",
     workingLead: "Checking the installation GitHub sent back. Keep this page open.",
     doneTitle: "Connected",
-    doneLead: "Work board now reads this account's repositories.",
+    doneLead: "Maru now reads this account's repositories.",
     redirecting: "Taking you to Settings in a moment.",
     toSettings: "Go to Settings",
     failedTitle: "Could not connect your GitHub account",
@@ -1091,10 +1091,10 @@ export const en: Dict = {
     errors: {
       admin_only: ["Only admins can connect a GitHub account.", "Ask an admin of your company to connect it."],
       invalid_code: ["The code from GitHub has expired or was already used.", "Start again from Settings."],
-      not_your_account: ["The account GitHub confirmed is not the one you signed in to Work board with.", "Install the app while signed in to GitHub as that same account."],
+      not_your_account: ["The account GitHub confirmed is not the one you signed in to Maru with.", "Install the app while signed in to GitHub as that same account."],
       not_your_installation: ["This installation was not made by the signed-in account.", "Install the app on your own account, then connect again."],
       not_org_owner: ["Only an organization owner can connect an installation directly.", "Request the installation on GitHub instead; after an owner approves, connect it with \"Check again\"."],
-      not_org_member: ["The signed-in GitHub account is not a member of this organization.", "Sign in to Work board with an account that belongs to the organization, then connect again."],
+      not_org_member: ["The signed-in GitHub account is not a member of this organization.", "Sign in to Maru with an account that belongs to the organization, then connect again."],
       org_members_not_granted: ["The GitHub App cannot read organization members yet.", "The App owner adds the Members read permission and an organization owner accepts it; then try again."],
       unsupported_account: ["This kind of GitHub account cannot be connected.", "Install the app on a personal account or an organization."],
       no_request: ["There is no open install request.", "Requests expire after 7 days. Start again with \"Connect GitHub\" in Settings."],
