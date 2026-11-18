@@ -36,8 +36,25 @@
 - PR 제목은 conventional 형식(`feat: ...`, `fix(api): ...`), 본문에 `Closes #N`, 이슈와 같은 라벨을 붙입니다.
 - PR은 초안(draft)이 아니라 바로 리뷰 가능한 상태로 엽니다.
 - 작업 브랜치 PR과 릴리스 PR 모두 merge commit으로 병합합니다. 릴리스 PR을 squash나 rebase로 병합하면 `dev`와 `main`의 기록이 갈라져 다음 릴리스에서 충돌이 납니다. 릴리스 PR 본문도 병합 커밋에서 PR 번호를 읽습니다.
-- 릴리스 PR은 `GITHUB_TOKEN`으로 만들어져서, 그 PR에서는 다른 `pull_request` 워크플로가 돌지 않습니다. CI를 필수 검사로 걸 때는 GitHub App 토큰이나 개인 토큰으로 바꿔야 합니다.
+- 릴리스 PR은 `GITHUB_TOKEN`으로 만들어져서, 그 PR에서는 다른 `pull_request` 워크플로가 돌지 않습니다. 아래 "CI"의 필수 검사 항목을 봅니다.
 - `dev`는 기본 브랜치가 아니라서 `Closes #N`이 이슈를 자동으로 닫지 않습니다. `dev`에 병합한 뒤 이슈를 직접 닫습니다.
+
+## CI
+
+`.github/workflows/ci.yml`이 `dev`·`main` push와 두 브랜치 대상 PR마다 돕니다. 같은 브랜치·PR에 새 커밋이 오면 이전 실행은 취소됩니다.
+
+| 작업 | 내용 |
+| --- | --- |
+| `web` | Node 24, pnpm 9.15.9. `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm exec tsc --noEmit`, `pnpm build` |
+| `server` | .NET 10 SDK. `docker run`으로 `postgres:17`(`docker-compose.yml`과 같은 이미지)을 `-c max_connections=300`으로 띄우고 `dotnet build`, `WORKBOARD_TEST_DB=1 dotnet test`. 실패하면 `.trx` 결과를 아티팩트 `server-test-results`로 올림 |
+
+경로 필터는 없습니다. 필수 검사로 걸었을 때 어떤 PR에서도 결과가 보고되게 하려는 것입니다.
+
+CI를 필수 검사로 걸려면 먼저 릴리스 PR 생성을 바꿔야 합니다. `release-pr.yml`은 `GITHUB_TOKEN`으로 PR을 만들고, `GITHUB_TOKEN`이 만든 PR에서는 `pull_request` 워크플로가 돌지 않습니다. 그대로 필수 검사를 켜면 릴리스 PR은 검사 결과를 기다리다 병합할 수 없습니다.
+
+1. GitHub App 토큰(`actions/create-github-app-token`) 또는 `contents`·`pull-requests` 쓰기 권한의 fine-grained 개인 토큰을 저장소 secret으로 등록합니다.
+2. `release-pr.yml`의 `GH_TOKEN`을 그 토큰으로 바꿉니다.
+3. 릴리스 PR에서 `ci`가 도는 것을 확인한 뒤 ruleset `protect main and dev`에 `web`, `server`를 필수 검사로 추가합니다.
 
 ## 공개 저장소 주의
 
@@ -50,5 +67,5 @@
 ```bash
 docker compose -p workboard up -d --wait
 cd server && WORKBOARD_TEST_DB=1 dotnet test
-cd web && pnpm lint && pnpm build
+cd web && pnpm lint && pnpm exec tsc --noEmit && pnpm build
 ```
