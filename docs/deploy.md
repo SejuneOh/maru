@@ -131,6 +131,16 @@ ingress:
 
 `cloudflared service install`로 서비스로 등록합니다. PC가 꺼지거나 잠자기에 들어가면 API가 내려가므로 전원 설정을 확인합니다.
 
+### 도메인이 없을 때: quick tunnel + workers.dev Worker
+
+named tunnel은 Cloudflare에 연결된 도메인이 있어야 합니다. 도메인이 없으면 quick tunnel(`<무작위>.trycloudflare.com`)을 쓰는데, 이 주소는 켤 때마다 바뀝니다. 그래서 고정 주소인 workers.dev에 Worker(`deploy/api-proxy`)를 두고 Worker가 현재 터널로 요청을 넘깁니다. 웹, CORS, GitHub 웹훅은 Worker 주소만 씁니다.
+
+1. 한 번만: `npx wrangler@4 login`, 그다음 `npx wrangler@4 deploy --config deploy/api-proxy/wrangler.toml`. 출력된 `https://work-board-api.<계정>.workers.dev`가 API 주소입니다. 아래 6, 7, 8장의 `https://api.example.com` 자리에 이 주소를 씁니다.
+2. API를 켠 뒤 `scripts/api-tunnel.sh`를 실행합니다. quick tunnel을 열고 새 주소를 Worker의 `UPSTREAM` 값에 넣습니다. 터널이 끝날 때까지 실행 상태로 둡니다(systemd 사용자 서비스로 등록 가능).
+3. 터널이 꺼져 있으면 Worker는 `503 {"error":"api_offline"}`을 돌려줍니다. Worker는 `/api/` 경로만 넘깁니다.
+
+quick tunnel은 Cloudflare가 시험용으로 안내하는 기능이라 가동 보장이 없고 동시 요청 수에 제한이 있습니다. 소수 인원 사용을 넘으면 도메인을 연결해 named tunnel로 옮깁니다.
+
 ## 6. Cloudflare Pages
 
 저장소를 연결하고 설정합니다. 웹은 정적 내보내기(`output: "export"`)입니다.
