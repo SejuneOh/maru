@@ -15,7 +15,7 @@
 
 ## 1. DB 역할 (Supabase)
 
-`0001_baseline.sql`은 `workboard_app`, `workboard_sync` 역할이 없을 때만 만듭니다. 이때 `workboard_sync`에 `bypassrls`를 주는데, Supabase의 `postgres` 계정은 진짜 슈퍼유저가 아니라서 이 속성을 줄 수 있는지 확인되지 않았습니다(아래 "Supabase에서 BYPASSRLS"). 그래서 첫 마이그레이션 전에 SQL Editor에서 역할을 먼저 만듭니다. 비밀번호는 임시값이어도 되고, 3단계에서 바뀝니다.
+`0001_baseline.sql`은 `workboard_app`, `workboard_sync` 역할이 없을 때만 만듭니다. 이때 `workboard_sync`에 `bypassrls`를 줍니다. Supabase의 `postgres`는 슈퍼유저는 아니지만 자신이 `rolbypassrls`를 가지고 있어, PostgreSQL 16 이상에서는 가진 속성을 `createrole` 권한으로 다른 역할에 줄 수 있습니다(아래 "Supabase에서 BYPASSRLS"). 다만 0001이 실패하면 전체가 롤백되므로 첫 마이그레이션 전에 SQL Editor에서 역할을 먼저 만듭니다. 비밀번호는 임시값이어도 되고, 3단계에서 바뀝니다.
 
 ```sql
 create role workboard_app  login password '<임시 비밀번호 1>';
@@ -23,13 +23,17 @@ create role workboard_sync login password '<임시 비밀번호 2>' bypassrls;
 select rolname, rolbypassrls from pg_roles where rolname like 'workboard_%';
 ```
 
-`bypassrls`에서 "must be superuser" 오류가 나면 같은 문장을 `bypassrls` 없이 실행하지 말고 아래 대안 절을 먼저 읽습니다. 이 상태로 진행하면 동기화와 초대 합류가 행을 하나도 보지 못합니다. API는 마이그레이션 때 이 속성을 확인하고, Production에서는 없으면 실패합니다.
+위 마지막 `select`에서 `workboard_sync`의 `rolbypassrls`가 `t`여야 합니다. "must be superuser" 오류가 나거나 `f`이면 `bypassrls` 없이 진행하지 말고 아래 대안 절을 먼저 읽습니다. 이 상태로 진행하면 동기화와 초대 합류가 행을 하나도 보지 못합니다. API는 마이그레이션 때 이 속성을 확인하고, Production에서는 없으면 실패합니다.
 
 Supabase의 Data API(PostgREST)는 `public` 스키마 테이블을 `anon`/`authenticated` 역할로 노출합니다. 이 앱은 Data API를 쓰지 않으므로 Dashboard → Project Settings → Data API에서 끄거나, 최소한 다음을 실행합니다.
 
 ```sql
-revoke all on all tables in schema public from anon, authenticated;
-alter default privileges in schema public revoke all on tables from anon, authenticated;
+revoke all on all tables    in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+revoke all on all functions in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables    from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+alter default privileges in schema public revoke all on functions from anon, authenticated;
 ```
 
 ## 2. API 환경 변수
@@ -69,13 +73,13 @@ dotnet run --no-launch-profile -- migrate
 - `alter role workboard_app/workboard_sync password ...`로 두 역할 비밀번호 설정
 - `workboard_sync`가 RLS를 우회하지 못하면 실패
 
-비밀번호를 바꾸려면 값을 바꿔 이 명령을 다시 실행하고 API 서비스의 연결 문자열도 갱신합니다. 마이그레이션 파일에는 비밀번호가 없고, 이미 적용된 `0001`의 `workboard_app`/`workboard_sync` 임시값은 이 단계에서 반드시 바뀝니다. `alter role` 문장은 서버 로그에 비밀번호가 평문으로 남을 수 있으니 Supabase 로그 설정을 확인합니다.
+비밀번호를 바꾸려면 값을 바꿔 이 명령을 다시 실행하고 API 서비스의 연결 문자열도 갱신합니다. 마이그레이션 파일에는 비밀번호가 없고, 이미 적용된 `0001`의 `workboard_app`/`workboard_sync` 임시값은 이 단계에서 반드시 바뀝니다. `alter role` 문장에는 평문 비밀번호 대신 SCRAM-SHA-256 검증값만 실리므로 서버 로그와 `pg_stat_statements`에 비밀번호가 남지 않습니다.
 
 Production에서 API는 시작할 때 자동으로 마이그레이션하지 않습니다. 새 버전을 배포할 때마다 이 명령을 먼저 실행합니다.
 
 ## 4. 기동 점검과 서비스
 
-API는 Development가 아닐 때 시작하면서 다음을 검사하고, 하나라도 어긋나면 이유를 출력하고 시작하지 않습니다.
+Development가 아닌 환경에서 `ASPNETCORE_URLS` 등으로 loopback 밖에 바인딩하면 경고만 남깁니다. API는 시작하면서 다음을 검사하고, 하나라도 어긋나면 이유를 출력하고 시작하지 않습니다.
 
 - `ConnectionStrings:App`/`Sync`가 비밀번호 없음, 기본값(`workboard_app`, `workboard_sync`, `postgres`), 사용자 이름과 같은 비밀번호
 - `Web:BaseUrl`, `Web:AllowedOrigins` 누락 또는 https가 아님(loopback 제외)
@@ -168,7 +172,7 @@ ingress:
 ## Supabase에서 BYPASSRLS
 
 - `workboard_sync`는 테넌트를 가로질러 쓰므로 RLS를 우회해야 합니다. 일반 Postgres에서는 슈퍼유저만 `bypassrls`를 줄 수 있습니다.
-- Supabase의 `postgres`는 슈퍼유저가 아니고(`createrole`은 있음), 이 속성을 줄 수 있는지는 코드로 확인하지 못했습니다. 배포 전 1단계의 SQL로 직접 확인해야 합니다. 되면 추가 작업이 없습니다.
+- Supabase의 `postgres`는 슈퍼유저가 아니고 `createrole`과 `rolbypassrls`를 가집니다. PostgreSQL 16부터는 `createrole` 역할이 자신이 가진 속성(`bypassrls`)을 다른 역할에 줄 수 있으므로 1단계의 `create role ... bypassrls`가 됩니다. 이 저장소의 코드로 Supabase에서 실행해 본 것은 아니므로 1단계의 마지막 `select`가 최종 확인입니다. 되면 추가 작업이 없습니다.
 - 안 되면 대안: `workboard_sync`에 우회 대신 모든 테넌트 테이블에 `create policy sync_all on <table> to workboard_sync using (true) with check (true)`를 거는 마이그레이션을 새 번호로 추가합니다(테이블 목록은 `FORCE ROW LEVEL SECURITY`가 켜진 테이블 전부). 이 경우 `RoleSetup.CheckSyncRoleAsync`의 검사도 함께 바꿔야 합니다. 현재 코드는 이 대안을 구현하지 않았고, `bypassrls`가 없으면 Production 마이그레이션이 실패합니다. RLS를 조용히 끄는 경로는 없습니다.
 
 ## 마이그레이션 역할과 RLS (0015 backfill)

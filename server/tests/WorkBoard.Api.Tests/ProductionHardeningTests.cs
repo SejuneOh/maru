@@ -3,7 +3,9 @@ using Dapper;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using WorkBoard.Api.Features.Members;
@@ -93,6 +95,102 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
         Assert.Empty(Check(new() { ["urls"] = urls }, "Development").Problems);
     }
 
+    [Theory]
+    [InlineData("http_ports", "5080")]
+    [InlineData("HTTPS_PORTS", "5443")]
+    [InlineData("DOTNET_URLS", "http://0.0.0.0:5080")]
+    [InlineData("Kestrel:Endpoints:Web:Url", "http://*:5080")]
+    [InlineData("Kestrel:Endpoints:Web:Url", "https://[::]:5443")]
+    public void Development_refuses_every_kestrel_listen_source(string key, string value)
+    {
+        Assert.NotEmpty(Check(new() { [key] = value }, "Development").Problems);
+    }
+
+    [Fact]
+    public void Development_accepts_loopback_kestrel_endpoint()
+    {
+        Assert.Empty(Check(new() { ["Kestrel:Endpoints:Web:Url"] = "http://localhost:5080" }, "Development").Problems);
+    }
+
+    [Fact]
+    public void Production_warns_about_non_loopback_binding()
+    {
+        var values = Good();
+        values["http_ports"] = "5080";
+
+        Assert.Contains(Check(values).Warnings, w => w.Contains("127.0.0.1"));
+    }
+
+    [Fact]
+    public void Default_passwords_are_matched_without_case_or_padding()
+    {
+        var values = Good();
+        values["ConnectionStrings:App"] = "Host=db;Username=workboard_app;Password=\" WorkBoard_App \"";
+
+        Assert.NotEmpty(Check(values).Problems);
+        Assert.NotEmpty(RoleSetup.ValidatePasswords("  WORKBOARD_APP  ", "a-long-random-sync-secret"));
+    }
+
+    [Fact]
+    public void Skip_setting_from_configuration_is_ignored()
+    {
+        var values = Good();
+        values["ConnectionStrings:App"] = "Host=db;Username=workboard_app;Password=workboard_app";
+        values["Hardening:SkipChecks"] = "true";
+
+        Assert.NotEmpty(Check(values).Problems);
+    }
+
+    [Fact]
+    public void Scram_verifier_has_the_postgres_format_and_a_fresh_salt()
+    {
+        var a = RoleSetup.ScramVerifier("pencil");
+        var b = RoleSetup.ScramVerifier("pencil");
+
+        Assert.Matches(@"^SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}=$", a);
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public void Alter_statement_never_contains_the_password()
+    {
+        const string password = "plain-text-password-123";
+
+        var statement = RoleSetup.AlterPasswordStatement("workboard_app", RoleSetup.ScramVerifier(password));
+
+        Assert.DoesNotContain(password, statement);
+        Assert.StartsWith("alter role \"workboard_app\" password 'SCRAM-SHA-256$4096:", statement);
+    }
+
+    [DbFact]
+    public async Task Role_can_log_in_with_the_password_set_through_a_verifier()
+    {
+        var role = "wb_scram_" + Guid.NewGuid().ToString("N")[..8];
+        var admin = Environment.GetEnvironmentVariable("ConnectionStrings__Migrate")!;
+        const string password = "plain-text-password-123";
+        await using (var conn = new NpgsqlConnection(admin))
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync($"create role {role} login");
+            try
+            {
+                await RoleSetup.SetRolePasswordAsync(conn, role, password);
+                var login = new NpgsqlConnectionStringBuilder(admin) { Username = role, Password = password, Pooling = false };
+                await using var good = new NpgsqlConnection(login.ConnectionString);
+                await good.OpenAsync();
+                Assert.Equal(role, await good.ExecuteScalarAsync<string>("select current_user"));
+
+                login.Password = "wrong-password-123456";
+                await using var bad = new NpgsqlConnection(login.ConnectionString);
+                await Assert.ThrowsAsync<PostgresException>(() => bad.OpenAsync());
+            }
+            finally
+            {
+                await conn.ExecuteAsync($"drop role {role}");
+            }
+        }
+    }
+
     [Fact]
     public void Role_passwords_must_be_set_long_and_distinct()
     {
@@ -121,6 +219,7 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
             builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(config));
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<StartupGuardBypass>();
                 services.AddSingleton<IAppConnectionFactory>(new RecordingConnectionFactory());
                 services.AddSingleton<IMemberLookup>(new AnyMember());
             });
@@ -133,7 +232,6 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
             ["Auth:Supabase:Url"] = "https://test-project.supabase.example",
             ["Auth:Supabase:ServiceRoleKey"] = "test-service-role-key",
             ["Auth:Supabase:JwtSecret"] = "",
-            [StartupGuard.SkipKey] = "false",
         };
         foreach (var (k, v) in extra)
             values[k] = v;
@@ -243,7 +341,13 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
         await using (conn)
         {
             await conn.ExecuteAsync(InsertAudit, new { tid = t.Id, member = (Guid?)mine }, tx);
-            await conn.ExecuteAsync(InsertAudit, new { tid = t.Id, member = (Guid?)null }, tx);
+            var system = await Assert.ThrowsAsync<PostgresException>(
+                () => conn.ExecuteAsync(InsertAudit, new { tid = t.Id, member = (Guid?)null }, tx));
+            Assert.Equal("42501", system.SqlState);
+        }
+        (conn, tx) = await OpenAppAsync(t.Id, mine);
+        await using (conn)
+        {
             var forged = await Assert.ThrowsAsync<PostgresException>(
                 () => conn.ExecuteAsync(InsertAudit, new { tid = t.Id, member = (Guid?)other }, tx));
             Assert.Equal("42501", forged.SqlState);

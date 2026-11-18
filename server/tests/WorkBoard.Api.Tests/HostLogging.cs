@@ -14,8 +14,13 @@ public sealed class HostLogging : IHostingStartup
     private static readonly object Gate = new();
     public static readonly string LogPath = Path.Combine(AppContext.BaseDirectory, "host-errors.log");
 
+    // Production-mode test hosts use the local default role passwords; the guard has its own tests, which remove this.
     public void Configure(IWebHostBuilder builder) =>
-        builder.ConfigureServices(services => services.AddLogging(logging => logging.AddProvider(new FileProvider())));
+        builder.ConfigureServices(services =>
+        {
+            services.AddLogging(logging => logging.AddProvider(new FileProvider()));
+            services.AddSingleton<WorkBoard.Api.Infrastructure.Hardening.StartupGuardBypass>();
+        });
 
     private sealed class FileProvider : ILoggerProvider
     {

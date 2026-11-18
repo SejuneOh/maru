@@ -7,28 +7,40 @@ namespace WorkBoard.Api.Infrastructure.Hardening;
 
 public sealed record GuardResult(IReadOnlyList<string> Problems, IReadOnlyList<string> Warnings);
 
+// Registered only by the test assembly. Production checks are skipped when it is in the container; no setting,
+// environment variable or appsettings value can turn them off.
+public sealed class StartupGuardBypass;
+
 // Refuses to start with settings that are only acceptable on a developer machine, or that leave the deployment
-// half-configured. Hardening:SkipChecks exists for the test hosts and must never be set on a deployment.
+// half-configured.
 public static class StartupGuard
 {
-    public const string SkipKey = "Hardening:SkipChecks";
     public const string AllowDevOnNetworkKey = "Hardening:AllowDevOnNetwork";
 
     public static readonly string[] DefaultPasswords = ["workboard_app", "workboard_sync", "postgres"];
 
-    public static GuardResult Check(IConfiguration config, IHostEnvironment env)
+    public static bool IsDefaultPassword(string? password) =>
+        password is not null && DefaultPasswords.Contains(password.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    public static GuardResult Check(IConfiguration config, IHostEnvironment env, bool bypassProduction = false)
     {
         var problems = new List<string>();
         var warnings = new List<string>();
 
         if (env.IsDevelopment())
         {
-            CheckDevelopmentBinding(config, problems);
+            if (!config.GetValue<bool>(AllowDevOnNetworkKey))
+                foreach (var binding in NonLoopbackBindings(config))
+                    problems.Add(
+                        $"Development mode (X-Dev-User sign-in) must not listen on {binding}. Bind to localhost, or run with ASPNETCORE_ENVIRONMENT=Production.");
             return new GuardResult(problems, warnings);
         }
 
-        if (config.GetValue<bool>(SkipKey))
-            return new GuardResult([], [$"{SkipKey} is set: production checks are skipped."]);
+        foreach (var binding in NonLoopbackBindings(config))
+            warnings.Add($"The API listens on {binding}. The Cloudflare tunnel only needs http://127.0.0.1:<port>.");
+
+        if (bypassProduction)
+            return new GuardResult([], warnings);
 
         CheckRolePasswords(config, problems);
         CheckWeb(config, problems);
@@ -36,19 +48,26 @@ public static class StartupGuard
         return new GuardResult(problems, warnings);
     }
 
-    // The dev identity header trusts the caller, so a Development host must stay on this machine.
-    private static void CheckDevelopmentBinding(IConfiguration config, List<string> problems)
+    // Every place Kestrel reads listen addresses from: urls (ASPNETCORE_URLS), http_ports / https_ports
+    // (ASPNETCORE_HTTP_PORTS, which bind all interfaces), and Kestrel:Endpoints:*:Url.
+    public static IReadOnlyList<string> NonLoopbackBindings(IConfiguration config)
     {
-        if (config.GetValue<bool>(AllowDevOnNetworkKey))
-            return;
-        var urls = config["urls"] ?? "";
-        foreach (var url in urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var host = HostOf(url);
-            if (host is not ("localhost" or "127.0.0.1" or "[::1]"))
-                problems.Add(
-                    $"Development mode (X-Dev-User sign-in) must not listen on '{url}'. Bind to localhost, or run with ASPNETCORE_ENVIRONMENT=Production.");
-        }
+        var found = new List<string>();
+        foreach (var key in new[] { "urls", "DOTNET_URLS" })
+            AddUrls(found, config[key]);
+        foreach (var key in new[] { "http_ports", "https_ports" })
+            if (!string.IsNullOrWhiteSpace(config[key]))
+                found.Add($"every interface ({key}={config[key]})");
+        foreach (var endpoint in config.GetSection("Kestrel:Endpoints").GetChildren())
+            AddUrls(found, endpoint["Url"]);
+        return found;
+    }
+
+    private static void AddUrls(List<string> found, string? urls)
+    {
+        foreach (var url in (urls ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (HostOf(url) is not ("localhost" or "127.0.0.1" or "[::1]"))
+                found.Add($"'{url}'");
     }
 
     // `http://*:5080` and `http://+:5080` are not valid URIs but bind every interface.
@@ -84,8 +103,8 @@ public static class StartupGuard
             }
             var password = builder.Password;
             if (string.IsNullOrEmpty(password)
-                || DefaultPasswords.Contains(password, StringComparer.Ordinal)
-                || string.Equals(password, builder.Username, StringComparison.Ordinal))
+                || IsDefaultPassword(password)
+                || string.Equals(password.Trim(), builder.Username, StringComparison.OrdinalIgnoreCase))
                 problems.Add(
                     $"ConnectionStrings:{name} uses a default or empty password. Set a real role password (docs/deploy.md, 'Role passwords').");
         }
@@ -147,11 +166,12 @@ public static class StartupGuard
         Path.IsPathRooted(path) ? path : Path.Combine(env.ContentRootPath, path);
 }
 
-public sealed class StartupGuardService(IConfiguration config, IHostEnvironment env, ILogger<StartupGuardService> logger) : IHostedService
+public sealed class StartupGuardService(
+    IConfiguration config, IHostEnvironment env, ILogger<StartupGuardService> logger, IServiceProvider services) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var result = StartupGuard.Check(config, env);
+        var result = StartupGuard.Check(config, env, services.GetService<StartupGuardBypass>() is not null);
         foreach (var warning in result.Warnings)
             logger.LogWarning("{Warning}", warning);
         if (result.Problems.Count > 0)
