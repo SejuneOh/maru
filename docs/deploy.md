@@ -133,10 +133,10 @@ ingress:
 
 ### 도메인이 없을 때: quick tunnel + workers.dev Worker
 
-named tunnel은 Cloudflare에 연결된 도메인이 있어야 합니다. 도메인이 없으면 quick tunnel(`<무작위>.trycloudflare.com`)을 쓰는데, 이 주소는 켤 때마다 바뀝니다. 그래서 고정 주소인 workers.dev에 Worker(`deploy/api-proxy`)를 두고 Worker가 현재 터널로 요청을 넘깁니다. 웹, CORS, GitHub 웹훅은 Worker 주소만 씁니다.
+named tunnel은 Cloudflare에 연결된 도메인이 있어야 합니다. 도메인이 없으면 quick tunnel(`<무작위>.trycloudflare.com`)을 쓰는데, 이 주소는 켤 때마다 바뀝니다. 그래서 고정 주소인 workers.dev에 Worker(`deploy/api-proxy`)를 두고 Worker가 현재 터널로 요청을 넘깁니다. 웹의 `NEXT_PUBLIC_API_URL`과 GitHub 웹훅은 Worker 주소를 씁니다. CORS 허용 출처(`Web__AllowedOrigins__0`)는 그대로 Pages 주소입니다.
 
 1. 한 번만: `npx wrangler@4 login`, 그다음 `npx wrangler@4 deploy --config deploy/api-proxy/wrangler.toml`. 출력된 `https://work-board-api.<계정>.workers.dev`가 API 주소입니다. 아래 6, 7, 8장의 `https://api.example.com` 자리에 이 주소를 씁니다.
-2. API를 켠 뒤 `scripts/api-tunnel.sh`를 실행합니다. quick tunnel을 열고 새 주소를 Worker의 `UPSTREAM` 값에 넣습니다. 터널이 끝날 때까지 실행 상태로 둡니다(systemd 사용자 서비스로 등록 가능).
+2. API를 켠 뒤 `scripts/api-tunnel.sh`를 실행합니다. quick tunnel을 열고 새 주소를 Worker의 `UPSTREAM` 값에 넣습니다. 터널이 끝날 때까지 실행 상태로 둡니다(systemd 사용자 서비스로 등록 가능). Cloudflare 계정이 여러 개면 `CLOUDFLARE_ACCOUNT_ID`를 지정해야 비대화형 `wrangler secret put`이 실패하지 않습니다.
 3. 터널이 꺼져 있으면 Worker는 `503 {"error":"api_offline"}`을 돌려줍니다. Worker는 `/api/` 경로만 넘깁니다.
 
 quick tunnel은 Cloudflare가 시험용으로 안내하는 기능이라 가동 보장이 없고 동시 요청 수에 제한이 있습니다. 소수 인원 사용을 넘으면 도메인을 연결해 named tunnel로 옮깁니다.
