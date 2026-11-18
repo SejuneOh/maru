@@ -34,6 +34,30 @@ cd server && WORKBOARD_TEST_DB=1 dotnet test
 
 PR과 `dev`·`main` push마다 GitHub Actions(`ci`)가 같은 확인(web 린트·타입 검사·빌드, server 빌드·DB 테스트)을 돌립니다. 자세한 내용은 [CONTRIBUTING.md](CONTRIBUTING.md)의 "CI"에 있습니다.
 
+### 테스트 DB
+
+통합 테스트는 개발용 DB와 따로 전용 DB를 쓰는 편이 안전합니다. 테스트가 만드는 임시 테넌트는 끝나면 지우지만, 시작할 때 마이그레이션과 샘플 데이터를 적용합니다.
+
+```bash
+# 예: 5438 포트의 전용 DB (docker-compose.yml의 5434 매핑을 덮어씀)
+printf 'services:\n  db:\n    ports: !override\n      - "5438:5432"\n' > /tmp/override.yml
+docker compose -p wbtest -f docker-compose.yml -f /tmp/override.yml up -d --wait
+
+H="Host=localhost;Port=5438;Database=workboard"
+cd server
+WORKBOARD_TEST_DB=1 \
+ConnectionStrings__App="$H;Username=workboard_app;Password=workboard_app" \
+ConnectionStrings__Sync="$H;Username=workboard_sync;Password=workboard_sync" \
+ConnectionStrings__Migrate="$H;Username=postgres;Password=postgres" \
+dotnet test
+```
+
+- `WORKBOARD_TEST_DB`가 비어 있으면 DB 테스트는 건너뜁니다. 연결 문자열 환경 변수를 생략하면 5434 포트의 개발용 DB를 씁니다.
+- 테스트가 시작될 때 마이그레이션을 한 번 먼저 적용하므로 새 DB에서도 첫 실행이 통과합니다(`workboard_app`, `workboard_sync` 역할은 마이그레이션 0001이 만듭니다).
+- `Migrate` 연결은 스키마 소유자(`postgres`)여야 하고, `MigratorTests`와 웹훅 간격 테스트가 이 연결로 임시 DB를 만들고 지우므로 `CREATEDB` 권한이 필요합니다.
+- Postgres 기본 `max_connections=100`으로 통과합니다. 테스트는 `App`/`Sync` 연결 풀을 풀당 3개, 유휴 3초로 줄이고 xUnit 병렬을 4로 제한합니다(`TestEnvironment.cs`, `xunit.runner.json`). 최대 연결 수는 약 45개입니다.
+- 테스트 호스트의 서버 오류는 `server/tests/WorkBoard.Api.Tests/bin/Debug/net10.0/host-errors.log`에 쌓입니다. 500이 나는 테스트가 있으면 여기서 예외를 확인합니다.
+
 DB 포트는 다른 프로젝트와 겹치지 않도록 5434를 씁니다.
 `docker-compose.yml`, `db/migrations/0001_baseline.sql`, `appsettings.Development.json`의 비밀번호는 로컬 개발 전용 값입니다. 배포 환경에 그대로 쓰지 마세요. `X-Dev-User` 헤더 인증도 Development 환경에서만 켜집니다.
 
