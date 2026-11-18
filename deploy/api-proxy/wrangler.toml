@@ -1,0 +1,6 @@
+# Deploy: npx wrangler@4 deploy --config deploy/api-proxy/wrangler.toml
+# UPSTREAM is set by scripts/api-tunnel.sh (wrangler secret put), not here.
+name = "maru-api"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
