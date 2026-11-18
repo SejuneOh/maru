@@ -45,6 +45,8 @@ jobs:
     env:
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      # Each test starts its own host; config file watchers would exhaust the runner's inotify limit (128).
+      DOTNET_hostBuilder__reloadConfigOnChange: "false"
       WORKBOARD_TEST_DB: "1"
       ConnectionStrings__App: Host=localhost;Port=5432;Database=workboard;Username=workboard_app;Password=workboard_app
       ConnectionStrings__Sync: Host=localhost;Port=5432;Database=workboard;Username=workboard_sync;Password=workboard_sync
