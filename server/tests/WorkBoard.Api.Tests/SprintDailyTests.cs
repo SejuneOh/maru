@@ -212,7 +212,7 @@ public class SprintDailyTests(WebApplicationFactory<Program> factory) : IClassFi
         await SyncStateAsync(t, issue, "open", "reopened");
 
         var events = await t.QueryAsync(
-            "select kind, from_value, to_value, member_id from issue_events where issue_id = @issue order by at, kind desc", new { issue });
+            "select kind, from_value, to_value, member_id from issue_events where issue_id = @issue order by seq", new { issue });
         Assert.Equal(["closed:>completed", "reopened:completed>reopened"], events.Select(e => $"{e.kind}:{e.from_value}>{e.to_value}"));
         Assert.All(events, e => Assert.Null((Guid?)e.member_id));
     }
@@ -250,7 +250,7 @@ public class SprintDailyTests(WebApplicationFactory<Program> factory) : IClassFi
         await Recorder.RecordAsync(Recorder.Today, default, t.Id);
 
         var events = await t.QueryAsync(
-            "select kind, from_value, to_value from issue_events where issue_id = @issue and kind = 'closed' order by at", new { issue = issues[0] });
+            "select kind, from_value, to_value from issue_events where issue_id = @issue and kind = 'closed' order by seq", new { issue = issues[0] });
         Assert.Equal(["closed:>completed", "closed:completed>not_planned"], events.Select(e => $"{e.kind}:{e.from_value}>{e.to_value}"));
         var expected = await ReconstructAsync(t, sprint);
         Assert.Equal(new Daily(2, 4, 0, 0), expected);
