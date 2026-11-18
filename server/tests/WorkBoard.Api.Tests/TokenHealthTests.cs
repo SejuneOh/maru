@@ -106,9 +106,9 @@ public class TokenHealthTests : IClassFixture<WebApplicationFactory<Program>>
     [DbFact]
     public async Task Connections_list_warns_from_seven_days_before_expiry()
     {
-        var soon = await SetupAsync(DateTimeOffset.UtcNow.AddDays(5));
+        var soon = await SetupAsync(DateTimeOffset.UtcNow.AddDays(4.5));
         await using var _ = soon;
-        var later = await SetupAsync(DateTimeOffset.UtcNow.AddDays(30));
+        var later = await SetupAsync(DateTimeOffset.UtcNow.AddDays(29.5));
         await using var __ = later;
         var never = await SetupAsync();
         await using var ___ = never;
