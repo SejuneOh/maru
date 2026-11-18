@@ -41,7 +41,7 @@ public static class TenantsEndpoints
 
             var key = http.Request.Headers[Idempotency.HeaderName].ToString();
             if (key.Length > Idempotency.KeyMaxLength)
-                return Error(StatusCodes.Status400BadRequest, "invalid_request");
+                return Error(StatusCodes.Status400BadRequest, ApiErrors.InvalidRequest);
 
             return await CreateAsync(sync, name, profile, key, ct);
         });

@@ -35,16 +35,19 @@ public sealed class IdempotencyCleaner(
         var retention = options.Value.IdempotencyRetention;
         await using var conn = await sync.OpenConnectionAsync(ct);
         var total = 0;
-        int deleted;
-        do
+        foreach (var table in new[] { "idempotency_keys", "tenant_create_keys" })
         {
-            deleted = await conn.ExecuteAsync(new CommandDefinition("""
-                delete from idempotency_keys
-                 where ctid in (select ctid from idempotency_keys where created_at < now() - @retention limit @batch)
-                """, new { retention, batch = BatchSize }, cancellationToken: ct));
-            total += deleted;
+            int deleted;
+            do
+            {
+                deleted = await conn.ExecuteAsync(new CommandDefinition($"""
+                    delete from {table}
+                     where ctid in (select ctid from {table} where created_at < now() - @retention limit @batch)
+                    """, new { retention, batch = BatchSize }, cancellationToken: ct));
+                total += deleted;
+            }
+            while (deleted == BatchSize);
         }
-        while (deleted == BatchSize);
         return total;
     }
 }
