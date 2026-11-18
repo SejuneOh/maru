@@ -12,6 +12,10 @@ RUN dotnet publish server/src/WorkBoard.Api/WorkBoard.Api.csproj -c Release -o /
     && rm -f /app/appsettings.Development.json /app/appsettings.Local*.json
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# Npgsql probes GSSAPI encryption on connect and logs an error when the library is missing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
 ENV ASPNETCORE_ENVIRONMENT=Production \
