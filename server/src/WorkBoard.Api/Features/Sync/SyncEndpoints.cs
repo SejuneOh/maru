@@ -1,0 +1,109 @@
+using Dapper;
+using Microsoft.Extensions.Options;
+using Npgsql;
+using WorkBoard.Api.Infrastructure.GitHub;
+using WorkBoard.Api.Infrastructure.Identity;
+using WorkBoard.Api.Infrastructure.Sync;
+
+namespace WorkBoard.Api.Features.Sync;
+
+public sealed record SyncStatus(
+    bool Connected,
+    bool Running,
+    DateTime? LastSyncedAt,
+    string? LastResult,
+    string? LastError,
+    int? RateLimitRemaining,
+    DateTimeOffset? NextRunAt,
+    IReadOnlyList<TokenHealthStatus> Tokens);
+
+// One row per active token connection; empty when the company has none. Fields read like those of GET /api/connections.
+public sealed record TokenHealthStatus(
+    Guid ConnectionId,
+    string AccountLogin,
+    string? TokenOwnerLogin,
+    string TokenStatus,
+    DateTime? TokenExpiresAt,
+    bool TokenExpiresSoon,
+    int? TokenDaysLeft,
+    DateTime? SyncPausedUntil);
+
+public sealed record SyncStarted(bool Started);
+
+public static class SyncEndpoints
+{
+    private sealed record LastRun(string Status, string? Error, int? RateLimitRemaining);
+
+    public static void MapSync(this RouteGroupBuilder api)
+    {
+        api.MapGet("/sync/status", StatusAsync);
+        api.MapPost("/sync/run", RunAsync);
+    }
+
+    // sync_runs is not readable by the app role, so these reads go through the sync role with an explicit tenant filter.
+    private static async Task<IResult> StatusAsync(
+        ICurrentUser user, SyncRunner runner, [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync, CancellationToken ct)
+    {
+        var tenantId = user.Identity.TenantId;
+        await using var conn = await sync.OpenConnectionAsync(ct);
+        if (!await ConnectedAsync(conn, tenantId, ct))
+            return Results.Ok(new SyncStatus(false, false, null, null, null, null, null, []));
+
+        var lastSyncedAt = await conn.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
+            "select max(last_synced_at) from repositories where tenant_id = @tenantId", new { tenantId }, cancellationToken: ct));
+        var last = await conn.QuerySingleOrDefaultAsync<LastRun>(new CommandDefinition("""
+            select status, error, rate_limit_remaining from sync_runs
+             where tenant_id = @tenantId and finished_at is not null
+             order by started_at desc limit 1
+            """, new { tenantId }, cancellationToken: ct));
+
+        var tokens = (await conn.QueryAsync<TokenHealthStatus>(new CommandDefinition("""
+            select c.id as ConnectionId, c.account_login as AccountLogin, k.owner_login as TokenOwnerLogin,
+                   case when k.status is null then 'token_required'
+                        when k.status in ('active', 'invalid') and k.expires_at <= now() then 'expired'
+                        else k.status end as TokenStatus,
+                   k.expires_at as TokenExpiresAt,
+                   coalesce(k.status = 'active' and k.expires_at > now() and k.expires_at <= now() + interval '7 days', false) as TokenExpiresSoon,
+                   case when k.status = 'active' and k.expires_at is not null
+                        then greatest(0, ceil(extract(epoch from (k.expires_at - now())) / 86400))::int end as TokenDaysLeft,
+                   case when c.sync_not_before > now() then c.sync_not_before end as SyncPausedUntil
+              from github_connections c
+              left join github_credentials k on k.tenant_id = c.tenant_id and k.connection_id = c.id
+             where c.tenant_id = @tenantId and c.disconnected_at is null and c.auth_kind = 'token'
+             order by c.account_login
+            """, new { tenantId }, cancellationToken: ct))).AsList();
+
+        return Results.Ok(new SyncStatus(
+            true, runner.IsRunning(tenantId), lastSyncedAt, last?.Status, last?.Error, last?.RateLimitRemaining, runner.NextRunAt, tokens));
+    }
+
+    private static async Task<IResult> RunAsync(
+        ICurrentUser user, IOptions<GitHubAppOptions> app, SyncRunner runner,
+        [FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sync, CancellationToken ct)
+    {
+        var caller = user.Identity;
+        if (caller.Member.Role != "admin")
+            return Error(StatusCodes.Status403Forbidden, "admin_only");
+
+        await using (var conn = await sync.OpenConnectionAsync(ct))
+        {
+            if (!await ConnectedAsync(conn, caller.TenantId, ct))
+                return Error(StatusCodes.Status409Conflict, "not_connected");
+            if (!app.Value.CanReadInstallations && !await ConnectedAsync(conn, caller.TenantId, ct, tokenOnly: true))
+                return Error(StatusCodes.Status503ServiceUnavailable, "github_app_not_configured");
+        }
+
+        return runner.TryStart(caller.TenantId) is null
+            ? Error(StatusCodes.Status409Conflict, "sync_running")
+            : Results.Json(new SyncStarted(true), statusCode: StatusCodes.Status202Accepted);
+    }
+
+    private static async Task<bool> ConnectedAsync(NpgsqlConnection conn, Guid tenantId, CancellationToken ct, bool tokenOnly = false) =>
+        await conn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            select exists (select 1 from github_connections
+                            where tenant_id = @tenantId and disconnected_at is null
+                              and ((installation_id is not null and not @tokenOnly) or auth_kind = 'token'))
+            """, new { tenantId, tokenOnly }, cancellationToken: ct));
+
+    private static IResult Error(int status, string code) => Results.Json(new ErrorBody(code), statusCode: status);
+}

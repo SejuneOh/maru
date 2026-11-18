@@ -1,0 +1,11 @@
+.claude/
+
+# Local API settings with secrets (copy appsettings.Local.example.json)
+appsettings.Local.json
+
+# GitHub App private keys
+*.pem
+
+# Credential encryption keys (GitHub:Credentials:KeyFile)
+*.keyring.json
+credential-keys*.json

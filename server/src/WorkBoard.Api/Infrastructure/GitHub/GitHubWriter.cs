@@ -1,0 +1,311 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Options;
+
+namespace WorkBoard.Api.Infrastructure.GitHub;
+
+public sealed class GitHubWriter(HttpClient http, IGitHubCredentials credentials, IOptions<GitHubAppOptions> options) : IGitHubWriter
+{
+    private const string ApiBase = "https://api.github.com";
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    public static string Footer(string login) => $"\n\n---\n_작성: `@{login}` (work-board)_";
+
+    public static string CreateMarker(string id) => $"<!-- work-board:create:{id} -->";
+
+    public static string CommentMarker(string id) => $"<!-- work-board:comment:{id} -->";
+
+    public const int LookupPageSize = 100;
+    public const int LookupMaxPages = 5;
+
+    private static string WithFooter(string? body, string login, string? marker = null) =>
+        (body ?? "").TrimEnd() + Footer(login) + (marker is null ? "" : "\n" + marker);
+
+    public async Task<SourceIssue> CreateIssueAsync(
+        GitHubRepoRef repo, string actorLogin, string title, string? body,
+        IReadOnlyList<string> labels, IReadOnlyList<string> assignees, CancellationToken ct, string? marker = null) =>
+        ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Post, IssuesUrl(repo),
+            new { title, body = WithFooter(body, actorLogin, marker), labels, assignees }, ct));
+
+    // Recognises what this connection wrote: the App's bot, or the token owner for a token connection.
+    // Without a Slug or a recorded token owner the connection's own items cannot be told apart, so the answer is unknown.
+    private Func<string?, bool> OwnAuthor(GitHubConnectionRef connection)
+    {
+        if (connection.Kind == GitHubAuthKind.Token)
+            return connection.TokenOwnerLogin is { Length: > 0 } owner
+                ? login => string.Equals(login, owner, StringComparison.OrdinalIgnoreCase)
+                : throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+                    "The token owner is not recorded, so the connection's own items cannot be recognised.");
+        return options.Value.BotLogin is null
+            ? throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+                "GitHub:App:Slug is not set, so the App's own items cannot be recognised.")
+            : options.Value.IsBot;
+    }
+
+    public async Task<SourceIssue?> FindCreatedIssueAsync(
+        GitHubRepoRef repo, string marker, DateTimeOffset since, CancellationToken ct)
+    {
+        var isOwn = OwnAuthor(repo.Connection);
+        for (var page = 1; page <= LookupMaxPages; page++)
+        {
+            var issues = await SendAsync<List<RestIssue>>(repo, HttpMethod.Get,
+                $"{IssuesUrl(repo)}?state=all&sort=created&direction=desc&per_page={LookupPageSize}&page={page}", null, ct);
+            foreach (var issue in issues)
+            {
+                if (issue.CreatedAt < since)
+                    return null;
+                if (issue.Body?.Contains(marker, StringComparison.Ordinal) == true && isOwn(issue.User?.Login))
+                    return ToIssue(issue);
+            }
+            if (issues.Count < LookupPageSize)
+                return null;
+        }
+        throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+            "The issue list is longer than the lookup window, so absence cannot be shown.");
+    }
+
+    public async Task<SourceIssue> SetAssigneesAsync(
+        GitHubRepoRef repo, int number, IReadOnlyList<string> assignees, CancellationToken ct) =>
+        ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Patch, IssueUrl(repo, number), new { assignees }, ct));
+
+    public async Task<SourceComment> AddCommentAsync(
+        GitHubRepoRef repo, string actorLogin, int number, string body, CancellationToken ct, string? marker = null) =>
+        ToComment(await SendAsync<RestComment>(repo, HttpMethod.Post, IssueUrl(repo, number) + "/comments",
+            new { body = WithFooter(body, actorLogin, marker) }, ct), number);
+
+    // GitHub lists an issue's comments oldest first and filters `since` on updated_at, so every page is read.
+    public async Task<SourceComment?> FindCreatedCommentAsync(
+        GitHubRepoRef repo, int number, string marker, DateTimeOffset since, CancellationToken ct)
+    {
+        var isOwn = OwnAuthor(repo.Connection);
+        var from = Uri.EscapeDataString(since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
+        for (var page = 1; page <= LookupMaxPages; page++)
+        {
+            var comments = await SendAsync<List<RestComment>>(repo, HttpMethod.Get,
+                $"{IssueUrl(repo, number)}/comments?since={from}&per_page={LookupPageSize}&page={page}", null, ct);
+            foreach (var c in comments)
+                if (c.Body?.Contains(marker, StringComparison.Ordinal) == true && isOwn(c.User?.Login))
+                    return ToComment(c, number);
+            if (comments.Count < LookupPageSize)
+                return null;
+        }
+        throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable,
+            "The comment list is longer than the lookup window, so absence cannot be shown.");
+    }
+
+    public async Task<SourceIssue> CloseIssueAsync(GitHubRepoRef repo, int number, IssueCloseReason reason, CancellationToken ct) =>
+        ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Patch, IssueUrl(repo, number),
+            new { state = "closed", state_reason = reason == IssueCloseReason.NotPlanned ? "not_planned" : "completed" }, ct));
+
+    public async Task<SourceIssue> ReopenIssueAsync(GitHubRepoRef repo, int number, CancellationToken ct) =>
+        ToIssue(await SendAsync<RestIssue>(repo, HttpMethod.Patch, IssueUrl(repo, number),
+            new { state = "open", state_reason = "reopened" }, ct));
+
+    private static string IssuesUrl(GitHubRepoRef r) =>
+        $"{ApiBase}/repos/{Uri.EscapeDataString(r.Owner)}/{Uri.EscapeDataString(r.Name)}/issues";
+
+    private static string IssueUrl(GitHubRepoRef r, int number) => $"{IssuesUrl(r)}/{number}";
+
+    // ---- transport ---------------------------------------------------------------------------
+
+    private async Task<T> SendAsync<T>(GitHubRepoRef repo, HttpMethod method, string url, object? payload, CancellationToken ct)
+    {
+        var content = payload is null ? null : JsonSerializer.Serialize(payload, Json);
+        for (var attempt = 0; ; attempt++)
+        {
+            string token;
+            try
+            {
+                token = (await credentials.GetAsync(repo.Connection, ct)).Token;
+            }
+            catch (GitHubSourceException e)
+            {
+                throw new GitHubWriteException(
+                    repo.Connection.Kind != GitHubAuthKind.Token ? GitHubWriteErrorKind.Unavailable : e.Kind switch
+                    {
+                        GitHubSourceErrorKind.Unauthorized => GitHubWriteErrorKind.CredentialMissing,
+                        GitHubSourceErrorKind.CredentialRevoked => GitHubWriteErrorKind.CredentialRevoked,
+                        GitHubSourceErrorKind.CredentialInvalid => GitHubWriteErrorKind.CredentialInvalid,
+                        GitHubSourceErrorKind.CredentialExpired => GitHubWriteErrorKind.CredentialExpired,
+                        _ => GitHubWriteErrorKind.Unavailable,
+                    },
+                    "GitHub token request failed.", inner: e);
+            }
+
+            using var request = new HttpRequestMessage(method, url)
+            {
+                Content = content is null ? null : new StringContent(content, Encoding.UTF8, "application/json"),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await http.SendAsync(request, ct);
+            }
+            catch (HttpRequestException e)
+            {
+                throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "GitHub request failed.", noResponse: true, inner: e);
+            }
+            catch (TaskCanceledException e) when (!ct.IsCancellationRequested)
+            {
+                throw new GitHubWriteException(GitHubWriteErrorKind.Unavailable, "GitHub request timed out.", noResponse: true, inner: e);
+            }
+
+            using (response)
+            {
+                if (response.StatusCode == HttpStatusCode.Unauthorized && repo.Connection.Kind == GitHubAuthKind.Token)
+                {
+                    await credentials.ReportRejectedAsync(repo.Connection, token, ct);
+                    throw new GitHubWriteException(GitHubWriteErrorKind.CredentialRevoked, "GitHub rejected the stored token.");
+                }
+                if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+                {
+                    credentials.Invalidate(repo.Connection);
+                    continue;
+                }
+                if (!response.IsSuccessStatusCode)
+                    throw await ToExceptionAsync(response, ct);
+                try
+                {
+                    return await response.Content.ReadFromJsonAsync<T>(Json, ct) ?? throw Malformed(null);
+                }
+                catch (JsonException e)
+                {
+                    throw Malformed(e);
+                }
+            }
+        }
+    }
+
+    // The change was applied; only the answer is unreadable.
+    private static GitHubWriteException Malformed(Exception? inner) =>
+        new(GitHubWriteErrorKind.Unavailable, "GitHub returned an unreadable response.", sideEffectPossible: true, inner: inner);
+
+    private static async Task<GitHubWriteException> ToExceptionAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var code = response.StatusCode;
+        var status = $"GitHub responded with {(int)code}.";
+        var limit = GitHubHttp.ReadRateLimit(response);
+        var exhausted = limit?.Remaining == 0 || response.Headers.RetryAfter is not null;
+
+        if (code == HttpStatusCode.TooManyRequests || (code == HttpStatusCode.Forbidden && exhausted))
+            return new(GitHubWriteErrorKind.Unavailable, "GitHub rate limit reached.");
+        if ((int)code >= 500)
+            return new(GitHubWriteErrorKind.Unavailable, status, sideEffectPossible: true);
+
+        return code switch
+        {
+            HttpStatusCode.Forbidden => await ClassifyForbiddenAsync(response, status, ct),
+            HttpStatusCode.Unauthorized => new(GitHubWriteErrorKind.Unavailable, status),
+            HttpStatusCode.NotFound or HttpStatusCode.Gone => new(GitHubWriteErrorKind.NotFound, status),
+            HttpStatusCode.UnprocessableEntity => new(
+                await MentionsAssigneesAsync(response, ct) ? GitHubWriteErrorKind.AssigneeNotCollaborator : GitHubWriteErrorKind.InvalidRequest,
+                status),
+            _ => new(GitHubWriteErrorKind.InvalidRequest, status),
+        };
+    }
+
+    // Secondary rate limits are 403s, often with requests remaining and no Retry-After, so the message decides.
+    // A message about rate limits is Unavailable; one about a missing permission is NotGranted; any other 403
+    // (blocked, archived repository, SSO) is Unavailable too, because the board cannot fix it and it is not a
+    // missing App permission.
+    private static async Task<GitHubWriteException> ClassifyForbiddenAsync(HttpResponseMessage response, string status, CancellationToken ct)
+    {
+        var message = "";
+        try
+        {
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+                message = m.GetString() ?? "";
+        }
+        catch (JsonException)
+        {
+        }
+
+        if (message.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("abuse", StringComparison.OrdinalIgnoreCase))
+            return new(GitHubWriteErrorKind.Unavailable, "GitHub rate limit reached.");
+        if (message.Contains("not accessible by integration", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("permission", StringComparison.OrdinalIgnoreCase))
+            return new(GitHubWriteErrorKind.NotGranted, status);
+        return new(GitHubWriteErrorKind.Unavailable, status);
+    }
+
+    private static bool Mentions(string? text) => text?.Contains("assignee", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static async Task<bool> MentionsAssigneesAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+                foreach (var e in errors.EnumerateArray())
+                {
+                    if (e.ValueKind == JsonValueKind.String && Mentions(e.GetString()))
+                        return true;
+                    if (e.ValueKind == JsonValueKind.Object
+                        && ((e.TryGetProperty("field", out var f) && Mentions(f.GetString()))
+                            || (e.TryGetProperty("message", out var m) && Mentions(m.GetString()))))
+                        return true;
+                }
+            return root.TryGetProperty("message", out var msg) && Mentions(msg.GetString());
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    // ---- mapping -----------------------------------------------------------------------------
+
+    private static SourceUser? ToUser(RestUser? u) => u is null ? null : new SourceUser(u.Id, u.Login, null, u.AvatarUrl);
+
+    private static SourceIssue ToIssue(RestIssue i) =>
+        new(i.Id, i.NodeId ?? "", i.Number, i.Title, i.Body, i.Type?.Name, i.State, i.StateReason, ToUser(i.User),
+            i.CreatedAt, i.ClosedAt, i.UpdatedAt, i.HtmlUrl ?? "", i.Milestone?.Number,
+            (i.Labels ?? []).Select(l => new SourceLabel(l.Id, l.NodeId, l.Name, l.Color, l.Description)).ToList(),
+            (i.Assignees ?? []).Select(ToUser).OfType<SourceUser>().ToList(),
+            null, null);
+
+    private static SourceComment ToComment(RestComment c, int issueNumber) =>
+        new(c.Id, issueNumber, ToUser(c.User), c.Body ?? "", c.CreatedAt, c.UpdatedAt, c.HtmlUrl);
+
+    // ---- wire types --------------------------------------------------------------------------
+
+    private sealed record RestUser(long Id, string Login, [property: JsonPropertyName("avatar_url")] string? AvatarUrl);
+
+    private sealed record RestLabel(
+        long Id, [property: JsonPropertyName("node_id")] string? NodeId, string Name, string? Color, string? Description);
+
+    private sealed record RestName(string Name);
+
+    private sealed record RestNumber(int Number);
+
+    private sealed record RestIssue(
+        long Id,
+        [property: JsonPropertyName("node_id")] string? NodeId,
+        int Number, string Title, string? Body, string State,
+        [property: JsonPropertyName("state_reason")] string? StateReason,
+        RestUser? User, RestName? Type, RestNumber? Milestone, List<RestLabel>? Labels, List<RestUser>? Assignees,
+        [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+        [property: JsonPropertyName("closed_at")] DateTimeOffset? ClosedAt,
+        [property: JsonPropertyName("updated_at")] DateTimeOffset UpdatedAt,
+        [property: JsonPropertyName("html_url")] string? HtmlUrl);
+
+    private sealed record RestComment(
+        long Id, RestUser? User, string? Body,
+        [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+        [property: JsonPropertyName("updated_at")] DateTimeOffset UpdatedAt,
+        [property: JsonPropertyName("html_url")] string? HtmlUrl);
+}
