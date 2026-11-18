@@ -103,7 +103,7 @@ cp appsettings.Local.example.json appsettings.Local.json   # 값을 채운 뒤 A
 스키마는 `db/migrations/NNNN_이름.sql`에 번호 순서로 쌓입니다. 파일 하나가 트랜잭션 하나이고, 적용 기록은 `schema_migrations` 테이블에 남습니다. 이미 적용한 파일은 고치지 않고(내용이 바뀌면 거부됩니다) 새 번호 파일을 추가합니다. 실패하면 그 파일만 롤백하고 이유를 출력한 채 종료합니다.
 
 - 적용에는 스키마 소유자 연결(`ConnectionStrings:Migrate`)을 씁니다. 로컬 기본값은 `appsettings.Development.json`의 `postgres` 계정입니다. `workboard_app`/`workboard_sync`로는 적용할 수 없습니다.
-- Development의 `dotnet run`은 시작할 때 자동으로 적용합니다. 그 밖의 환경은 배포 때 직접 실행합니다.
+- Development의 `dotnet run`은 시작할 때 자동으로 적용합니다. 그 밖의 환경은 배포 때 직접 실행합니다. 운영 배포 절차(역할 비밀번호 설정, 기동 점검, Supabase, Cloudflare)는 [docs/deploy.md](docs/deploy.md)에 있습니다.
 
 ```bash
 cd server/src/WorkBoard.Api

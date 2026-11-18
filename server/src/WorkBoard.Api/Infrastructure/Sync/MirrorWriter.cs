@@ -185,7 +185,7 @@ public class MirrorWriter([FromKeyedServices(DataKeys.Sync)] NpgsqlDataSource sy
     private sealed class Db(NpgsqlConnection conn, NpgsqlTransaction tx, Guid tenantId, CancellationToken ct)
     {
         public Task SetTenantAsync() =>
-            Exec(TenantDb.SetTenantSql, new { tenantId = tenantId.ToString() }, withTenant: false);
+            Exec(TenantDb.SetTenantSql, new { tenantId = tenantId.ToString(), memberId = (string?)null }, withTenant: false);
 
         public Task<int> Exec(string sql, object? args = null, bool withTenant = true) =>
             conn.ExecuteAsync(new CommandDefinition(sql, Merge(args, withTenant), tx, cancellationToken: ct));

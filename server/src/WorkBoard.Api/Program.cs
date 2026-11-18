@@ -17,7 +17,9 @@ using WorkBoard.Api.Features.Webhooks;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Data.Migrations;
 using WorkBoard.Api.Infrastructure.GitHub;
+using WorkBoard.Api.Infrastructure.Hardening;
 using WorkBoard.Api.Infrastructure.Identity;
+using WorkBoard.Api.Infrastructure.Maintenance;
 using WorkBoard.Api.Infrastructure.Sync;
 
 DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -28,10 +30,13 @@ var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment())
     builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
+// First hosted service, so a bad configuration stops the host before any worker starts.
+builder.Services.AddHostedService<StartupGuardService>();
 builder.Services.AddWorkBoardData(builder.Configuration);
 builder.Services.AddWorkBoardAuth(builder.Configuration);
 builder.Services.AddGitHubApp(builder.Configuration);
 builder.Services.AddWorkBoardSync(builder.Configuration);
+builder.Services.AddWorkBoardMaintenance(builder.Configuration);
 var webOrigins = builder.Configuration.GetSection(WebOptions.Section).Get<WebOptions>()?.Origins ?? WebOptions.DefaultAllowedOrigins;
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(webOrigins)
@@ -47,7 +52,8 @@ if (migrateOnly || app.Environment.IsDevelopment())
     try
     {
         await MigrationRunner.RunAsync(app.Configuration, seedFreshDatabase: app.Environment.IsDevelopment(),
-            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migrations"));
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migrations"),
+            production: !app.Environment.IsDevelopment());
     }
     catch (MigrationException e)
     {
