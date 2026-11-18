@@ -32,6 +32,8 @@ cd web && pnpm install && pnpm dev
 cd server && WORKBOARD_TEST_DB=1 dotnet test
 ```
 
+PR과 `dev`·`main` push마다 GitHub Actions(`ci`)가 같은 확인(web 린트·타입 검사·빌드, server 빌드·DB 테스트)을 돌립니다. 자세한 내용은 [CONTRIBUTING.md](CONTRIBUTING.md)의 "CI"에 있습니다.
+
 DB 포트는 다른 프로젝트와 겹치지 않도록 5434를 씁니다.
 `docker-compose.yml`, `db/migrations/0001_baseline.sql`, `appsettings.Development.json`의 비밀번호는 로컬 개발 전용 값입니다. 배포 환경에 그대로 쓰지 마세요. `X-Dev-User` 헤더 인증도 Development 환경에서만 켜집니다.
 

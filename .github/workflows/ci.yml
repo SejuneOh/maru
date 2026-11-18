@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      WORKBOARD_TEST_DB: "1"
+      ConnectionStrings__App: Host=localhost;Port=5432;Database=workboard;Username=workboard_app;Password=workboard_app
+      ConnectionStrings__Sync: Host=localhost;Port=5432;Database=workboard;Username=workboard_sync;Password=workboard_sync
+      ConnectionStrings__Migrate: Host=localhost;Port=5432;Database=workboard;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same image as docker-compose.yml. Started with docker run because service containers cannot pass -c flags.
+      - name: Start Postgres
+        working-directory: .
+        run: |
+          docker run -d --name workboard-ci-db -p 5432:5432 \
+            -e POSTGRES_DB=workboard -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+            postgres:17 -c max_connections=300
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: server/**/*.csproj
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore
+
+      - name: Wait for Postgres
+        run: |
+          for _ in $(seq 1 30); do
+            if docker exec workboard-ci-db pg_isready -h 127.0.0.1 -p 5432 -U postgres -d workboard; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs workboard-ci-db
+          exit 1
+
+      - name: Test
+        run: dotnet test --no-build --logger trx --results-directory TestResults
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-test-results
+          path: server/TestResults/*.trx
+          if-no-files-found: ignore
