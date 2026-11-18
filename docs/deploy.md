@@ -107,6 +107,8 @@ Development로 실행 중인 API는 `localhost` 밖에 바인딩하면 시작하
 2. `api`: Render Deploy Hook 호출(마이그레이션이 끝난 뒤에만)
 3. `web`: 운영 값으로 웹을 빌드하고, 결과물이 운영 Supabase와 API를 가리키는지 확인한 뒤 Pages에 올림
 
+Deploy Hook은 배포를 Render 대기열에 넣고 바로 돌아오므로, 웹이 새 API보다 먼저 올라갈 수 있고 Render 빌드가 실패해도 워크플로는 성공으로 끝납니다. API를 바꾸는 변경은 이전 웹과도 동작하게 만들고, 배포 뒤 Render Dashboard의 Events에서 결과를 확인합니다.
+
 저장소 Settings → Environments → `production`에 넣을 값:
 
 | 종류 | 이름 | 값 |

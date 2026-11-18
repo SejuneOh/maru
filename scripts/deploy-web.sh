@@ -13,13 +13,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WEB="$ROOT/web"
 
 [ -f "$ENV_FILE" ] || { echo "env file not found: $ENV_FILE" >&2; exit 1; }
-value() { grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2-; }
+value() { { grep -E "^$1=" "$ENV_FILE" || true; } | head -1 | cut -d= -f2- | tr -d '\r'; }
 SUPABASE_URL="$(value NEXT_PUBLIC_SUPABASE_URL)"
 API_URL="$(value NEXT_PUBLIC_API_URL)"
 [ -n "$SUPABASE_URL" ] && [ -n "$API_URL" ] && [ -n "$(value NEXT_PUBLIC_SUPABASE_ANON_KEY)" ] \
   || { echo "NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and NEXT_PUBLIC_API_URL are required" >&2; exit 1; }
 
 cd "$WEB"
+if [ -e .env.local.deploy-hold ]; then
+  echo "web/.env.local.deploy-hold exists from an earlier run; restore or remove it first" >&2
+  exit 1
+fi
 if [ -e .env.local ]; then
   mv .env.local .env.local.deploy-hold
   trap 'mv .env.local.deploy-hold .env.local' EXIT

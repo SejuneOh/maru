@@ -13,7 +13,7 @@ if len(sys.argv) < 3:
 env = dict(os.environ)
 with open(sys.argv[1], encoding="utf-8") as f:
     for line in f:
-        line = line.rstrip("\n")
+        line = line.rstrip("\r\n")
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         key, sep, value = line.partition("=")

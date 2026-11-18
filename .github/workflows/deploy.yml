@@ -46,7 +46,7 @@ jobs:
       - name: Trigger Render deploy
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: curl -fsS -X POST "$HOOK?ref=${GITHUB_SHA}" > /dev/null
+        run: curl -fsS -X POST "${HOOK}&ref=${GITHUB_SHA}" > /dev/null
 
   web:
     needs: migrate
@@ -78,6 +78,7 @@ jobs:
 
       - name: Check the bundle points at production
         run: |
+          [ -n "$NEXT_PUBLIC_API_URL" ] && [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ]
           grep -rqF "${NEXT_PUBLIC_SUPABASE_URL#https://}" out/_next/static
           grep -rqF "${NEXT_PUBLIC_API_URL#https://}" out/_next/static
           ! grep -rqE 'localhost:5080' out/_next/static

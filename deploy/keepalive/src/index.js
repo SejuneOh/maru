@@ -3,6 +3,10 @@
 
 export default {
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(fetch(`${env.TARGET}/api/health`, { headers: { "user-agent": "maru-keepalive" } }));
+    ctx.waitUntil(
+      fetch(`${env.TARGET}/api/health`, { headers: { "user-agent": "maru-keepalive" } })
+        .then((res) => { if (!res.ok) console.log(`health ${res.status}`); })
+        .catch((err) => console.log(`health failed: ${err}`)),
+    );
   },
 };
