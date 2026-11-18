@@ -1,6 +1,8 @@
-# work-board
+# Maru (마루)
 
 팀 업무 보드. GitHub 이슈·PR·댓글과 회의록을 한 화면에 모아 "누가, 어느 프로젝트에서, 무엇을, 어디까지 했는지"를 보여 줍니다.
+
+코드 안의 이름(`WorkBoard.Api`, DB 역할 `workboard_*`)은 예전 이름 work-board를 그대로 씁니다.
 
 ## 구성 (로컬 개발)
 
