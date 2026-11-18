@@ -60,11 +60,8 @@ public class InvitationBearerTests
         });
     }
 
-    [DbFact]
-    public async Task Joins_by_github_id_after_a_rename_and_a_login_match_alone_is_refused()
-    {
-        var source = new FakeSource();
-        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private static WebApplicationFactory<Program> BearerFactory(FakeSource source) =>
+        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Production");
             builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
@@ -86,6 +83,12 @@ public class InvitationBearerTests
                 });
             });
         });
+
+    [DbFact]
+    public async Task Joins_by_github_id_after_a_rename_and_a_login_match_alone_is_refused()
+    {
+        var source = new FakeSource();
+        await using var factory = BearerFactory(source);
         await using var t = await TestTenant.CreateAsync(factory);
         var invitedId = TestTenant.NextId();
         var token = Invitations.NewToken();
@@ -117,5 +120,34 @@ public class InvitationBearerTests
         Assert.Equal(invitedId, member.GetProperty("githubUserId").GetInt64());
         Assert.Equal("renamed-" + invitedId, member.GetProperty("githubLogin").GetString());
         Assert.Equal("Renamed", member.GetProperty("displayName").GetString());
+    }
+
+    [DbFact]
+    public async Task A_new_person_can_join_with_the_login_a_departed_member_left_behind()
+    {
+        var source = new FakeSource();
+        await using var factory = BearerFactory(source);
+        await using var t = await TestTenant.CreateAsync(factory);
+        var (oldLogin, _) = await t.AddMemberAsync("reused");
+        await t.ExecAsync("update members set left_at = now() where tenant_id = @tid and github_login = @oldLogin", new { tid = t.Id, oldLogin });
+        var newcomerId = TestTenant.NextId();
+        var token = Invitations.NewToken();
+        await t.ExecAsync("""
+            insert into invitations (tenant_id, github_user_id, github_login, token_hash, expires_at)
+            values (@tid, @newcomerId, @oldLogin, @hash, now() + interval '1 day')
+            """, new { tid = t.Id, newcomerId, oldLogin, hash = Invitations.HashToken(token) });
+        var sub = Guid.NewGuid();
+        source.Profiles[sub] = new GithubProfile(newcomerId, oldLogin, null, null);
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/invitations/accept") { Content = JsonContent.Create(new { token }) };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + Token(sub));
+
+        var joined = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, joined.StatusCode);
+        Assert.Equal(2, await t.ScalarAsync<int>(
+            "select count(*)::int from members where tenant_id = @tid and github_login = @oldLogin", new { tid = t.Id, oldLogin }));
+        Assert.Equal(1, await t.ScalarAsync<int>(
+            "select count(*)::int from members where tenant_id = @tid and github_login = @oldLogin and left_at is null", new { tid = t.Id, oldLogin }));
     }
 }

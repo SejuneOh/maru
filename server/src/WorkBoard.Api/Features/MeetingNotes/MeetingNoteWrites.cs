@@ -17,6 +17,10 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
     // died with an unknown outcome can be removed once its claim is stale.
     private sealed record ExistingItem(Guid Id, bool Linked);
 
+    private sealed record MemberState(Guid Id, bool Left);
+
+    private sealed record ItemAssignee(Guid Id, Guid? Assignee);
+
     private static WriteResult Error(int status, string code) => new(status, new ErrorBody(code));
 
     private static WriteResult Invalid() => Error(StatusCodes.Status400BadRequest, ApiErrors.InvalidRequest);
@@ -28,7 +32,7 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
     {
         if (wantedId is { } wanted && await ExistingAsync(s, wanted) is { } existing)
             return existing;
-        if (!await ReferencesExistAsync(s, v))
+        if (!await ReferencesExistAsync(s, v, null))
             return Invalid();
 
         var inserted = await s.QuerySingleOrDefaultAsync<Guid?>("""
@@ -59,7 +63,7 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
             return Error(StatusCodes.Status404NotFound, ApiErrors.NotFound);
         if (head.UpdatedAt != expectedUpdatedAt.UtcDateTime)
             return Error(StatusCodes.Status409Conflict, ApiErrors.Conflict);
-        if (!await ReferencesExistAsync(s, v))
+        if (!await ReferencesExistAsync(s, v, id))
             return Invalid();
 
         var existing = await s.QueryAsync<ExistingItem>(
@@ -142,17 +146,35 @@ public sealed class MeetingNoteWrites(ICurrentUser user, IAuditLog audit)
             "select id, created_by, updated_at from meeting_notes where id = @id for update", new { id });
 
     // Row security hides other tenants' rows, so a count short of the ids means an id outside the caller's tenant.
-    private static async Task<bool> ReferencesExistAsync(TenantSession s, MeetingNoteValues v)
+    // A member who left (left_at) can only stay where the stored note already has them: as an attendee, or as the
+    // assignee of the same action item. noteId is null for a new note.
+    private static async Task<bool> ReferencesExistAsync(TenantSession s, MeetingNoteValues v, Guid? noteId)
     {
         var memberIds = v.AttendeeIds
             .Concat(v.ActionItems.Where(i => i.AssigneeId is not null).Select(i => i.AssigneeId!.Value))
             .Distinct().ToArray();
         if (memberIds.Length > 0)
         {
-            var found = await s.QuerySingleOrDefaultAsync<int>(
-                "select count(*)::int from members where id = any(@memberIds)", new { memberIds });
-            if (found != memberIds.Length)
+            var rows = (await s.QueryAsync<MemberState>(
+                """select id, left_at is not null as "Left" from members where id = any(@memberIds)""", new { memberIds })).ToList();
+            if (rows.Count != memberIds.Length)
                 return false;
+            var departed = rows.Where(r => r.Left).Select(r => r.Id).ToHashSet();
+            if (departed.Count > 0)
+            {
+                var storedAttendees = noteId is { } n1
+                    ? (await s.QueryAsync<Guid>("select member_id from meeting_attendees where note_id = @n1", new { n1 })).ToHashSet()
+                    : [];
+                var storedAssignees = noteId is { } n2
+                    ? (await s.QueryAsync<ItemAssignee>(
+                        "select id, assignee_member_id as assignee from meeting_action_items where note_id = @n2", new { n2 })).ToDictionary(r => r.Id, r => r.Assignee)
+                    : [];
+                if (v.AttendeeIds.Any(a => departed.Contains(a) && !storedAttendees.Contains(a)))
+                    return false;
+                if (v.ActionItems.Any(i => i.AssigneeId is { } a && departed.Contains(a)
+                        && !(i.Id is { } itemId && storedAssignees.TryGetValue(itemId, out var was) && was == a)))
+                    return false;
+            }
         }
         return v.ProjectId is not { } projectId
             || await s.QuerySingleOrDefaultAsync<bool>("select exists (select 1 from projects where id = @projectId)", new { projectId });

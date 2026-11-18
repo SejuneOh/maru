@@ -1167,6 +1167,7 @@ export const en: Dict = {
       github_unavailable: "GitHub cannot be reached right now. Try again shortly.",
       last_admin: "The last admin cannot be removed.",
       last_admin_role: "The last admin cannot step down. Make someone else an admin first.",
+      member_removed: "This person has left the GitHub organization, so they cannot be made an admin.",
       not_found: "That was already handled. The list has been reloaded.",
       admin_only: "Only admins can do this.",
       failed: "That did not work. Try again shortly.",
