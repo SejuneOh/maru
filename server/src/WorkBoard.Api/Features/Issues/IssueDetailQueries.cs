@@ -108,7 +108,11 @@ public static class IssueDetailQueries
         var names = logins.Length == 0
             ? []
             : (await s.QueryAsync<MemberName>(
-                    "select github_login, display_name from members where lower(github_login) = any(@logins)", new { logins }))
+                    """
+                    select distinct on (lower(github_login)) github_login, display_name
+                      from members where lower(github_login) = any(@logins)
+                     order by lower(github_login), left_at is null desc
+                    """, new { logins }))
                 .ToDictionary(m => m.GithubLogin.ToLowerInvariant(), m => m.DisplayName);
         return all.Select(b => b.Own is { } own
                 ? new CommentDto(b.Row.Id, new CommentAuthor(own.Login, names.GetValueOrDefault(own.Login.ToLowerInvariant())),

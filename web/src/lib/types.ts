@@ -61,7 +61,7 @@ export type InviteError =
 export type RemoveError = "not_found" | "last_admin" | "admin_only";
 
 /** `PATCH /api/members/{id}` errors (`error` field). */
-export type ChangeRoleError = "invalid_request" | "not_found" | "last_admin" | "admin_only";
+export type ChangeRoleError = "invalid_request" | "not_found" | "last_admin" | "member_removed" | "admin_only";
 
 /** `POST /api/invitations/preview` 200. Only returned to the invited GitHub account. */
 export type InvitationPreview = {

@@ -43,6 +43,7 @@ public static class Invitations
     public const string AlreadyMember = "already_member";
     public const string LastAdmin = "last_admin";
     public const string LoginTaken = "login_taken";
+    public const string MemberRemoved = "member_removed";
     public const string InviteNotFound = "invite_not_found";
     public const string InviteOtherAccount = "invite_other_account";
     public const string InviteRevoked = "invite_revoked";
@@ -128,6 +129,11 @@ public static class Invitations
         if (key.Length > Idempotency.KeyMaxLength)
             return ApiErrors.BadRequest();
 
+        var hash = Idempotency.HashRequest(
+            user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
+        if (await Idempotency.FindReplayAsync(db, user, key, hash, ct) is { } replay)
+            return replay;
+
         long? installationId = app.Value.CanReadInstallations
             ? await db.ReadAsync(s => s.QuerySingleOrDefaultAsync<long?>("""
                 select installation_id from github_connections
@@ -152,8 +158,6 @@ public static class Invitations
         if (found is null)
             return ApiErrors.BadRequest(GithubUserNotFound);
 
-        var hash = Idempotency.HashRequest(
-            user.Identity.Member.Id, http.Request.Method, http.Request.Path + http.Request.QueryString, bytes);
         return await db.WriteAsync(s => Idempotency.RunAsync(s, user, key, hash,
             () => InsertAsync(s, user, audit, found),
             body => body is CreatedInvitation created ? created with { Token = null } : body), ct);
@@ -292,6 +296,8 @@ public static class Invitations
                 return WriteError(StatusCodes.Status404NotFound, ApiErrors.NotFound);
             if (target.Role == role)
                 return new WriteResult(StatusCodes.Status200OK, target.ToMember());
+            if (role == "admin" && target.RemovedAt is not null)
+                return WriteError(StatusCodes.Status409Conflict, MemberRemoved);
             if (role == "member" && admins.Count(a => a != id) == 0)
                 return WriteError(StatusCodes.Status409Conflict, LastAdmin);
 
@@ -326,7 +332,12 @@ public static class Invitations
     private static async Task<Found?> FindAsync(
         NpgsqlConnection conn, NpgsqlTransaction? tx, string token, long callerId, bool lockRow, CancellationToken ct)
     {
-        var row = await conn.QuerySingleOrDefaultAsync<InviteRow>(new CommandDefinition($"""
+        // Locking in its own statement: the already_member subquery of a locked read keeps the snapshot from before
+        // the wait, so it would miss the member row a concurrent accept just committed.
+        if (lockRow)
+            await conn.ExecuteAsync(new CommandDefinition(
+                "select 1 from invitations where token_hash = @hash for update", new { hash = HashToken(token) }, tx, cancellationToken: ct));
+        var row = await conn.QuerySingleOrDefaultAsync<InviteRow>(new CommandDefinition("""
             select i.id, i.tenant_id, t.name as tenant_name, i.github_user_id, i.github_login, i.role, i.expires_at,
                    i.accepted_at, i.revoked_at, (i.expires_at <= now()) as expired,
                    b.github_login as invited_by_login, b.display_name as invited_by_name,
@@ -336,7 +347,6 @@ public static class Invitations
               join tenants t on t.id = i.tenant_id
               left join members b on b.id = i.invited_by
              where i.token_hash = @hash
-             {(lockRow ? "for update of i" : "")}
             """, new { hash = HashToken(token) }, tx, cancellationToken: ct));
         if (row is null)
             return null;
@@ -402,21 +412,22 @@ public static class Invitations
         if (error is not null)
             return error;
 
-        await using var conn = await sync.OpenConnectionAsync(ct);
+        // Cheap checks first, so a wrong account or a dead link never reaches the identity source.
+        Found? peek;
+        await using (var peekConn = await sync.OpenConnectionAsync(ct))
+            peek = await FindAsync(peekConn, null, token!, caller!.GithubUserId, lockRow: false, ct);
+        if (peek is null)
+            return Error(StatusCodes.Status404NotFound, InviteNotFound);
+        if (peek.Error is not null)
+            return peek.Error;
+        // The profile lookup opens its own sync connection, so no connection is held while it runs.
         GithubProfile? profile = null;
-        {
-            // Cheap checks first, so a wrong account or a dead link never reaches the identity source.
-            var peek = await FindAsync(conn, null, token!, caller!.GithubUserId, lockRow: false, ct);
-            if (peek is null)
-                return Error(StatusCodes.Status404NotFound, InviteNotFound);
-            if (peek.Error is not null)
-                return peek.Error;
-            if (peek.Row.AcceptedAt is null)
-                profile = await TenantsEndpoints.ProfileAsync(caller, source, members, ct);
-            if (peek.Row.AcceptedAt is null && profile is null)
-                return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
-        }
+        if (peek.Row.AcceptedAt is null)
+            profile = await TenantsEndpoints.ProfileAsync(caller, source, members, ct);
+        if (peek.Row.AcceptedAt is null && profile is null)
+            return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
 
+        await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         var found = await FindAsync(conn, tx, token!, caller.GithubUserId, lockRow: true, ct);
         if (found is null)

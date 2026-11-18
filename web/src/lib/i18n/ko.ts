@@ -1174,6 +1174,7 @@ export const ko = {
       github_unavailable: "GitHub에 잠시 연결할 수 없습니다. 조금 뒤 다시 시도해 주세요.",
       last_admin: "마지막 관리자는 내보낼 수 없습니다.",
       last_admin_role: "마지막 관리자는 해제할 수 없습니다. 다른 사람을 먼저 관리자로 지정해 주세요.",
+      member_removed: "GitHub 조직에서 빠진 사람이라 관리자로 지정할 수 없습니다.",
       not_found: "이미 처리된 항목입니다. 목록을 새로 불러왔습니다.",
       admin_only: "관리자만 할 수 있습니다.",
       failed: "처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",

@@ -96,6 +96,49 @@ public class MeetingNoteWritesTests(WebApplicationFactory<Program> factory) : IC
     }
 
     [DbFact]
+    public async Task Departed_members_cannot_be_newly_added_but_stay_on_notes_that_already_have_them()
+    {
+        await using var t = await TestTenant.CreateAsync(factory);
+        var (gone, _) = await t.AddMemberAsync("gone");
+        var me = await MemberIdAsync(t, t.ViewerLogin);
+        var goneId = await MemberIdAsync(t, gone);
+
+        var (_, created) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes",
+            Body("a", [me, goneId], [new { text = "x", assigneeId = goneId }]));
+        var id = created.GetProperty("id").GetGuid();
+        var itemId = created.GetProperty("actionItems")[0].GetProperty("id").GetGuid();
+        var updatedAt = created.GetProperty("updatedAt").GetString();
+        var (_, plain) = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", Body("b", [me], [new { text = "y" }]));
+        await t.ExecAsync("update members set left_at = now() where id = @goneId", new { goneId });
+
+        var asAttendee = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes", Body("c", [me, goneId], []));
+        var asAssignee = await SendAsync(t.ViewerLogin, HttpMethod.Post, "/api/meeting-notes",
+            Body("c", [me], [new { text = "z", assigneeId = goneId }]));
+        var plainId = plain.GetProperty("id").GetGuid();
+        var plainAt = plain.GetProperty("updatedAt").GetString();
+        var addAttendee = await SendAsync(t.ViewerLogin, HttpMethod.Patch, $"/api/meeting-notes/{plainId}",
+            Body("b", [me, goneId], [new { text = "y" }], expected: plainAt));
+        var addAssignee = await SendAsync(t.ViewerLogin, HttpMethod.Patch, $"/api/meeting-notes/{plainId}",
+            Body("b", [me], [new { text = "y", assigneeId = goneId }], expected: plainAt));
+        var newItemForGone = await SendAsync(t.ViewerLogin, HttpMethod.Patch, $"/api/meeting-notes/{id}",
+            Body("a2", [me, goneId], [new { id = itemId, text = "x", assigneeId = goneId }, new { text = "new", assigneeId = goneId }],
+                expected: updatedAt));
+
+        foreach (var r in new[] { asAttendee, asAssignee, addAttendee, addAssignee, newItemForGone })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, r.Status);
+            Assert.Equal("invalid_request", r.Body.GetProperty("error").GetString());
+        }
+
+        var edited = await SendAsync(t.ViewerLogin, HttpMethod.Patch, $"/api/meeting-notes/{id}",
+            Body("a2", [me, goneId], [new { id = itemId, text = "x2", assigneeId = goneId }], expected: updatedAt));
+        Assert.Equal(HttpStatusCode.OK, edited.Status);
+        Assert.Equal(2, edited.Body.GetProperty("attendees").GetArrayLength());
+        Assert.Equal(goneId, edited.Body.GetProperty("actionItems")[0].GetProperty("assignee").GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(t.ViewerLogin, HttpMethod.Get, $"/api/meeting-notes/{id}")).Status);
+    }
+
+    [DbFact]
     public async Task Create_with_the_same_key_makes_one_note()
     {
         await using var t = await TestTenant.CreateAsync(factory);
