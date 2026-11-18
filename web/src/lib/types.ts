@@ -89,7 +89,7 @@ export type JoinError =
 /** POST /api/tenants body. */
 export type CreateTenantRequest = { name: string };
 
-/** POST /api/tenants 201 response. Errors: 401 unauthenticated, 400 invalid_name, 409 tenant_limit. */
+/** POST /api/tenants 201 response. Errors: 401 unauthenticated, 403 github_login_missing, 400 invalid_name, 409 tenant_limit, 503 identity_unavailable. */
 export type CreateTenantResult = {
   tenant: { id: string; name: string };
   member: Member;

@@ -65,6 +65,19 @@ if (migrateOnly || app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (IdentityUnavailableException e) when (!context.Response.HasStarted)
+    {
+        app.Logger.LogWarning(e, "Identity provider unavailable");
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new ErrorBody("identity_unavailable"));
+    }
+});
 
 var open = app.MapGroup("/api");
 open.MapHealth();

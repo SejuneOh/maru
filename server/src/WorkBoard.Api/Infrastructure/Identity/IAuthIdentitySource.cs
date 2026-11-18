@@ -6,6 +6,9 @@ namespace WorkBoard.Api.Infrastructure.Identity;
 
 public sealed record GithubProfile(long Id, string? Login, string? DisplayName, string? AvatarUrl);
 
+// The identity provider could not be reached or answered with an error. The API maps it to 503 identity_unavailable.
+public sealed class IdentityUnavailableException(string message, Exception? inner = null) : Exception(message, inner);
+
 public interface IAuthIdentitySource
 {
     // Null when the auth user has no GitHub identity or does not exist.
@@ -25,13 +28,20 @@ public sealed class SupabaseAdminIdentitySource(HttpClient http, IOptions<Supaba
         request.Headers.Add("apikey", supabase.ServiceRoleKey);
         request.Headers.Authorization = new("Bearer", supabase.ServiceRoleKey);
 
-        using var response = await http.SendAsync(request, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return null;
+            response.EnsureSuccessStatusCode();
 
-        using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
-        return ParseGithubProfile(doc.RootElement);
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            return ParseGithubProfile(doc.RootElement);
+        }
+        catch (Exception e) when (e is HttpRequestException or JsonException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            throw new IdentityUnavailableException("The Supabase Admin API did not answer.", e);
+        }
     }
 
     public static long? ParseGithubUserId(JsonElement user) => ParseGithubProfile(user)?.Id;

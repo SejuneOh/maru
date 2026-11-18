@@ -167,6 +167,8 @@ export const en: Dict = {
       tooLong: "Keep the company name to 80 characters or fewer.",
       invalid: "That name can't be used. Use 1 to 80 characters on one line.",
       limit: "One person can create up to 5 companies. You've already created 5, so you can't create another.",
+      noLogin: "Your GitHub username couldn't be read, so a company can't be created. Sign out, then sign in again.",
+      unavailable: "The sign-in service isn't responding, so the company wasn't created. Try again in a moment.",
       failed: "Couldn't create the company. Try again in a moment.",
     },
     tenant: {
@@ -200,6 +202,7 @@ export const en: Dict = {
       title: "Couldn't reach the server",
       lead: "You're still signed in. Try again in a moment.",
       network: "The API server didn't respond.",
+      identityUnavailable: "The service that verifies your sign-in isn't responding.",
       status: (status) => `The API server returned a ${status} error.`,
       retry: "Try again",
       retrying: "Checking again",
