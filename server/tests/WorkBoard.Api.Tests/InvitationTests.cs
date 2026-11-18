@@ -471,6 +471,68 @@ public class InvitationTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [DbFact]
+    public async Task Member_removed_from_the_github_organization_cannot_be_promoted_but_can_stay_or_be_demoted()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var viewerId = await IdAsync(t, t.ViewerLogin);
+        await t.ExecAsync("update members set removed_at = now() where id = @viewerId", new { viewerId });
+
+        var response = await SetRoleAsync(admin, viewerId, "admin");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("member_removed", await ErrorAsync(response));
+        Assert.Equal("member", await RoleAsync(t, viewerId));
+        Assert.Equal(HttpStatusCode.OK, (await SetRoleAsync(admin, viewerId, "member")).StatusCode);
+    }
+
+    [DbFact]
+    public async Task Accepting_one_invitation_from_two_tabs_at_once_gives_both_the_same_200()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var (login, _) = Outsider();
+        var (_, token) = await InvitedAsync(admin, login);
+        var person = Client(login);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => AcceptAsync(person, token)));
+
+        Assert.All(results, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
+        var ids = new HashSet<Guid>();
+        foreach (var r in results)
+            ids.Add((await r.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("member").GetProperty("id").GetGuid());
+        Assert.Single(ids);
+    }
+
+    [DbFact]
+    public async Task Two_current_members_still_cannot_share_a_login()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var (login, _) = await t.AddMemberAsync("dup");
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => t.ExecAsync(
+            "insert into members (tenant_id, github_user_id, github_login) values (@tid, @userId, @login)",
+            new { tid = t.Id, userId = TestTenant.NextId(), login }));
+        Assert.Contains("members_tenant_login_active", ex.Message);
+    }
+
+    [DbFact]
+    public async Task Invite_retry_with_the_same_key_does_not_call_github_again()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var admin = Client(await AdminAsync(t));
+        var (login, _) = Outsider();
+
+        var first = await InviteAsync(admin, login, "same-key");
+        var callsAfterFirst = _github.Calls;
+        var again = await InviteAsync(admin, login, "same-key");
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, again.StatusCode);
+        Assert.Equal(callsAfterFirst, _github.Calls);
+    }
+
+    [DbFact]
     public async Task Last_admin_cannot_demote_themselves_but_can_when_another_admin_exists()
     {
         await using var t = await TestTenant.CreateAsync(_factory);

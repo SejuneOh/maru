@@ -71,6 +71,17 @@ public static class Idempotency
         return Convert.ToHexString(SHA256.HashData(data));
     }
 
+    // The stored answer of an earlier completed request with this key (or the reuse error), read without taking the
+    // key, so a caller can skip costly work for a repeat. Null means run the request.
+    public static async Task<IdempotentResponse?> FindReplayAsync(
+        TenantDb db, ICurrentUser user, string? key, string requestHash, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(key) || key.Length > KeyMaxLength)
+            return null;
+        var tenantId = user.Identity.TenantId;
+        return Decide(await db.ReadAsync(s => FindAsync(s, tenantId, key), ct), requestHash);
+    }
+
     // storedBody, when given, replaces the body kept for replays (e.g. to leave out a one-time secret).
     public static async Task<IdempotentResponse> RunAsync(
         TenantSession session, ICurrentUser user, string? key, string requestHash, Func<Task<WriteResult>> run,

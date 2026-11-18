@@ -513,8 +513,8 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
 - `POST /api/meeting-notes` body `MeetingNoteRequest` (`application/json`, max 512 KB). Required: `title` (trimmed, 1..200,
   no control or invisible format characters) and `heldAt` (ISO date-time with offset). Optional: `projectId` (null = none),
   `bodyMd` (max 60000 characters, default empty), `decisions` (max 50; each trimmed, empty ones dropped, max 500 characters),
-  `attendeeIds` (member ids, max 100, duplicates ignored), `actionItems` (max 100, in display order; `text` trimmed 1..500,
-  `assigneeId` a member id or null, `dueDate` `yyyy-MM-dd` or null; `id` must be absent). The caller becomes `createdBy`.
+  `attendeeIds` (member ids of current members, max 100, duplicates ignored), `actionItems` (max 100, in display order; `text` trimmed 1..500,
+  `assigneeId` a current member's id or null, `dueDate` `yyyy-MM-dd` or null; `id` must be absent). The caller becomes `createdBy`.
   Response `201 MeetingNote`.
   `id` (optional, a uuid the client generates, not all zeros) makes creation safe to repeat: if a note with that id already exists and the
   caller wrote it, the response is `200` with that note **as stored** (the body of the repeat is not applied; save changes
@@ -528,7 +528,9 @@ transaction that also writes an `audit_log` row (`meeting_note.create`, `meeting
   Action items keep their id: send `id` for an item that already exists (its text, assignee, due date and position change; its
   issue link stays) and no `id` for a new one. An existing item left out of the list is deleted, **unless it is linked to an
   issue**: then the whole request is `409 action_item_linked` with `actionItemIds` listing those items and nothing changes. An `id`
-  that is not an item of this note, or repeated, is `400 invalid_request`. `updatedAt` changes on every successful save.
+  that is not an item of this note, or repeated, is `400 invalid_request`. A member who left (`left_at`) is refused with
+  `400 invalid_request` as a new attendee or assignee, but a note that already has them keeps them: the same attendee, or the
+  same item's assignee, may be sent again. `updatedAt` changes on every successful save.
 - `DELETE /api/meeting-notes/{id}` (no body) deletes the note with its attendees and action items (linked issues stay). Only the
   note's author (`createdBy`) or an admin; anyone else gets `403 forbidden`. A note whose author is gone can be deleted by an admin only.
   Response `204`.
@@ -626,7 +628,9 @@ admin row (`for update`, the same lock as removal), so two admins demoting each 
 last active admin, including yourself, is `409 last_admin`; an admin can step down while another admin remains. Setting
 the role a member already has is `200` without a change. A change writes `audit_log` `member.role` (before: GitHub id,
 login, role; after: role). Errors: `400 invalid_request` (role missing or not one of the two), `403 admin_only`,
-`404 not_found` (no such current member in this company, including another company's member id), `409 last_admin`.
+`404 not_found` (no such current member in this company, including another company's member id), `409 last_admin`,
+`409 member_removed` (promoting a member whose `removedAt` is set, i.e. gone from the GitHub organization; demoting or
+keeping the role is allowed).
 
 An admin invites a person by GitHub login; the person joins by opening the link and signing in with that GitHub
 account. Rules:
@@ -643,7 +647,8 @@ account. Rules:
   The web builds the link as `{origin}/join#{token}` (fragment, so the token is not sent to the static host).
 - Errors: `403 admin_only`, `400 invalid_request` (not JSON), `400 invalid_login` (not a valid GitHub login),
   `400 github_user_not_found` (no such user, or an organization or bot), `409 already_member`,
-  `429 github_rate_limited`, `502 github_unavailable`.
+  `429 github_rate_limited`, `502 github_unavailable`. A retry with an `Idempotency-Key` that already completed returns the
+  stored answer before the GitHub lookup, so it costs no rate limit.
 - `DELETE /api/invitations/{id}` revokes an open invitation: `204`, `404 not_found` (unknown, another company's,
   already accepted or revoked), `403 admin_only`.
 - `POST /api/invitations/preview` and `/accept`, body `{"token": string}`, need a valid sign-in but no membership.
@@ -657,7 +662,8 @@ account. Rules:
   Accepting an invitation already accepted by the same, still current member returns the same `200`, so accept takes
   no `Idempotency-Key`. A person removed earlier gets their old member row back (same id, role from the invitation,
   login, name and avatar from the sign-in). `409 login_taken` when another member row of the company still holds the
-  login (a renamed and reused GitHub login).
+  login (a renamed and reused GitHub login). Only current members hold a login: the login of a member who left
+  (`left_at`) does not block a new person who now owns it. Two tabs accepting at once both get the same `200`.
 - `DELETE /api/members/{id}` (admin) removes a member: `204`, `404 not_found` (unknown, another company's, or already
   removed), `409 last_admin` (the target is the only admin left, so the last admin cannot remove themselves),
   `403 admin_only` (also when the caller stopped being an admin while the request waited). Admins may remove

@@ -73,7 +73,7 @@ export function TeamCard({ me }: { me: Member }) {
     try {
       await setMemberRole(m.id, "admin", newIdempotencyKey());
     } catch (e) {
-      setNotice(errorOf(e, ["not_found", "admin_only"]));
+      setNotice(errorOf(e, ["not_found", "member_removed", "admin_only"]));
     } finally {
       setPromoting(null);
       members.reload();
