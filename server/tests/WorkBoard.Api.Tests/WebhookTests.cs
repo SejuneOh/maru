@@ -529,34 +529,36 @@ public class WebhookTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(0, await RowsAsync(t, delivery));
     }
 
-    private static SyncWorker Worker(WebApplicationFactory<Program> host, int? intervalMinutes = null)
+    private static SyncWorker Worker(WebApplicationFactory<Program> host, int? intervalMinutes = null, Npgsql.NpgsqlDataSource? sync = null)
     {
         var s = host.Services;
         var options = Microsoft.Extensions.Options.Options.Create(new SyncOptions { IntervalMinutes = intervalMinutes });
         return new SyncWorker(
             s.GetRequiredService<SyncRunner>(), s.GetRequiredService<SprintDailyRecorder>(), options,
             s.GetRequiredService<Microsoft.Extensions.Options.IOptions<GitHubAppOptions>>(),
-            s.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WorkBoard.Api.Infrastructure.Identity.DataKeys.Sync),
+            sync ?? s.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WorkBoard.Api.Infrastructure.Identity.DataKeys.Sync),
             TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<SyncWorker>.Instance);
     }
 
+    // The interval reads webhook_deliveries across all tenants, so the test owns a database of its own.
     [DbFact]
     public async Task The_sync_interval_is_long_only_while_deliveries_arrive()
     {
-        await using var t = await TestTenant.CreateAsync(_factory);
+        await using var scratch = await ScratchDb.CreateAsync();
+        await new WorkBoard.Api.Infrastructure.Data.Migrations.Migrator(
+            scratch.ConnectionString, WorkBoard.Api.Infrastructure.Data.Migrations.EmbeddedSql.Migrations()).RunAsync();
+        await using var source = Npgsql.NpgsqlDataSource.Create(scratch.ConnectionString);
         var (_, host) = Host();
         var delivery = Guid.NewGuid().ToString();
-        await t.ExecAsync("delete from webhook_deliveries");
 
-        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host).IntervalAsync(CancellationToken.None));
+        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host, sync: source).IntervalAsync(CancellationToken.None));
 
-        await t.ExecAsync("insert into webhook_deliveries (delivery_id, event, processed_at) values (@delivery, 'issues', now())", new { delivery });
-        Assert.Equal(TimeSpan.FromMinutes(60), await Worker(host).IntervalAsync(CancellationToken.None));
-        Assert.Equal(TimeSpan.FromMinutes(5), await Worker(host, 5).IntervalAsync(CancellationToken.None));
+        await scratch.ExecAsync($"insert into webhook_deliveries (delivery_id, event, processed_at) values ('{delivery}', 'issues', now())");
+        Assert.Equal(TimeSpan.FromMinutes(60), await Worker(host, sync: source).IntervalAsync(CancellationToken.None));
+        Assert.Equal(TimeSpan.FromMinutes(5), await Worker(host, 5, source).IntervalAsync(CancellationToken.None));
 
-        await t.ExecAsync("update webhook_deliveries set received_at = now() - interval '31 minutes' where delivery_id = @delivery", new { delivery });
-        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host).IntervalAsync(CancellationToken.None));
-        await t.ExecAsync("delete from webhook_deliveries where delivery_id = @delivery", new { delivery });
+        await scratch.ExecAsync($"update webhook_deliveries set received_at = now() - interval '31 minutes' where delivery_id = '{delivery}'");
+        Assert.Equal(TimeSpan.FromMinutes(10), await Worker(host, sync: source).IntervalAsync(CancellationToken.None));
     }
 
     [DbFact]
