@@ -307,6 +307,24 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
         Assert.Equal(["fresh", "recent"], left);
     }
 
+    [DbFact]
+    public async Task Cleanup_also_deletes_old_company_creation_keys()
+    {
+        await using var t = await TestTenant.CreateAsync(_factory);
+        var userId = TestTenant.NextId();
+        foreach (var (key, age) in new[] { ("old", "72 hours"), ("fresh", "1 hour") })
+            await t.ExecAsync(
+                $"insert into tenant_create_keys (github_user_id, key, request_hash, status_code, response, created_at) values (@userId, @key, 'h', 201, '{{}}', now() - interval '{age}')",
+                new { userId, key });
+        var cleaner = _factory.Services.GetRequiredService<IdempotencyCleaner>();
+
+        await cleaner.DeleteExpiredAsync(CancellationToken.None);
+
+        var left = (await t.QueryAsync("select key from tenant_create_keys where github_user_id = @userId", new { userId }))
+            .Select(r => (string)r.key).ToList();
+        Assert.Equal(["fresh"], left);
+    }
+
     [Fact]
     public void Retention_is_never_shorter_than_the_key_lifetime()
     {

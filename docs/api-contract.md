@@ -145,6 +145,12 @@ afterwards. Errors: `401 unauthenticated` (no valid sign-in), `403 github_login_
 `503 identity_unavailable`,
 `400 invalid_name` (also for a body that is not JSON), `409 tenant_limit` (the person already created 5
 tenants; tenants they only joined do not count).
+`Idempotency-Key` is optional (`400 invalid_request` when longer than 200 characters). Unlike other writes the key is
+scoped to the caller's GitHub user (the caller has no tenant yet) and stored in `tenant_create_keys`. Repeating the
+same name with the same key within 24 hours returns the stored `201` and body without creating another company; a
+different name with the same key is `409 idempotency_key_reused`. Only the `201` is stored, so `409 tenant_limit` is
+not replayed. Concurrent requests of one person are serialized by the same lock that enforces the limit. The web
+sends one key per company name and keeps it while the person retries the same name.
 
 `POST /api/connections/github` connects a GitHub account after the caller installs the GitHub App on it.
 Body `{"code": "<oauth code>", "installationId": <number>}` (`application/json`), both from the redirect to

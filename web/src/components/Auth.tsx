@@ -1,11 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { ApiError, apiPost, getDevIdentity, setDevIdentity } from "@/lib/api";
+import { ApiError, createTenant, getDevIdentity, newIdempotencyKey, setDevIdentity } from "@/lib/api";
 import { authEnabled, markLeaving, setTenant, signInWithGitHub, signOut } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { useAuthSession, useLogin, useMe } from "@/lib/me";
-import type { CreateTenantResult } from "@/lib/types";
 import { LangToggle } from "./LangToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -245,6 +244,7 @@ function CreateCompanyForm({ autoFocus = false }: { autoFocus?: boolean }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const sending = useRef(false);
+  const attempt = useRef<{ name: string; key: string } | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CreateError | null>(null);
@@ -268,7 +268,8 @@ function CreateCompanyForm({ autoFocus = false }: { autoFocus?: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      const created = await apiPost<CreateTenantResult>("/api/tenants", { name: trimmed });
+      if (attempt.current?.name !== trimmed) attempt.current = { name: trimmed, key: newIdempotencyKey() };
+      const created = await createTenant(trimmed, attempt.current.key);
       chooseTenant(created.tenant.id);
     } catch (err) {
       sending.current = false;
