@@ -20,6 +20,7 @@ internal static class TestEnvironment
     {
         // Test hosts run in Development, where the periodic sync loop would otherwise start and call GitHub.
         Environment.SetEnvironmentVariable("Sync__Enabled", "false");
+        Environment.SetEnvironmentVariable("Maintenance__Enabled", "false");
         // Every host would otherwise hold inotify watchers on its appsettings files (Program.cs also asks for
         // reloadOnChange on appsettings.Local.json), and Linux caps inotify instances per user.
         Environment.SetEnvironmentVariable("DOTNET_hostBuilder__reloadConfigOnChange", "false");
