@@ -12,6 +12,8 @@ import type {
   ConnectionRequestCheck,
   ConnectGithubTokenRequest,
   CreateIssueRequest,
+  CreateTenantRequest,
+  CreateTenantResult,
   CreatedInvitation,
   CreatedIssue,
   GithubConnection,
@@ -145,6 +147,15 @@ export function apiGet<T>(path: string): Promise<T> {
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "POST", body });
+}
+
+/** `POST /api/tenants`. The same key with the same name returns the company the first request created. */
+export function createTenant(name: string, idempotencyKey: string): Promise<CreateTenantResult> {
+  return request<CreateTenantResult>("/api/tenants", {
+    method: "POST",
+    body: { name } satisfies CreateTenantRequest,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
 }
 
 export const CONNECTION_REQUEST_PATH = "/api/connections/github/request";

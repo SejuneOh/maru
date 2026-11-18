@@ -34,7 +34,7 @@ public class CreateTenantTests
 
     private sealed class MemoryLinks : IAuthLinkStore
     {
-        private readonly Dictionary<Guid, long> _links = [];
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, long> _links = [];
 
         public Task<long?> FindAsync(Guid authUserId, CancellationToken ct) =>
             Task.FromResult(_links.TryGetValue(authUserId, out var id) ? id : (long?)null);
@@ -69,6 +69,8 @@ public class CreateTenantTests
             await conn.ExecuteAsync(
                 "delete from tenants where id in (select tenant_id from members where github_user_id = any(@users))",
                 new { users = Users.ToArray() });
+            await conn.ExecuteAsync(
+                "delete from tenant_create_keys where github_user_id = any(@users)", new { users = Users.ToArray() });
             Factory.Dispose();
         }
     }
@@ -134,6 +136,21 @@ public class CreateTenantTests
         if (devUser is not null)
             request.Headers.Add("X-Dev-User", devUser);
         return request;
+    }
+
+    private static HttpRequestMessage PostKeyed(string token, string json, string key)
+    {
+        var request = Post(token, json);
+        request.Headers.Add("Idempotency-Key", key);
+        return request;
+    }
+
+    private static async Task<int> CountOwned(Host host, long githubId)
+    {
+        var sync = host.Factory.Services.GetRequiredKeyedService<NpgsqlDataSource>(DataKeys.Sync);
+        await using var conn = await sync.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<int>(
+            "select count(*) from tenants where created_by_github_user_id = @id", new { id = githubId });
     }
 
     private static string Name(string name) => JsonSerializer.Serialize(new { name });
@@ -241,6 +258,101 @@ public class CreateTenantTests
         await client.SendAsync(Post(Token(authUser), Name("Fresh")));
 
         Assert.Equal(before, await other.ScalarAsync<int>("select count(*) from members where tenant_id = @id", new { id = other.Id }));
+    }
+
+    [DbFact]
+    public async Task Same_key_twice_creates_one_company_and_replays_the_response()
+    {
+        await using var host = Create();
+        var (authUser, githubId, _) = host.NewPerson();
+        using var client = Client(host);
+
+        var first = await client.SendAsync(PostKeyed(Token(authUser), Name("Acme"), "k1"));
+        var second = await client.SendAsync(PostKeyed(Token(authUser), Name("  Acme "), "k1"));
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        Assert.Equal(await first.Content.ReadAsStringAsync(), await second.Content.ReadAsStringAsync());
+        Assert.Equal(1, await CountOwned(host, githubId));
+    }
+
+    [DbFact]
+    public async Task Concurrent_requests_with_one_key_create_one_company()
+    {
+        await using var host = Create();
+        var (authUser, githubId, _) = host.NewPerson();
+        using var client = Client(host);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6)
+            .Select(_ => client.SendAsync(PostKeyed(Token(authUser), Name("Acme"), "race"))));
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+        var bodies = await Task.WhenAll(responses.Select(r => r.Content.ReadAsStringAsync()));
+        Assert.Single(bodies.Distinct());
+        Assert.Equal(1, await CountOwned(host, githubId));
+    }
+
+    [DbFact]
+    public async Task Same_key_with_another_name_is_409_idempotency_key_reused()
+    {
+        await using var host = Create();
+        var (authUser, githubId, _) = host.NewPerson();
+        using var client = Client(host);
+        await client.SendAsync(PostKeyed(Token(authUser), Name("Acme"), "k2"));
+
+        var response = await client.SendAsync(PostKeyed(Token(authUser), Name("Other"), "k2"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("""{"error":"idempotency_key_reused"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(1, await CountOwned(host, githubId));
+    }
+
+    [DbFact]
+    public async Task Different_keys_create_separate_companies_and_keys_are_per_person()
+    {
+        await using var host = Create();
+        var (a, aId, _) = host.NewPerson();
+        var (b, bId, _) = host.NewPerson();
+        using var client = Client(host);
+
+        await client.SendAsync(PostKeyed(Token(a), Name("Acme"), "k3"));
+        await client.SendAsync(PostKeyed(Token(a), Name("Acme"), "k4"));
+        var other = await client.SendAsync(PostKeyed(Token(b), Name("Acme"), "k3"));
+
+        Assert.Equal(HttpStatusCode.Created, other.StatusCode);
+        Assert.Equal(2, await CountOwned(host, aId));
+        Assert.Equal(1, await CountOwned(host, bId));
+    }
+
+    [DbFact]
+    public async Task Key_longer_than_200_characters_is_400_invalid_request()
+    {
+        await using var host = Create();
+        var (authUser, githubId, _) = host.NewPerson();
+        using var client = Client(host);
+
+        var response = await client.SendAsync(PostKeyed(Token(authUser), Name("Acme"), new string('k', 201)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("""{"error":"invalid_request"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(0, await CountOwned(host, githubId));
+    }
+
+    [DbFact]
+    public async Task Tenant_limit_is_not_stored_under_the_key()
+    {
+        await using var host = Create();
+        var (authUser, githubId, _) = host.NewPerson();
+        using var client = Client(host);
+        for (var i = 0; i < TenantsEndpoints.MaxTenantsPerPerson; i++)
+            await client.SendAsync(Post(Token(authUser), Name("T" + i)));
+
+        var first = await client.SendAsync(PostKeyed(Token(authUser), Name("Extra"), "k5"));
+        var second = await client.SendAsync(PostKeyed(Token(authUser), Name("Extra"), "k5"));
+
+        Assert.Equal(HttpStatusCode.Conflict, first.StatusCode);
+        Assert.Equal("""{"error":"tenant_limit"}""", await second.Content.ReadAsStringAsync());
+        Assert.Equal(TenantsEndpoints.MaxTenantsPerPerson, await CountOwned(host, githubId));
     }
 
     [Theory]
