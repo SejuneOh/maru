@@ -226,7 +226,7 @@ export function SignInScreen({ next, ended }: { next: string; ended: boolean }) 
 
 const NAME_MAX = 80;
 
-type CreateError = "empty" | "tooLong" | "invalid" | "limit" | "failed";
+type CreateError = "empty" | "tooLong" | "invalid" | "limit" | "noLogin" | "unavailable" | "failed";
 
 /** Makes `tenantId` the chosen company, which makes the gate check `/api/me` again. */
 function chooseTenant(tenantId: string) {
@@ -274,7 +274,13 @@ function CreateCompanyForm({ autoFocus = false }: { autoFocus?: boolean }) {
       sending.current = false;
       setBusy(false);
       const code = err instanceof ApiError ? err.code : null;
-      fail(code === "invalid_name" ? "invalid" : code === "tenant_limit" ? "limit" : "failed");
+      const known: Record<string, CreateError> = {
+        invalid_name: "invalid",
+        tenant_limit: "limit",
+        github_login_missing: "noLogin",
+        identity_unavailable: "unavailable",
+      };
+      fail((code && known[code]) || "failed");
     }
   };
 
@@ -418,7 +424,12 @@ export function TenantChoiceScreen({ error }: { error: ApiError }) {
 /** Network or server trouble while checking: the person is not treated as signed out. */
 export function GateErrorScreen({ error, onRetry, busy }: { error: Error; onRetry: () => void; busy: boolean }) {
   const t = useT();
-  const detail = error instanceof ApiError ? t.gate.error.status(error.status) : t.gate.error.network;
+  const detail =
+    error instanceof ApiError
+      ? error.code === "identity_unavailable"
+        ? t.gate.error.identityUnavailable
+        : t.gate.error.status(error.status)
+      : t.gate.error.network;
   return (
     <GateFrame kicker={t.gate.error.kicker} title={t.gate.error.title} lead={t.gate.error.lead}>
       <p className="border-l-2 border-ink-soft pl-3 text-ui text-ink">{detail}</p>

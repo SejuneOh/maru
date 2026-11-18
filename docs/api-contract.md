@@ -9,7 +9,7 @@ several tenants they also send `X-Tenant: <tenantId>`.
 
 - The API validates signature, issuer (`{SupabaseUrl}/auth/v1`), audience `authenticated` and
   lifetime. Keys come from `{SupabaseUrl}/auth/v1/.well-known/jwks.json`, or from the shared secret
-  when `Auth:Supabase:JwtSecret` is set (legacy HS256 projects).
+  when `Auth:Supabase:JwtSecret` is set (legacy HS256 projects). Accepted algorithms: RS256 and ES256 with JWKS, HS256 with the secret. Outside Development `Auth:Supabase:Url` must be https. A user with no GitHub identity is remembered for 30 seconds (at most 1000 users) before the Admin API is asked again.
 - Token `sub` is the Supabase auth user id. On first sight the API calls the Supabase Admin API
   (`GET /auth/v1/admin/users/{sub}`, service role key), takes the `github` identity's provider id and
   stores `auth_user_id -> github_user_id` in `auth_links` (global table, `workboard_sync` only).
@@ -25,6 +25,7 @@ Errors, JSON `{"error": "<code>"}`:
 | 401 | `unauthenticated` | no token, bad signature, wrong issuer or audience, expired, no GitHub identity |
 | 401 | `tenant_required` | several memberships and `X-Tenant` missing or not one of them. Body also has `tenants`: `[{"id", "name"}]`, only the caller's own memberships |
 | 403 | `no_membership` | valid login with a GitHub identity, but no membership in any tenant |
+| 503 | `identity_unavailable` | the Supabase Admin API failed or timed out while looking up the caller's GitHub identity (any endpoint that needs it; the client may retry, the session is still valid) |
 
 Write endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) use these standard codes, always as `{"error": "<code>"}`:
 
@@ -140,7 +141,8 @@ login in Development) and makes them its `admin`. Body `{"name": "<string>"}`; t
 1..80 characters without control or invisible format characters (zero-width, bidi overrides); the request must be `application/json`. One transaction on the `workboard_sync` role inserts the tenant,
 its `tenant_settings` row (all flags off) and the member (GitHub id, login, display name and avatar from the
 GitHub identity). Response `201 {"tenant": {"id", "name"}, "member": Member}`; send `X-Tenant: <tenant.id>`
-afterwards. Errors: `401 unauthenticated` (no valid sign-in, or the GitHub identity has no login),
+afterwards. Errors: `401 unauthenticated` (no valid sign-in), `403 github_login_missing` (the GitHub identity has no login; the session stays valid),
+`503 identity_unavailable`,
 `400 invalid_name` (also for a body that is not JSON), `409 tenant_limit` (the person already created 5
 tenants; tenants they only joined do not count).
 

@@ -30,8 +30,10 @@ public static class TenantsEndpoints
                 return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
 
             var profile = await ProfileAsync(caller, source, members, ct);
-            if (profile is null || string.IsNullOrWhiteSpace(profile.Login))
+            if (profile is null)
                 return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
+            if (string.IsNullOrWhiteSpace(profile.Login))
+                return Error(StatusCodes.Status403Forbidden, "github_login_missing");
 
             var name = await ReadNameAsync(http, ct);
             if (name is null)

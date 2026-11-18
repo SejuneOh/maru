@@ -176,6 +176,8 @@ export const ko = {
       tooLong: "회사 이름은 80자 이내로 입력하세요.",
       invalid: "쓸 수 없는 이름입니다. 줄바꿈 없이 1~80자로 입력하세요.",
       limit: "회사는 한 사람이 5개까지 만들 수 있습니다. 이미 5개를 만들어 더 만들 수 없습니다.",
+      noLogin: "이 GitHub 계정에는 사용자 이름이 없어 회사를 만들 수 없습니다. GitHub에서 사용자 이름을 정한 뒤 다시 로그인하세요.",
+      unavailable: "로그인 서비스가 응답하지 않아 회사를 만들지 못했습니다. 잠시 뒤 다시 시도하세요.",
       failed: "회사를 만들지 못했습니다. 잠시 뒤 다시 시도하세요.",
     },
     tenant: {
@@ -210,6 +212,7 @@ export const ko = {
       title: "서버와 연결하지 못했습니다",
       lead: "로그아웃된 것은 아닙니다. 잠시 뒤 다시 시도하세요.",
       network: "API 서버에서 응답이 없습니다.",
+      identityUnavailable: "로그인 정보를 확인하는 서비스가 응답하지 않습니다.",
       status: (status: number) => `API 서버가 ${status} 오류를 돌려주었습니다.`,
       retry: "다시 시도",
       retrying: "다시 확인하는 중",

@@ -35,22 +35,34 @@ public interface IAuthLinkResolver
     Task<long?> ResolveGithubUserIdAsync(Guid authUserId, CancellationToken ct);
 }
 
-// Memory, then the stored link, then the identity source (stored on first sight). Misses are not cached.
+// Memory, then the stored link, then the identity source (stored on first sight).
+// "No GitHub identity" answers are remembered for MissTtl in a separate cache of at most MissCapacity entries.
 public sealed class AuthLinkResolver(IAuthLinkStore store, IAuthIdentitySource source, IMemoryCache cache) : IAuthLinkResolver
 {
     private static readonly TimeSpan Sliding = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan MissTtl = TimeSpan.FromSeconds(30);
+    public const int MissCapacity = 1000;
+
+    private readonly MemoryCache _misses = new(new MemoryCacheOptions { SizeLimit = MissCapacity });
+
+    public int CachedMissCount => _misses.Count;
 
     public async Task<long?> ResolveGithubUserIdAsync(Guid authUserId, CancellationToken ct)
     {
         if (cache.TryGetValue(authUserId, out long cached))
             return cached;
+        if (_misses.TryGetValue(authUserId, out _))
+            return null;
 
         var githubUserId = await store.FindAsync(authUserId, ct);
         if (githubUserId is null)
         {
             githubUserId = (await source.FindGithubProfileAsync(authUserId, ct))?.Id;
             if (githubUserId is null)
+            {
+                _misses.Set(authUserId, true, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = MissTtl, Size = 1 });
                 return null;
+            }
             await store.SaveAsync(authUserId, githubUserId.Value, ct);
         }
 

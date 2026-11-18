@@ -27,8 +27,8 @@ public sealed class SupabaseAuthOptionsValidator(IHostEnvironment env) : IValida
             return ValidateOptionsResult.Success;
 
         var missing = new List<string>();
-        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _))
-            missing.Add("Auth:Supabase:Url");
+        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps)
+            missing.Add("Auth:Supabase:Url (an https address)");
         if (string.IsNullOrWhiteSpace(options.ServiceRoleKey))
             missing.Add("Auth:Supabase:ServiceRoleKey");
 
