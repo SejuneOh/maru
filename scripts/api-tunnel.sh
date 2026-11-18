@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opens a quick tunnel to the local API and points the work-board-api Worker at it.
+# Opens a quick tunnel to the local API and points the maru-api Worker at it.
 # Usage: scripts/api-tunnel.sh [local-api-url]   (default http://127.0.0.1:5080)
 # Needs cloudflared and a one-time `npx wrangler@4 login`. Runs until cloudflared exits.
 set -euo pipefail
