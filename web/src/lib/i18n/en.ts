@@ -167,7 +167,7 @@ export const en: Dict = {
       tooLong: "Keep the company name to 80 characters or fewer.",
       invalid: "That name can't be used. Use 1 to 80 characters on one line.",
       limit: "One person can create up to 5 companies. You've already created 5, so you can't create another.",
-      noLogin: "This GitHub account has no username, so a company can't be created. Set a username on GitHub, then sign in again.",
+      noLogin: "Your GitHub username couldn't be read, so a company can't be created. Sign out, then sign in again.",
       unavailable: "The sign-in service isn't responding, so the company wasn't created. Try again in a moment.",
       failed: "Couldn't create the company. Try again in a moment.",
     },
