@@ -89,7 +89,7 @@ export type JoinError =
 /** POST /api/tenants body. */
 export type CreateTenantRequest = { name: string };
 
-/** POST /api/tenants 201 response. Errors: 401 unauthenticated, 400 invalid_name, 400 invalid_request (key over 200 characters), 409 tenant_limit, 409 idempotency_key_reused. */
+/** POST /api/tenants 201 response. Errors: 401 unauthenticated, 403 github_login_missing, 400 invalid_name, 400 invalid_request (key over 200 characters), 409 tenant_limit, 409 idempotency_key_reused, 503 identity_unavailable. */
 export type CreateTenantResult = {
   tenant: { id: string; name: string };
   member: Member;

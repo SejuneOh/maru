@@ -41,6 +41,7 @@ public sealed class SupabaseJwtBearerSetup(IOptions<SupabaseAuthOptions> auth) :
             return;
         }
 
+        options.TokenValidationParameters.ValidAlgorithms = [SecurityAlgorithms.RsaSha256, SecurityAlgorithms.EcdsaSha256];
         options.ConfigurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
             supabase.JwksUrl,
             new JwksConfigurationRetriever(),
