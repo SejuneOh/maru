@@ -121,7 +121,7 @@ Deploy Hook은 배포를 Render 대기열에 넣고 바로 돌아오므로, 웹�
 | variable | `API_URL` | 4장의 Render 주소 |
 | variable | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Supabase 프로젝트 URL과 anon 키(브라우저에 공개되는 값) |
 | variable | `PAGES_PROJECT` | Pages 프로젝트 이름 |
-| variable | `GITHUB_APP_SLUG` | GitHub App slug(없으면 비움) |
+| variable | `APP_SLUG` | GitHub App slug(없으면 비움). `GITHUB_`로 시작하는 이름은 GitHub가 막음 |
 
 Render 무료 웹 서비스는 15분 동안 요청이 없으면 잠듭니다. 잠들면 GitHub 동기화가 멈추고 첫 요청과 웹훅이 깨어날 때까지 늦습니다. `deploy/keepalive`는 10분마다 `/api/health`를 부르는 Cloudflare Worker(Cron Trigger)입니다. `wrangler.toml`의 `TARGET`을 Render 주소로 맞추고 `npx wrangler@4 deploy --config deploy/keepalive/wrangler.toml`로 한 번 올립니다. 무료 요금제의 월 750시간은 서비스 하나를 한 달 내내 켜 두기에 맞는 양입니다. `wrangler deploy`가 업로드 뒤 `[code: 10007]`로 끝나도 Worker는 올라가 있을 수 있으니 Dashboard에서 확인합니다.
 
