@@ -412,21 +412,22 @@ public static class Invitations
         if (error is not null)
             return error;
 
-        await using var conn = await sync.OpenConnectionAsync(ct);
+        // Cheap checks first, so a wrong account or a dead link never reaches the identity source.
+        Found? peek;
+        await using (var peekConn = await sync.OpenConnectionAsync(ct))
+            peek = await FindAsync(peekConn, null, token!, caller!.GithubUserId, lockRow: false, ct);
+        if (peek is null)
+            return Error(StatusCodes.Status404NotFound, InviteNotFound);
+        if (peek.Error is not null)
+            return peek.Error;
+        // The profile lookup opens its own sync connection, so no connection is held while it runs.
         GithubProfile? profile = null;
-        {
-            // Cheap checks first, so a wrong account or a dead link never reaches the identity source.
-            var peek = await FindAsync(conn, null, token!, caller!.GithubUserId, lockRow: false, ct);
-            if (peek is null)
-                return Error(StatusCodes.Status404NotFound, InviteNotFound);
-            if (peek.Error is not null)
-                return peek.Error;
-            if (peek.Row.AcceptedAt is null)
-                profile = await TenantsEndpoints.ProfileAsync(caller, source, members, ct);
-            if (peek.Row.AcceptedAt is null && profile is null)
-                return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
-        }
+        if (peek.Row.AcceptedAt is null)
+            profile = await TenantsEndpoints.ProfileAsync(caller, source, members, ct);
+        if (peek.Row.AcceptedAt is null && profile is null)
+            return Error(StatusCodes.Status401Unauthorized, "unauthenticated");
 
+        await using var conn = await sync.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         var found = await FindAsync(conn, tx, token!, caller.GithubUserId, lockRow: true, ct);
         if (found is null)

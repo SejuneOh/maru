@@ -27,7 +27,7 @@ public static class IssueQueries
         and (@assignee::text is null or exists (
                select 1 from issue_assignees ia
                  join members am on am.github_user_id = ia.github_user_id
-                where ia.issue_id = i.id and am.github_login = @assignee::text))
+                where ia.issue_id = i.id and am.github_login = @assignee::text and am.left_at is null))
         """;
 
     public static async Task<Sprints.BacklogPage> BacklogAsync(TenantSession s, BacklogFilter filter)
@@ -66,7 +66,7 @@ public static class IssueQueries
             and (@assignee::text is null or exists (
                    select 1 from issue_assignees ia
                      join members am on am.github_user_id = ia.github_user_id
-                    where ia.issue_id = i.id and am.github_login = @assignee::text))
+                    where ia.issue_id = i.id and am.github_login = @assignee::text and am.left_at is null))
             """, new
         {
             filter.ProjectId,
