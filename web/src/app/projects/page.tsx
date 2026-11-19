@@ -36,7 +36,7 @@ export default function ProjectsBoardPage() {
   const selectedId = params.get("project");
   const filters = readFilters(params);
   const projects = useApi<Project[]>("/api/projects");
-  // Progress counts every issue of a project, not only the last 7 days of done work.
+  // Progress counts every issue of a project, not only the last 14 days of done work.
   const all = useApi<BoardIssue[]>(issuesQuery(NO_FILTERS, { scope: "all" }));
   const allIssues = useEditedIssues(all.data);
   const onSchedule =
