@@ -106,6 +106,43 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Person_filter_accepts_several_logins()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var (ann, annId) = await t.AddMemberAsync("ann");
+        var (bob, bobId) = await t.AddMemberAsync("bob");
+        var (cal, calId) = await t.AddMemberAsync("cal");
+        var annIssue = await t.AddIssueAsync(repo, assignee: annId);
+        var bobIssue = await t.AddIssueAsync(repo, assignee: bobId);
+        await t.AddIssueAsync(repo, assignee: calId);
+
+        var ids = Ids(await t.GetAsync($"/api/issues?person={ann},{bob}")).Order().ToArray();
+        Assert.Equal(new[] { annIssue.ToString(), bobIssue.ToString() }.Order(), ids);
+    }
+
+    [DbFact]
+    public async Task Label_filter_accepts_several_names()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var bugIssue = await t.AddIssueAsync(repo);
+        var featIssue = await t.AddIssueAsync(repo);
+        await t.AddIssueAsync(repo);
+        var bug = await t.ScalarAsync<Guid>(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, 9201, 'bug') returning id",
+            new { tid = t.Id, repo });
+        var feat = await t.ScalarAsync<Guid>(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, 9202, 'feature') returning id",
+            new { tid = t.Id, repo });
+        await t.ExecAsync("insert into issue_labels (tenant_id, issue_id, label_id) values (@tid, @a, @bug), (@tid, @b, @feat)",
+            new { tid = t.Id, a = bugIssue, b = featIssue, bug, feat });
+
+        var ids = Ids(await t.GetAsync("/api/issues?label=bug,feature")).Order().ToArray();
+        Assert.Equal(new[] { bugIssue.ToString(), featIssue.ToString() }.Order(), ids);
+    }
+
+    [DbFact]
     public async Task Sprint_filter_and_combination_with_status()
     {
         var (t, repo) = await NewTenant(factory);

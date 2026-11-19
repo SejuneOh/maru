@@ -233,6 +233,8 @@ export const en: Dict = {
       any: "All",
       mine: "Mine only",
       showAll: "All",
+      search: "Search",
+      clear: "Clear",
     },
   },
 

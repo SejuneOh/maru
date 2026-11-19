@@ -39,17 +39,16 @@ public static class IssuesEndpoints
             if (!string.IsNullOrEmpty(doneSince) && doneSince != "week")
                 return Results.Json(new ErrorBody("invalid_doneSince"), statusCode: StatusCodes.Status400BadRequest);
 
-            var login = string.IsNullOrWhiteSpace(person) ? assignee : person;
             var filter = new IssueFilter(
                 projectId,
-                string.IsNullOrWhiteSpace(login) ? null : login.Trim(),
+                CommaList(string.IsNullOrWhiteSpace(person) ? assignee : person),
                 doneWithinDays ?? DefaultDoneWithinDays,
                 statuses,
                 stale ?? false,
                 sprint,
                 scope == "all",
                 doneSince == "week",
-                string.IsNullOrWhiteSpace(label) ? null : label,
+                CommaList(label),
                 repository);
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
@@ -116,4 +115,12 @@ public static class IssuesEndpoints
     }
 
     private const int CommentMaxBodyBytes = 256 * 1024;
+
+    // A comma list for a multi-value filter (assignees, labels): null when empty, so the query skips the clause.
+    private static IReadOnlyList<string>? CommaList(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var items = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct().ToArray();
+        return items.Length == 0 ? null : items;
+    }
 }
