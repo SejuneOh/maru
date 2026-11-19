@@ -74,10 +74,7 @@ export default function BoardPage() {
   const repoList = useApi<{ id: string; name: string }[]>("/api/repositories");
   const repositories = repoList.data ?? [];
   const edited = useEditedIssues(issues.data);
-  const projectRepoIds = filters.project
-    ? new Set(projects.data?.find((pr) => pr.id === filters.project)?.repositories.map((r) => r.id) ?? [])
-    : null;
-  const filtered = edited ? applyFilters(edited, filters, projectRepoIds) : null;
+  const filtered = edited ? applyFilters(edited, filters) : null;
 
   const name = {
     person: (login: string) => members.data?.find((m) => m.githubLogin === login)?.displayName ?? login,
