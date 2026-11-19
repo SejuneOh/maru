@@ -169,6 +169,18 @@ Redirect URLs에 없으면 Supabase는 로그인 뒤 Site URL(기본 `http://loc
 - GitHub App의 Recent Deliveries에서 `ping`이 200
 - DB에서 `select rolname, rolbypassrls from pg_roles where rolname like 'workboard_%'`
 
+## Supabase Realtime (동기화 상태 푸시)
+
+동기화가 끝나면 상단 상태 바와 보드가 폴링을 기다리지 않고 바로 갱신되도록, 테넌트별 비공개 채널로 `sync_finished` 이벤트를 보냅니다. Realtime을 켜지 않아도 폴링으로 동작하므로 선택 사항입니다.
+
+Supabase 전용 객체(`realtime` 스키마, `auth.uid()`, `authenticated` 역할)는 로컬·CI의 일반 Postgres에 없어 마이그레이션에 넣지 않습니다. 대신 `db/supabase/realtime-sync.sql`을 Supabase에서 직접 실행합니다.
+
+1. 대시보드 → Project Settings → Realtime에서 **Allow public access를 끕니다**. 켜져 있으면 누구나 공개 채널로 `tenant:<id>`에 들어와 RLS를 우회해 다른 테넌트 이벤트를 받습니다. Realtime을 지금 안 쓰므로 끄는 부작용은 없습니다.
+2. SQL editor에서 `db/supabase/realtime-sync.sql`을 `postgres`로 실행합니다(멤버십 확인 함수, `realtime.messages` SELECT 정책, `sync_runs` 트리거, 인덱스). 재실행해도 안전합니다.
+3. 격리 확인: 서로 다른 테넌트의 두 계정으로 각각 로그인해, 한쪽에서 "지금 동기화" 했을 때 **다른 계정 화면은 반응하지 않아야** 합니다. 반응하면 1번(public access)이 켜져 있는 것입니다.
+
+클라이언트는 `tenant:<id>` 비공개 채널을 구독하다가 이벤트가 오면 상태를 다시 불러옵니다. payload에는 run id와 status만 담고 실제 데이터는 API가 권한을 확인한 뒤 가져옵니다. 구독 실패 시 조용히 폴링으로 돌아갑니다.
+
 ## Supabase에서 BYPASSRLS
 
 - `workboard_sync`는 테넌트를 가로질러 쓰므로 RLS를 우회해야 합니다. 일반 Postgres에서는 슈퍼유저만 `bypassrls`를 줄 수 있습니다.
