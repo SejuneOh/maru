@@ -30,25 +30,34 @@ export default function BoardPage() {
   // "Show all" and "clear" go to ?view=all, never a bare URL, so clearing never bounces back to a stored view.
   const qs = params.toString();
   useEffect(() => {
-    try {
-      if (qs === "") {
-        const stored = localStorage.getItem(VIEW_KEY);
-        if (stored) router.replace(`/board?${stored}`);
-        else if (myLogin) router.replace(`/board?person=${encodeURIComponent(myLogin)}`);
-        return;
+    if (qs === "") {
+      // Read the memory on its own, so a blocked storage still falls through to the default instead of
+      // leaving the board stuck on the loading state.
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem(VIEW_KEY);
+      } catch {
+        /* storage unavailable */
       }
-      // Remember only the filter and view keys, never the panel params (issue, newStatus...), so returning
-      // to the board does not reopen an old panel.
-      const keep = new URLSearchParams();
-      for (const k of FILTER_KEYS) {
-        const v = params.get(k);
-        if (v) keep.set(k, v);
+      if (stored) router.replace(`/board?${stored}`);
+      else if (myLogin) router.replace(`/board?person=${encodeURIComponent(myLogin)}`);
+      return;
+    }
+    // Remember only the filter and view keys, never the panel params (issue, newStatus...), so returning
+    // to the board does not reopen an old panel.
+    const keep = new URLSearchParams();
+    for (const k of FILTER_KEYS) {
+      const v = params.get(k);
+      if (v) keep.set(k, v);
+    }
+    if (params.get("view")) keep.set("view", params.get("view")!);
+    const v = keep.toString();
+    if (v) {
+      try {
+        localStorage.setItem(VIEW_KEY, v);
+      } catch {
+        /* storage unavailable; the board still works without the memory */
       }
-      if (params.get("view")) keep.set("view", params.get("view")!);
-      const v = keep.toString();
-      if (v) localStorage.setItem(VIEW_KEY, v);
-    } catch {
-      // Storage can be unavailable (private mode); the board still works, just without the memory.
     }
   }, [qs, myLogin, router, params]);
 
