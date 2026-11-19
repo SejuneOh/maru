@@ -177,7 +177,8 @@ Supabase 전용 객체(`realtime` 스키마, `auth.uid()`, `authenticated` 역�
 
 1. 대시보드 → Project Settings → Realtime에서 **Allow public access를 끕니다**. 켜져 있으면 누구나 공개 채널로 `tenant:<id>`에 들어와 RLS를 우회해 다른 테넌트 이벤트를 받습니다. Realtime을 지금 안 쓰므로 끄는 부작용은 없습니다.
 2. SQL editor에서 `db/supabase/realtime-sync.sql`을 `postgres`로 실행합니다(멤버십 확인 함수, `realtime.messages` SELECT 정책, `sync_runs` 트리거, 인덱스). 재실행해도 안전합니다.
-3. 격리 확인: 서로 다른 테넌트의 두 계정으로 각각 로그인해, 한쪽에서 "지금 동기화" 했을 때 **다른 계정 화면은 반응하지 않아야** 합니다. 반응하면 1번(public access)이 켜져 있는 것입니다.
+3. 정책 점검: `select * from pg_policies where schemaname = 'realtime'`로 `realtime.messages`에 다른 permissive 정책(예: 대시보드 예제의 `using (true)`)이 없는지 확인합니다. 정책은 OR로 합쳐지므로, 넓은 정책이 하나라도 있으면 격리가 무너집니다.
+4. 격리 확인: 서로 다른 테넌트의 두 계정으로 각각 로그인해, 한쪽에서 "지금 동기화" 했을 때 **다른 계정 화면은 반응하지 않아야** 합니다. 반응하면 1번(public access)이 켜져 있거나 3번의 넓은 정책이 있는 것입니다.
 
 클라이언트는 `tenant:<id>` 비공개 채널을 구독하다가 이벤트가 오면 상태를 다시 불러옵니다. payload에는 run id와 status만 담고 실제 데이터는 API가 권한을 확인한 뒤 가져옵니다. 구독 실패 시 조용히 폴링으로 돌아갑니다.
 

@@ -16,6 +16,10 @@
 --     expired) learns nothing it could not already fetch, and gets nothing after its token refreshes.
 --   - RLS on realtime.messages lets a browser receive a tenant's broadcasts only while the logged-in
 --     user is an active member of that tenant. There is no INSERT policy, so a browser cannot forge events.
+--
+-- Policies combine with OR. If realtime.messages carries any broader SELECT policy (e.g. a dashboard
+-- example with `using (true)`), isolation breaks. After running this, check:
+--   select * from pg_policies where schemaname = 'realtime';
 
 -- 1. Membership check. SECURITY DEFINER so the `authenticated` role needs no grant on the tables.
 --    It reads auth.uid() itself and only returns a boolean, so it cannot probe other people.
