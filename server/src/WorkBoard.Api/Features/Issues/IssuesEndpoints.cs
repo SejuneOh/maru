@@ -10,7 +10,7 @@ namespace WorkBoard.Api.Features.Issues;
 
 public static class IssuesEndpoints
 {
-    private const int DefaultDoneWithinDays = 7;
+    private const int DefaultDoneWithinDays = 14;
     private const int MaxDoneWithinDays = 365;
     private static readonly HashSet<string> ValidStatuses = ["todo", "in_progress", "in_review", "done", "cancelled"];
 

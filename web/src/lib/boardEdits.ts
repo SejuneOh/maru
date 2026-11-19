@@ -84,10 +84,14 @@ function merge<T extends BoardIssue>(issue: T): T {
   const mine = confirmed.get(issue.id);
   let out: T = issue;
   if (mine && freshness(mine) > freshness(issue)) out = { ...issue, ...mine };
+  // The card follows the drop at once, while GitHub is written in the background; a failure reverts it
+  // (pending is cleared, no confirmed answer) and shows the error. Closing and reopening move too, not
+  // only same-timestamp saves, so done and cancelled no longer sit still through the GitHub round trip.
   const p = pending.get(issue.id);
-  if (p?.phase === "saving") {
+  if (p) {
     out = { ...out, ...p.change };
-    if (p.change.status) out = { ...out, category: categoryOf(p.change.status) };
+    if (p.change.status)
+      out = { ...out, category: categoryOf(p.change.status), state: isClosedStatus(p.change.status) ? "closed" : "open" };
   }
   return out;
 }
