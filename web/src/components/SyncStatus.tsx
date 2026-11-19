@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, ISSUES_CHANGED_EVENT, SYNC_CHANGED_EVENT, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
+import { supabase } from "@/lib/auth";
 import { type Dict, type Format, useFormat, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import type { RunSyncError, SyncStatus as Status, TokenHealth } from "@/lib/types";
@@ -47,7 +48,9 @@ export function SyncStatus({
   compact?: boolean;
 }) {
   const { data, reload } = useApi<Status>(SYNC_STATUS_PATH);
-  const admin = useMe().data?.member.role === "admin";
+  const me = useMe().data;
+  const admin = me?.member.role === "admin";
+  const tenantId = me?.tenant.id ?? null;
   const t = useT();
   const s = t.sync;
   const fmt = useFormat();
@@ -96,6 +99,33 @@ export function SyncStatus({
       if (lastSynced !== null) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
     }
   }, [data, lastSynced]);
+
+  // Push: a private Supabase Realtime channel per tenant gets a `sync_finished` event the moment a sync ends,
+  // so we reload the status now instead of waiting for the poll. The reload moves lastSyncedAt, and the effect
+  // above then refreshes the boards. The channel carries no issue data; the API still enforces access on refetch.
+  // If Realtime is off or the subscribe fails, the polling above keeps everything fresh, so failures are silent.
+  useEffect(() => {
+    const sb = supabase();
+    if (!sb || !tenantId) return;
+    let active = true;
+    let channel: ReturnType<typeof sb.channel> | null = null;
+    (async () => {
+      try {
+        await sb.realtime.setAuth();
+        if (!active) return;
+        channel = sb
+          .channel(`tenant:${tenantId}`, { config: { private: true } })
+          .on("broadcast", { event: "sync_finished" }, () => reload())
+          .subscribe();
+      } catch {
+        // Realtime unavailable; polling covers it.
+      }
+    })();
+    return () => {
+      active = false;
+      if (channel) void sb.removeChannel(channel);
+    };
+  }, [tenantId, reload]);
 
   const alert = data?.tokens.some((h) => urgency(h) < 3) ?? false;
   useEffect(() => onAttention?.(alert), [alert, onAttention]);
