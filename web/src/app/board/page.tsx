@@ -9,7 +9,7 @@ import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { useEditedIssues } from "@/lib/boardEdits";
-import { FILTER_KEYS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
+import { FILTER_KEYS, NO_FILTERS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import { useMe } from "@/lib/me";
@@ -63,7 +63,9 @@ export default function BoardPage() {
 
   // A bare URL is on its way to a default via the effect above; don't flash the full unfiltered board.
   const resolving = qs === "";
-  const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery(filters));
+  // Fetch a stable working set and filter it on the client, so status/person/label/project/repository
+  // changes apply instantly with no server round trip. Only doneThisWeek narrows the set server-side.
+  const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery({ ...NO_FILTERS, doneThisWeek: filters.doneThisWeek }));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");
   // Distinct label names and the tenant's repositories, so the pickers never narrow to the current filter.

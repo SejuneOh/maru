@@ -82,8 +82,9 @@ export function issuesQuery(f: BoardFilters, extra: Record<string, string> = {})
 }
 
 /**
- * The server filters too; this keeps the board right if it is talking to an older API.
- * The week boundary itself is left to the server, which knows the Asia/Seoul Monday.
+ * Filters the loaded set on the client. Every axis here is applied client-side, so the board can keep one
+ * stable fetch and change filters without a round trip. The week boundary itself is left to the server,
+ * which knows the Asia/Seoul Monday; `doneThisWeek` here only re-checks that the issue is closed.
  */
 export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[] {
   return issues.filter(
@@ -94,6 +95,7 @@ export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[
       (!f.sprint || i.sprint?.id === f.sprint) &&
       (f.labels.length === 0 || i.labels.some((l) => f.labels.includes(l.name))) &&
       (!f.repository || i.repository.id === f.repository) &&
+      (!f.project || i.projectIds.includes(f.project)) &&
       (!f.doneThisWeek || i.state === "closed"),
   );
 }
