@@ -38,7 +38,7 @@ public sealed class CredentialKeyring
             var keys = (file.Keys ?? []).ToDictionary(k => int.Parse(k.Key), k => Convert.FromBase64String(k.Value));
             return new CredentialKeyring(file.Current, keys);
         }
-        catch (Exception e) when (e is JsonException or FormatException or OverflowException)
+        catch (Exception e) when (e is JsonException or FormatException or OverflowException or ArgumentException)
         {
             throw new CredentialKeyException("The key file is not valid.", e);
         }

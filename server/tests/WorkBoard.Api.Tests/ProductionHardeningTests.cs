@@ -76,7 +76,24 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
         Assert.DoesNotContain(result.Warnings, w => w.Contains("GitHub:Credentials"));
 
         values["GitHub:Credentials:Key"] = """{"current":1,"keys":{"1":"AAAA"}}""";
-        Assert.Contains(Check(values).Problems, p => p.Contains("GitHub:Credentials:Key"));
+        Assert.Contains(Check(values).Problems, p => p.StartsWith("GitHub:Credentials:Key is not a valid key ring"));
+    }
+
+    [Fact]
+    public void Key_file_and_key_together_warn_that_the_file_is_used()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var values = Good();
+            values["GitHub:Credentials:KeyFile"] = path;
+            values["GitHub:Credentials:Key"] = WorkBoard.Api.Infrastructure.Credentials.CredentialKeyring.NewKeyFileJson();
+            Assert.Contains(Check(values).Warnings, w => w.StartsWith("Both GitHub:Credentials:KeyFile and GitHub:Credentials:Key"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

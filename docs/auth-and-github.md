@@ -152,7 +152,7 @@
 
 ### 키 파일
 
-DB 밖의 JSON 파일이며 `GitHub:Credentials:KeyFile`(환경 변수 `GitHub__Credentials__KeyFile`)이 가리킵니다. 파일을 600으로 둘 수 없는 호스팅에서는 같은 JSON을 `GitHub:Credentials:Key`(환경 변수 `GitHub__Credentials__Key`)에 직접 넣습니다. 둘 다 있으면 파일을 쓰고, 값이 올바르지 않으면 운영 시작 검사가 시작을 거부합니다. 절대 경로이거나 API 폴더 기준 상대 경로입니다. 파일 모드는 600이어야 하고(그룹·기타 권한이 있으면 API가 읽기를 거부), 저장소 밖에 둡니다. `current` 버전 키로 암호화하고, 목록에 있는 어느 버전으로도 복호화합니다.
+DB 밖의 JSON 파일이며 `GitHub:Credentials:KeyFile`(환경 변수 `GitHub__Credentials__KeyFile`)이 가리킵니다. 절대 경로이거나 API 폴더 기준 상대 경로입니다. 파일 모드는 600이어야 하고(그룹·기타 권한이 있으면 API가 읽기를 거부), 저장소 밖에 둡니다. `current` 버전 키로 암호화하고, 목록에 있는 어느 버전으로도 복호화합니다. 파일을 600으로 둘 수 없는 호스팅에서는 같은 JSON을 `GitHub:Credentials:Key`(환경 변수 `GitHub__Credentials__Key`)에 직접 넣습니다. 둘 다 있으면 파일을 쓰고, 값이 올바르지 않으면 운영 시작 검사가 시작을 거부합니다.
 
 ```json
 { "current": 2, "keys": { "1": "<base64 32바이트>", "2": "<base64 32바이트>" } }

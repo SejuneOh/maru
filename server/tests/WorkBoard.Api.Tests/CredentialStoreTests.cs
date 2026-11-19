@@ -103,6 +103,8 @@ public class CredentialStoreTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":2,"keys":{"1":"AAAA"}}"""));
         Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("not json"));
+        Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":1,"keys":{"1":null}}"""));
+        Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":1,"keys":{"1":"AAAA","01":"AAAA"}}"""));
 
         if (OperatingSystem.IsWindows())
             return;
