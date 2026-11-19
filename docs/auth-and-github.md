@@ -152,7 +152,7 @@
 
 ### 키 파일
 
-DB 밖의 JSON 파일이며 `GitHub:Credentials:KeyFile`(환경 변수 `GitHub__Credentials__KeyFile`)이 가리킵니다. 절대 경로이거나 API 폴더 기준 상대 경로입니다. 파일 모드는 600이어야 하고(그룹·기타 권한이 있으면 API가 읽기를 거부), 저장소 밖에 둡니다. `current` 버전 키로 암호화하고, 목록에 있는 어느 버전으로도 복호화합니다.
+DB 밖의 JSON 파일이며 `GitHub:Credentials:KeyFile`(환경 변수 `GitHub__Credentials__KeyFile`)이 가리킵니다. 절대 경로이거나 API 폴더 기준 상대 경로입니다. 파일 모드는 600이어야 하고(그룹·기타 권한이 있으면 API가 읽기를 거부), 저장소 밖에 둡니다. `current` 버전 키로 암호화하고, 목록에 있는 어느 버전으로도 복호화합니다. 파일을 600으로 둘 수 없는 호스팅에서는 같은 JSON을 `GitHub:Credentials:Key`(환경 변수 `GitHub__Credentials__Key`)에 직접 넣습니다. 둘 다 있으면 파일을 쓰고, 값이 올바르지 않으면 운영 시작 검사가 시작을 거부합니다.
 
 ```json
 { "current": 2, "keys": { "1": "<base64 32바이트>", "2": "<base64 32바이트>" } }
@@ -190,7 +190,7 @@ printf '{"current":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)" > ~/.con
 
 ### 테스트 조직용 토큰 만들기
 
-1. 위 "키 파일" 절차로 키 파일을 만들고 `GitHub:Credentials:KeyFile`에 넣습니다.
+1. 위 "키 파일" 절차로 키 파일을 만들고 `GitHub:Credentials:KeyFile`에 넣습니다(Render는 내용을 `GitHub__Credentials__Key`에).
 2. 테스트용 조직(개인 소유, 회사 조직 아님)에서 GitHub Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token으로 갑니다. Resource owner를 그 조직으로 고르고(조직이 토큰 승인을 요구하면 승인), Repository access는 필요한 저장소 또는 All repositories, 권한은 Metadata(read), Issues(read and write), Pull requests(read), Contents(read)로 둡니다. 만료일은 짧게 잡습니다.
 3. 조직이 SAML SSO를 쓰면 토큰의 Configure SSO에서 조직을 승인합니다.
 4. 관리자로 로그인한 상태에서 `POST /api/connections/github-token`에 `{"token": "...", "organization": "<조직 로그인>"}`을 보냅니다. 클래식 토큰을 쓰려면 `repo`와 `read:org`만 체크합니다.

@@ -1014,7 +1014,7 @@ export const ko = {
       org_access_denied: ["조직이 이 토큰의 접근을 막았습니다.", "조직 설정에서 토큰 승인을 받은 뒤 다시 시도해 주세요."],
       organization_mismatch: ["이 토큰은 다른 조직을 가리킵니다.", "이 연결의 조직을 Resource owner로 고른 토큰을 넣어 주세요."],
       account_connected: ["이 조직은 이미 연결되어 있습니다.", "이 회사 목록에 있으면 그 줄에서 토큰을 바꾸고, 없으면 연결한 회사의 관리자에게 문의해 주세요."],
-      credential_store_not_configured: ["서버에 토큰을 보관할 키가 없습니다.", "서버 관리자가 키 파일(GitHub:Credentials:KeyFile)을 설정한 뒤 다시 시도해 주세요."],
+      credential_store_not_configured: ["서버에 토큰을 보관할 키가 없습니다.", "서버 관리자가 키(GitHub:Credentials:KeyFile 또는 GitHub:Credentials:Key)를 설정한 뒤 다시 시도해 주세요."],
       credential_missing: ["저장된 토큰이 없습니다.", "목록에서 토큰을 다시 넣으면 이어집니다."],
       credential_revoked: ["GitHub이 저장된 토큰을 거부했습니다.", "토큰이 지워졌거나 취소되었습니다. 새 토큰으로 바꿔 주세요."],
       credential_invalid: ["저장된 토큰으로 조직에 들어갈 수 없습니다.", "토큰 주인의 조직 구성원 자격과 SSO 승인을 확인하거나 토큰을 바꿔 주세요."],
