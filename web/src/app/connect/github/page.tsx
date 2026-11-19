@@ -153,7 +153,7 @@ export default function ConnectGithubPage() {
 
   useEffect(() => {
     if (state.kind !== "done") return;
-    // The sync status bar and connection lists poll on their own; nudge them so the new connection shows at once.
+    // Nudge the sync status bar so it shows the new connection at once instead of waiting for its poll.
     window.dispatchEvent(new Event(SYNC_CHANGED_EVENT));
     const id = window.setTimeout(() => router.replace("/settings"), REDIRECT_MS);
     return () => window.clearTimeout(id);

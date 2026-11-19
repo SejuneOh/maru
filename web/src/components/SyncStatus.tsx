@@ -78,10 +78,15 @@ export function SyncStatus({
   }, [notice]);
 
   // A finished sync (lastSyncedAt moved) may have brought new issues; tell the issue-showing views to refetch,
-  // so the overview and boards update after a connect or "지금 동기화" without a page reload.
+  // so the overview and boards update after a connect or "지금 동기화" without a page reload. The first loaded
+  // status only seeds the baseline (no event), and a user/tenant switch (data back to null) reseeds it.
   const lastSynced = data?.lastSyncedAt ?? null;
   const seenSync = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    if (!data) {
+      seenSync.current = undefined;
+      return;
+    }
     if (seenSync.current === undefined) {
       seenSync.current = lastSynced;
       return;
@@ -90,7 +95,7 @@ export function SyncStatus({
       seenSync.current = lastSynced;
       if (lastSynced !== null) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
     }
-  }, [lastSynced]);
+  }, [data, lastSynced]);
 
   const alert = data?.tokens.some((h) => urgency(h) < 3) ?? false;
   useEffect(() => onAttention?.(alert), [alert, onAttention]);
