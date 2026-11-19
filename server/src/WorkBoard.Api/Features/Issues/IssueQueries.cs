@@ -12,7 +12,8 @@ public sealed record IssueFilter(
     Guid? SprintId = null,
     bool AllClosed = false,
     bool DoneThisWeek = false,
-    Guid? LabelId = null);
+    string? Label = null,
+    Guid? RepositoryId = null);
 
 public sealed record BacklogFilter(Guid? ProjectId, string? Person, IReadOnlyList<string>? Statuses, int Page, int PageSize);
 
@@ -68,9 +69,11 @@ public static class IssueQueries
                    select 1 from issue_assignees ia
                      join members am on am.github_user_id = ia.github_user_id
                     where ia.issue_id = i.id and am.github_login = @assignee::text and am.left_at is null))
-            and (@labelId::uuid is null or exists (
+            and (@label::text is null or exists (
                    select 1 from issue_labels il
-                    where il.issue_id = i.id and il.label_id = @labelId::uuid))
+                     join labels l on l.id = il.label_id
+                    where il.issue_id = i.id and l.name = @label::text))
+            and (@repositoryId::uuid is null or i.repository_id = @repositoryId::uuid)
             """, new
         {
             filter.ProjectId,
@@ -82,7 +85,8 @@ public static class IssueQueries
             stale = filter.Stale,
             staleDays = Overview.OverviewQueries.StaleDays,
             filter.SprintId,
-            filter.LabelId,
+            label = filter.Label,
+            filter.RepositoryId,
         });
         return issues;
     }

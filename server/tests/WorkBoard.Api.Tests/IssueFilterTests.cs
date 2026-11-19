@@ -153,35 +153,69 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
-    public async Task Label_filter_keeps_only_issues_with_that_label()
+    public async Task Label_filter_by_name_spans_repositories()
     {
         var (t, repo) = await NewTenant(factory);
         await using var _ = t;
-        var labelled = await t.AddIssueAsync(repo);
+        var repo2 = await t.AddRepoAsync("second");
+        var a = await t.AddIssueAsync(repo);
+        var b = await t.AddIssueAsync(repo2);
         var other = await t.AddIssueAsync(repo);
-        var labelId = await t.ScalarAsync<Guid>(
+        // The same label name exists once per repository.
+        var l1 = await t.ScalarAsync<Guid>(
             "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug') returning id",
             new { tid = t.Id, repo, gid = 9001 });
-        await t.ExecAsync("insert into issue_labels (tenant_id, issue_id, label_id) values (@tid, @issue, @label)",
-            new { tid = t.Id, issue = labelled, label = labelId });
+        var l2 = await t.ScalarAsync<Guid>(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug') returning id",
+            new { tid = t.Id, repo = repo2, gid = 9002 });
+        await t.ExecAsync("insert into issue_labels (tenant_id, issue_id, label_id) values (@tid, @a, @l1), (@tid, @b, @l2)",
+            new { tid = t.Id, a, b, l1, l2 });
 
-        var ids = Ids(await t.GetAsync($"/api/issues?label={labelId}"));
-        Assert.Equal([labelled.ToString()], ids);
+        var ids = Ids(await t.GetAsync("/api/issues?label=bug")).Order().ToArray();
+        Assert.Equal(new[] { a.ToString(), b.ToString() }.Order(), ids);
         Assert.DoesNotContain(other.ToString(), ids);
     }
 
     [DbFact]
-    public async Task Labels_endpoint_lists_the_tenant_labels()
+    public async Task Labels_endpoint_lists_each_name_once()
     {
         var (t, repo) = await NewTenant(factory);
         await using var _ = t;
+        var repo2 = await t.AddRepoAsync("second");
         await t.ExecAsync(
-            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug')",
-            new { tid = t.Id, repo, gid = 9100 });
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @r1, 9100, 'bug'), (@tid, @r2, 9101, 'bug')",
+            new { tid = t.Id, r1 = repo, r2 = repo2 });
 
         var res = await t.GetAsync("/api/labels");
         var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
-        Assert.Contains("bug", names);
+        Assert.Single(names, n => n == "bug");
+    }
+
+    [DbFact]
+    public async Task Repository_filter_keeps_only_that_repository()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var repo2 = await t.AddRepoAsync("second");
+        var here = await t.AddIssueAsync(repo);
+        var elsewhere = await t.AddIssueAsync(repo2);
+
+        var ids = Ids(await t.GetAsync($"/api/issues?repository={repo}"));
+        Assert.Equal([here.ToString()], ids);
+        Assert.DoesNotContain(elsewhere.ToString(), ids);
+    }
+
+    [DbFact]
+    public async Task Repositories_endpoint_lists_unarchived()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var archived = await t.AddRepoAsync("old");
+        await t.ExecAsync("update repositories set archived = true where id = @id", new { id = archived });
+
+        var res = await t.GetAsync("/api/repositories");
+        var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
+        Assert.DoesNotContain("old", names);
     }
 
     [DbFact]

@@ -12,7 +12,8 @@ type Props = {
   personName?: (login: string) => string;
   sprintName?: (id: string) => string | undefined;
   projectName?: (id: string) => string | undefined;
-  labelName?: (id: string) => string | undefined;
+  labelName?: (name: string) => string | undefined;
+  repositoryName?: (id: string) => string | undefined;
 };
 
 /** Active board filters as removable chips; nothing renders when no filter is on. */
@@ -22,6 +23,7 @@ export function FilterChips({
   sprintName,
   projectName,
   labelName,
+  repositoryName,
 }: Props) {
   const t = useT();
   const f = t.filters;
@@ -78,6 +80,10 @@ export function FilterChips({
   if (filters.label) {
     const name = labelName?.(filters.label) ?? filters.label;
     chips.push({ key: "label", label: f.labelChip(name), title: f.remove(name), onRemove: () => removeKey("label") });
+  }
+  if (filters.repository) {
+    const name = repositoryName?.(filters.repository) ?? filters.repository;
+    chips.push({ key: "repository", label: f.repositoryChip(name), title: f.remove(name), onRemove: () => removeKey("repository") });
   }
 
   if (chips.length === 0) return null;

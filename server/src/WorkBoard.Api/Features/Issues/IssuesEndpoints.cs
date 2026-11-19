@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using WorkBoard.Api.Infrastructure.GitHub;
+using WorkBoard.Api.Features.Projects;
 using WorkBoard.Api.Features.Sprints;
 using WorkBoard.Api.Infrastructure.Data;
 using WorkBoard.Api.Infrastructure.Identity;
@@ -18,7 +19,7 @@ public static class IssuesEndpoints
     {
         api.MapGet("/issues", async (
             Guid? projectId, string? assignee, string? person, int? doneWithinDays, string? status, bool? stale,
-            Guid? sprint, string? scope, string? doneSince, Guid? label, TenantDb db, CancellationToken ct) =>
+            Guid? sprint, string? scope, string? doneSince, string? label, Guid? repository, TenantDb db, CancellationToken ct) =>
         {
             if (doneWithinDays is < 0 or > MaxDoneWithinDays)
                 return Results.Json(new ErrorBody("invalid_doneWithinDays"), statusCode: StatusCodes.Status400BadRequest);
@@ -48,13 +49,20 @@ public static class IssuesEndpoints
                 sprint,
                 scope == "all",
                 doneSince == "week",
-                label);
+                string.IsNullOrWhiteSpace(label) ? null : label,
+                repository);
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
 
+        // Labels are stored per repository, so the same name can repeat; the board filters by name, so list
+        // each distinct name once (with any one of its colors).
         api.MapGet("/labels", async (TenantDb db, CancellationToken ct) =>
             Results.Ok(await db.ReadAsync(s =>
-                s.QueryAsync<LabelDto>("select id, name, color from labels order by name, id"), ct)));
+                s.QueryAsync<LabelName>("select name, min(color) as color from labels group by name order by name"), ct)));
+
+        api.MapGet("/repositories", async (TenantDb db, CancellationToken ct) =>
+            Results.Ok(await db.ReadAsync(s =>
+                s.QueryAsync<RepositoryRef>("select id, name from repositories where not archived order by name"), ct)));
 
         api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, IOptions<GitHubAppOptions> app, CancellationToken ct) =>
         {

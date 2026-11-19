@@ -66,16 +66,20 @@ export default function BoardPage() {
   const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery(filters));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");
-  // The full tenant label set, so the picker never narrows to a single active label.
-  const labelList = useApi<{ id: string; name: string; color: string | null }[]>("/api/labels");
+  // Distinct label names and the tenant's repositories, so the pickers never narrow to the current filter.
+  const labelList = useApi<{ name: string; color: string | null }[]>("/api/labels");
   const labels = labelList.data ?? [];
+  const repoList = useApi<{ id: string; name: string }[]>("/api/repositories");
+  const repositories = repoList.data ?? [];
   const edited = useEditedIssues(issues.data);
   const filtered = edited ? applyFilters(edited, filters) : null;
 
   const name = {
     person: (login: string) => members.data?.find((m) => m.githubLogin === login)?.displayName ?? login,
     project: (id: string) => projects.data?.find((pr) => pr.id === id)?.name,
-    label: (id: string) => labels.find((l) => l.id === id)?.name,
+    // The label filter is keyed by name, so the value is already the label text.
+    label: (labelName: string) => labelName,
+    repository: (id: string) => repositories.find((r) => r.id === id)?.name,
     sprint: (id: string) => issues.data?.find((i) => i.sprint?.id === id)?.sprint?.name,
   };
 
@@ -103,6 +107,7 @@ export default function BoardPage() {
         projects={projects.data ?? []}
         members={members.data ?? []}
         labels={labels}
+        repositories={repositories}
         myLogin={me.data?.member.githubLogin ?? null}
       />
       <FilterChips
@@ -110,6 +115,7 @@ export default function BoardPage() {
         personName={name.person}
         projectName={name.project}
         labelName={name.label}
+        repositoryName={name.repository}
         sprintName={name.sprint}
       />
       {filtered == null ? (
