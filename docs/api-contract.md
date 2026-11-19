@@ -372,6 +372,7 @@ at least one of `status`, `priority`, `size` must be present, and a present `nul
 
 Creating issues (any member, GitHub write through the App):
 
+- `GET /api/labels` returns the tenant's labels (`id`, `name`, `color`), ordered by name, for the board's label filter.
 - `GET /api/issues/new-options` returns the repositories the caller can create in (active connection with an App
   installation, archived ones last and flagged), the labels of each non-archived repository, and every member as a possible assignee.
 - `POST /api/issues` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`). Body:

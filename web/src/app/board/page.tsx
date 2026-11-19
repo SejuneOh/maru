@@ -22,15 +22,11 @@ export default function BoardPage() {
   const issues = useApi<BoardIssue[]>(issuesQuery(filters));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");
+  // The full tenant label set, so the picker never narrows to a single active label.
+  const labelList = useApi<{ id: string; name: string; color: string | null }[]>("/api/labels");
+  const labels = labelList.data ?? [];
   const edited = useEditedIssues(issues.data);
   const filtered = edited ? applyFilters(edited, filters) : null;
-
-  // The label picker lists the labels actually present on the loaded issues, deduped by id.
-  const labels = (() => {
-    const byId = new Map<string, { id: string; name: string }>();
-    for (const i of issues.data ?? []) for (const l of i.labels) if (!byId.has(l.id)) byId.set(l.id, { id: l.id, name: l.name });
-    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-  })();
 
   const name = {
     person: (login: string) => members.data?.find((m) => m.githubLogin === login)?.displayName ?? login,

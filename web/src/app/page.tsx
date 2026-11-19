@@ -445,7 +445,7 @@ function People({ o, myId }: { o: O; myId: number | null }) {
       className="@container"
       action={
         <Link href="/board" className="inline-flex items-center gap-1.5 hover:text-ink">
-          {pp.board} <Kbd>g p</Kbd>
+          {pp.board} <Kbd>g m</Kbd>
         </Link>
       }
     >

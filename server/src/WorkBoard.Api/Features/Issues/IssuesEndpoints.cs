@@ -52,6 +52,10 @@ public static class IssuesEndpoints
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
 
+        api.MapGet("/labels", async (TenantDb db, CancellationToken ct) =>
+            Results.Ok(await db.ReadAsync(s =>
+                s.QueryAsync<LabelDto>("select id, name, color from labels order by name, id"), ct)));
+
         api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, IOptions<GitHubAppOptions> app, CancellationToken ct) =>
         {
             var detail = await db.ReadAsync(s => IssueDetailQueries.GetAsync(s, id, app.Value), ct);

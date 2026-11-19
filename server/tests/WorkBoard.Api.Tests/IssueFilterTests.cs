@@ -171,6 +171,20 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Labels_endpoint_lists_the_tenant_labels()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        await t.ExecAsync(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug')",
+            new { tid = t.Id, repo, gid = 9100 });
+
+        var res = await t.GetAsync("/api/labels");
+        var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
+        Assert.Contains("bug", names);
+    }
+
+    [DbFact]
     public async Task Unknown_scope_is_rejected()
     {
         using var client = ClientFor("haneul-dev");
