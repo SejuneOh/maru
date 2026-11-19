@@ -5,10 +5,12 @@ import type { BoardIssue, Status } from "./types";
 export type BoardFilters = {
   statuses: Status[];
   stale: boolean;
-  person: string | null;
+  /** Multi-select: any of these assignee logins. */
+  people: string[];
   sprint: string | null;
   project: string | null;
-  label: string | null;
+  /** Multi-select: any of these label names. */
+  labels: string[];
   repository: string | null;
   /** `doneSince=week`: only issues closed since Monday 00:00 Asia/Seoul. */
   doneThisWeek: boolean;
@@ -17,10 +19,10 @@ export type BoardFilters = {
 export const NO_FILTERS: BoardFilters = {
   statuses: [],
   stale: false,
-  person: null,
+  people: [],
   sprint: null,
   project: null,
-  label: null,
+  labels: [],
   repository: null,
   doneThisWeek: false,
 };
@@ -30,19 +32,22 @@ type Params = { get(name: string): string | null };
 export const FILTER_KEYS = ["status", "stale", "person", "sprint", "project", "label", "repository", "doneSince"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
-export function readFilters(params: Params): BoardFilters {
-  const statuses = (params.get("status") ?? "")
+const csv = (value: string | null): string[] =>
+  (value ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s): s is Status => (FILTER_STATUSES as string[]).includes(s));
+    .filter(Boolean);
+
+export function readFilters(params: Params): BoardFilters {
+  const statuses = csv(params.get("status"));
   const stale = params.get("stale");
   return {
     statuses: FILTER_STATUSES.filter((s) => statuses.includes(s)),
     stale: stale === "1" || stale === "true",
-    person: params.get("person") || null,
+    people: csv(params.get("person")),
     sprint: params.get("sprint") || null,
     project: params.get("project") || null,
-    label: params.get("label") || null,
+    labels: csv(params.get("label")),
     repository: params.get("repository") || null,
     doneThisWeek: params.get("doneSince") === "week",
   };
@@ -52,10 +57,10 @@ export function hasFilters(f: BoardFilters): boolean {
   return (
     f.statuses.length > 0 ||
     f.stale ||
-    f.person !== null ||
+    f.people.length > 0 ||
     f.sprint !== null ||
     f.project !== null ||
-    f.label !== null ||
+    f.labels.length > 0 ||
     f.repository !== null ||
     f.doneThisWeek
   );
@@ -66,10 +71,10 @@ export function issuesQuery(f: BoardFilters, extra: Record<string, string> = {})
   const q = new URLSearchParams(extra);
   if (f.statuses.length) q.set("status", f.statuses.join(","));
   if (f.stale) q.set("stale", "true");
-  if (f.person) q.set("person", f.person);
+  if (f.people.length) q.set("person", f.people.join(","));
   if (f.sprint) q.set("sprint", f.sprint);
   if (f.project) q.set("projectId", f.project);
-  if (f.label) q.set("label", f.label);
+  if (f.labels.length) q.set("label", f.labels.join(","));
   if (f.repository) q.set("repository", f.repository);
   if (f.doneThisWeek) q.set("doneSince", "week");
   const s = q.toString();
@@ -85,9 +90,9 @@ export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[
     (i) =>
       (f.statuses.length === 0 || f.statuses.includes(i.status)) &&
       (!f.stale || isStale(i)) &&
-      (!f.person || i.assignees.some((a) => a.githubLogin === f.person)) &&
+      (f.people.length === 0 || i.assignees.some((a) => f.people.includes(a.githubLogin))) &&
       (!f.sprint || i.sprint?.id === f.sprint) &&
-      (!f.label || i.labels.some((l) => l.name === f.label)) &&
+      (f.labels.length === 0 || i.labels.some((l) => f.labels.includes(l.name))) &&
       (!f.repository || i.repository.id === f.repository) &&
       (!f.doneThisWeek || i.state === "closed"),
   );
