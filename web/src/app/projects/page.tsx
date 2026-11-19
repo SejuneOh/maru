@@ -49,7 +49,7 @@ export default function ProjectsBoardPage() {
   const boardEdited = useEditedIssues(board.data);
   const notes = useApi<MeetingNoteSummary[]>("/api/meeting-notes");
   const weekly = useApi<DoneByWeek>("/api/projects/done-by-week");
-  const members = useApi<Member[]>(filters.person ? "/api/members" : null);
+  const members = useApi<Member[]>(filters.people.length ? "/api/members" : null);
 
   const error = projects.error ?? all.error ?? notes.error;
   const header = (

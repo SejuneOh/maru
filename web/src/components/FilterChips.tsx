@@ -4,7 +4,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type BoardFilters, type FilterKey, FILTER_KEYS } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { STATUS_DOT, STALE_DAYS } from "@/lib/labels";
-import type { Status } from "@/lib/types";
 import { Dot } from "./ui";
 
 type Props = {
@@ -41,11 +40,12 @@ export function FilterChips({
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   };
   const removeKey = (key: FilterKey) => replace((n) => n.delete(key));
-  const removeStatus = (s: Status) =>
+  // Drop one value from a comma-list filter (status, person, label), keeping the rest.
+  const removeFrom = (key: FilterKey, current: string[], value: string) =>
     replace((n) => {
-      const rest = filters.statuses.filter((x) => x !== s);
-      if (rest.length) n.set("status", rest.join(","));
-      else n.delete("status");
+      const rest = current.filter((x) => x !== value);
+      if (rest.length) n.set(key, rest.join(","));
+      else n.delete(key);
     });
 
   const chips: { key: string; label: React.ReactNode; title: string; onRemove: () => void }[] = [
@@ -58,16 +58,16 @@ export function FilterChips({
         </>
       ),
       title: f.remove(t.status[s]),
-      onRemove: () => removeStatus(s),
+      onRemove: () => removeFrom("status", filters.statuses, s),
     })),
   ];
   if (filters.stale)
     chips.push({ key: "stale", label: f.stale(STALE_DAYS), title: f.removeStale, onRemove: () => removeKey("stale") });
   if (filters.doneThisWeek)
     chips.push({ key: "doneSince", label: f.doneThisWeek, title: f.remove(f.doneThisWeek), onRemove: () => removeKey("doneSince") });
-  if (filters.person) {
-    const name = personName(filters.person);
-    chips.push({ key: "person", label: f.person(name), title: f.remove(name), onRemove: () => removeKey("person") });
+  for (const login of filters.people) {
+    const name = personName(login);
+    chips.push({ key: `person-${login}`, label: f.person(name), title: f.remove(name), onRemove: () => removeFrom("person", filters.people, login) });
   }
   if (filters.sprint) {
     const name = sprintName?.(filters.sprint) ?? f.sprintFallback;
@@ -77,9 +77,9 @@ export function FilterChips({
     const name = projectName?.(filters.project) ?? filters.project;
     chips.push({ key: "project", label: f.project(name), title: f.remove(name), onRemove: () => removeKey("project") });
   }
-  if (filters.label) {
-    const name = labelName?.(filters.label) ?? filters.label;
-    chips.push({ key: "label", label: f.labelChip(name), title: f.remove(name), onRemove: () => removeKey("label") });
+  for (const l of filters.labels) {
+    const name = labelName?.(l) ?? l;
+    chips.push({ key: `label-${l}`, label: f.labelChip(name), title: f.remove(name), onRemove: () => removeFrom("label", filters.labels, l) });
   }
   if (filters.repository) {
     const name = repositoryName?.(filters.repository) ?? filters.repository;

@@ -243,6 +243,8 @@ export const ko = {
       any: "전체",
       mine: "내 것만",
       showAll: "전체",
+      search: "검색",
+      clear: "지우기",
     },
   },
 
