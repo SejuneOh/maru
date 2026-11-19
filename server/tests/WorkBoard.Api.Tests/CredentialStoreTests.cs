@@ -103,6 +103,8 @@ public class CredentialStoreTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":2,"keys":{"1":"AAAA"}}"""));
         Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("not json"));
+        Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":1,"keys":{"1":null}}"""));
+        Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Parse("""{"current":1,"keys":{"1":"AAAA","01":"AAAA"}}"""));
 
         if (OperatingSystem.IsWindows())
             return;
@@ -115,6 +117,30 @@ public class CredentialStoreTests : IClassFixture<WebApplicationFactory<Program>
 
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
             Assert.Throws<CredentialKeyException>(() => CredentialKeyring.Load(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Key_can_come_from_configuration_and_the_file_wins()
+    {
+        var env = new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ContentRootPath = Path.GetTempPath() };
+        CredentialKeyring Ring(CredentialOptions o) => new FileCredentialKeys(Microsoft.Extensions.Options.Options.Create(o), env).Get();
+
+        Assert.Equal(4, Ring(new CredentialOptions { Key = CredentialKeyring.NewKeyFileJson(4) }).CurrentVersion);
+        Assert.Throws<CredentialKeyException>(() => Ring(new CredentialOptions()));
+
+        if (OperatingSystem.IsWindows())
+            return;
+        var path = Path.Combine(Path.GetTempPath(), "wb-key-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            File.WriteAllText(path, CredentialKeyring.NewKeyFileJson(2));
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            Assert.Equal(2, Ring(new CredentialOptions { KeyFile = path, Key = CredentialKeyring.NewKeyFileJson(4) }).CurrentVersion);
         }
         finally
         {

@@ -1005,7 +1005,7 @@ export const en: Dict = {
       org_access_denied: ["The organization blocks this token.", "Get the token approved in the organization's settings, then try again."],
       organization_mismatch: ["This token points to another organization.", "Use a token whose Resource owner is this connection's organization."],
       account_connected: ["This organization is already connected.", "If it is in this list, replace its token there; otherwise ask the admin of the company that connected it."],
-      credential_store_not_configured: ["The server has no key to store tokens.", "A server admin sets GitHub:Credentials:KeyFile, then try again."],
+      credential_store_not_configured: ["The server has no key to store tokens.", "A server admin sets GitHub:Credentials:KeyFile or GitHub:Credentials:Key, then try again."],
       credential_missing: ["No token is stored.", "Add a token from the list to continue."],
       credential_revoked: ["GitHub refused the stored token.", "It was deleted or revoked. Replace it with a new one."],
       credential_invalid: ["The stored token cannot reach the organization.", "Check the owner's membership and SSO, or replace the token."],
