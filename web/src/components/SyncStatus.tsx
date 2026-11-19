@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ApiError, SYNC_CHANGED_EVENT, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, ISSUES_CHANGED_EVENT, SYNC_CHANGED_EVENT, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
 import { type Dict, type Format, useFormat, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import type { RunSyncError, SyncStatus as Status, TokenHealth } from "@/lib/types";
@@ -76,6 +76,26 @@ export function SyncStatus({
     const id = setTimeout(() => setNotice(null), NOTICE_MS);
     return () => clearTimeout(id);
   }, [notice]);
+
+  // A finished sync (lastSyncedAt moved) may have brought new issues; tell the issue-showing views to refetch,
+  // so the overview and boards update after a connect or "지금 동기화" without a page reload. The first loaded
+  // status only seeds the baseline (no event), and a user/tenant switch (data back to null) reseeds it.
+  const lastSynced = data?.lastSyncedAt ?? null;
+  const seenSync = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!data) {
+      seenSync.current = undefined;
+      return;
+    }
+    if (seenSync.current === undefined) {
+      seenSync.current = lastSynced;
+      return;
+    }
+    if (seenSync.current !== lastSynced) {
+      seenSync.current = lastSynced;
+      if (lastSynced !== null) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
+    }
+  }, [data, lastSynced]);
 
   const alert = data?.tokens.some((h) => urgency(h) < 3) ?? false;
   useEffect(() => onAttention?.(alert), [alert, onAttention]);

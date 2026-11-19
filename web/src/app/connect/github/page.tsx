@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { GitHubMark } from "@/components/Auth";
 import { ConnectionRequestPanel, ConnectionRow, githubInstallUrl } from "@/components/Connections";
 import { PageHeader } from "@/components/ui";
-import { ApiError, apiGet, apiPost, createConnectionRequest } from "@/lib/api";
+import { ApiError, SYNC_CHANGED_EVENT, apiGet, apiPost, createConnectionRequest } from "@/lib/api";
 import { type Dict, useT } from "@/lib/i18n";
 import type { ConnectGithubError, ConnectGithubRequest, ConnectionRequest, GithubConnection } from "@/lib/types";
 
@@ -153,6 +153,8 @@ export default function ConnectGithubPage() {
 
   useEffect(() => {
     if (state.kind !== "done") return;
+    // Nudge the sync status bar so it shows the new connection at once instead of waiting for its poll.
+    window.dispatchEvent(new Event(SYNC_CHANGED_EVENT));
     const id = window.setTimeout(() => router.replace("/settings"), REDIRECT_MS);
     return () => window.clearTimeout(id);
   }, [state.kind, router]);
