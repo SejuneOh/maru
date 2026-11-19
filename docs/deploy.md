@@ -51,6 +51,7 @@ alter default privileges in schema public revoke all on functions from anon, aut
 | `Web__AllowedOrigins__0` | CORS 허용 출처. 웹의 출처와 같은 값 (필수, https). 여러 개면 `__1`, `__2` |
 | `GitHub__App__AppId`, `ClientId`, `ClientSecret`, `PrivateKeyPath`, `Slug`, `WebhookSecret` | GitHub App 값. 하나라도 넣으면 `WebhookSecret` 외에는 모두 필요. 설명은 README "GitHub App 설정" |
 | `GitHub__Credentials__KeyFile` | 토큰 암호화 키 파일 절대 경로(모드 600, 저장소 밖). 없으면 토큰 연결 저장 불가(경고) |
+| `GitHub__Credentials__Key` | 키 파일 대신 키 파일 JSON 내용을 그대로. 파일 권한을 600으로 둘 수 없는 호스팅(Render)용. `KeyFile`이 있으면 파일을 씀 |
 | `Sync__Enabled` | 기본 `true` |
 | `Maintenance__IdempotencyRetentionHours` | 만료된 멱등성 키 보관 시간. 기본 48, 최소 24 |
 | `Maintenance__CleanupIntervalMinutes` | 정리 주기. 기본 60 |
@@ -86,7 +87,7 @@ API는 시작하면서 다음을 검사하고, 하나라도 어긋나면 이유�
 - `Auth:Supabase:Url`, `ServiceRoleKey` 누락
 - GitHub App이 일부만 설정됨, 개인 키 또는 자격 증명 키 파일이 없음
 
-경고만 하는 항목: loopback 밖 바인딩(Render는 `0.0.0.0:10000`), App 미설정, `WebhookSecret` 없음, `KeyFile` 없음.
+경고만 하는 항목: loopback 밖 바인딩(Render는 `0.0.0.0:10000`), App 미설정, `WebhookSecret` 없음, `KeyFile`과 `Key` 모두 없음.
 
 Development로 실행 중인 API는 `localhost` 밖에 바인딩하면 시작하지 않고, Cloudflare를 거친 요청(`CF-Connecting-IP`, `CF-Ray` 헤더)에는 `X-Dev-User` 로그인을 받지 않습니다. 운영에서 `ASPNETCORE_ENVIRONMENT`를 `Development`로 두지 마세요.
 
@@ -94,7 +95,7 @@ Development로 실행 중인 API는 `localhost` 밖에 바인딩하면 시작하
 
 1. Render Dashboard → New → Blueprint에서 이 저장소를 연결하면 `render.yaml`의 `maru-api`가 만들어집니다(무료, Singapore, `main`, 자동 배포 끔).
 2. `sync: false` 값(2장의 연결 문자열 App/Sync, Supabase URL과 service role 키, `Web__*`)을 입력합니다. `ConnectionStrings__Migrate`와 `Database__*`는 Render에 넣지 않습니다.
-3. GitHub App을 쓰면 `GitHub__App__*` 값을 환경 변수로, 개인 키와 자격 증명 키 파일은 Secret Files(`/etc/secrets/<이름>`)로 넣고 경로를 `GitHub__App__PrivateKeyPath`, `GitHub__Credentials__KeyFile`에 줍니다.
+3. GitHub App을 쓰면 `GitHub__App__*` 값을 환경 변수로, App 개인 키는 Secret File(`/etc/secrets/<이름>`)로 넣고 경로를 `GitHub__App__PrivateKeyPath`에 줍니다. 자격 증명 키는 Secret File의 권한이 600 검사를 통과하지 못하므로 키 파일 JSON 한 줄을 환경 변수 `GitHub__Credentials__Key`에 넣습니다.
 4. Settings → Deploy Hook 주소를 복사해 5장의 `RENDER_DEPLOY_HOOK_URL`에 넣습니다.
 
 서비스 주소는 `https://<서비스 이름>.onrender.com`(이름이 이미 있으면 뒤에 문자가 붙음)입니다. 이 주소가 API 주소입니다.

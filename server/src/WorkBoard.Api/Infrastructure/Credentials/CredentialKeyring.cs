@@ -83,9 +83,11 @@ public sealed class FileCredentialKeys(IOptions<CredentialOptions> options, IHos
     private readonly Lazy<CredentialKeyring> _ring = new(() =>
     {
         var path = options.Value.KeyFile;
-        if (string.IsNullOrWhiteSpace(path))
-            throw new CredentialKeyException("GitHub:Credentials:KeyFile is not set.");
-        return CredentialKeyring.Load(Path.GetFullPath(path, env.ContentRootPath));
+        if (!string.IsNullOrWhiteSpace(path))
+            return CredentialKeyring.Load(Path.GetFullPath(path, env.ContentRootPath));
+        if (!string.IsNullOrWhiteSpace(options.Value.Key))
+            return CredentialKeyring.Parse(options.Value.Key);
+        throw new CredentialKeyException("Neither GitHub:Credentials:KeyFile nor GitHub:Credentials:Key is set.");
     });
 
     public CredentialKeyring Get() => _ring.Value;

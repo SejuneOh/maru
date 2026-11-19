@@ -155,11 +155,29 @@ public static class StartupGuard
             warnings.Add("The GitHub App is not configured: only token connections work.");
         }
 
-        var keyFile = config.GetSection(CredentialOptions.Section).Get<CredentialOptions>()?.KeyFile;
-        if (string.IsNullOrWhiteSpace(keyFile))
-            warnings.Add("GitHub:Credentials:KeyFile is not set: token connections cannot be stored.");
-        else if (!File.Exists(Resolve(env, keyFile)))
-            problems.Add("GitHub:Credentials:KeyFile does not point to a readable file.");
+        var credentials = config.GetSection(CredentialOptions.Section).Get<CredentialOptions>();
+        if (!string.IsNullOrWhiteSpace(credentials?.KeyFile))
+        {
+            if (!File.Exists(Resolve(env, credentials.KeyFile)))
+                problems.Add("GitHub:Credentials:KeyFile does not point to a readable file.");
+            if (!string.IsNullOrWhiteSpace(credentials.Key))
+                warnings.Add("Both GitHub:Credentials:KeyFile and GitHub:Credentials:Key are set: the key file is used.");
+        }
+        else if (!string.IsNullOrWhiteSpace(credentials?.Key))
+        {
+            try
+            {
+                CredentialKeyring.Parse(credentials.Key);
+            }
+            catch (CredentialKeyException e)
+            {
+                problems.Add($"GitHub:Credentials:Key is not a valid key ring: {e.Message}");
+            }
+        }
+        else
+        {
+            warnings.Add("Neither GitHub:Credentials:KeyFile nor GitHub:Credentials:Key is set: token connections cannot be stored.");
+        }
     }
 
     private static string Resolve(IHostEnvironment env, string path) =>

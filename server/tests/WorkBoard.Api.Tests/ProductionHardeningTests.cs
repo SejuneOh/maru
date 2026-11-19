@@ -67,6 +67,19 @@ public class ProductionHardeningTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
+    public void Credential_key_from_configuration_is_validated()
+    {
+        var values = Good();
+        values["GitHub:Credentials:Key"] = WorkBoard.Api.Infrastructure.Credentials.CredentialKeyring.NewKeyFileJson();
+        var result = Check(values);
+        Assert.Empty(result.Problems);
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("GitHub:Credentials"));
+
+        values["GitHub:Credentials:Key"] = """{"current":1,"keys":{"1":"AAAA"}}""";
+        Assert.Contains(Check(values).Problems, p => p.Contains("GitHub:Credentials:Key"));
+    }
+
+    [Fact]
     public void Missing_origins_are_rejected()
     {
         var values = Good();
