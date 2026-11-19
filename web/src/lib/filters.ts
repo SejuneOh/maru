@@ -85,7 +85,7 @@ export function issuesQuery(f: BoardFilters, extra: Record<string, string> = {})
  * The server filters too; this keeps the board right if it is talking to an older API.
  * The week boundary itself is left to the server, which knows the Asia/Seoul Monday.
  */
-export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[] {
+export function applyFilters(issues: BoardIssue[], f: BoardFilters, projectRepoIds?: ReadonlySet<string> | null): BoardIssue[] {
   return issues.filter(
     (i) =>
       (f.statuses.length === 0 || f.statuses.includes(i.status)) &&
@@ -94,6 +94,8 @@ export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[
       (!f.sprint || i.sprint?.id === f.sprint) &&
       (f.labels.length === 0 || i.labels.some((l) => f.labels.includes(l.name))) &&
       (!f.repository || i.repository.id === f.repository) &&
+      // The board resolves the project filter here from its repositories, so a change needs no refetch.
+      (!f.project || (projectRepoIds?.has(i.repository.id) ?? false)) &&
       (!f.doneThisWeek || i.state === "closed"),
   );
 }
