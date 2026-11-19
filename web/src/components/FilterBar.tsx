@@ -35,14 +35,21 @@ function FilterMenu({
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setQ("");
+      return;
+    }
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -59,7 +66,7 @@ function FilterMenu({
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className={`${CONTROL} inline-flex items-center gap-1.5 pl-3.5 pr-3 ${on ? TRIGGER_ON : TRIGGER_IDLE}`}>
+      <button ref={triggerRef} type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} className={`${CONTROL} inline-flex items-center gap-1.5 pl-3.5 pr-3 ${on ? TRIGGER_ON : TRIGGER_IDLE}`}>
         <span className="max-w-[12rem] truncate">{triggerText}</span>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden className={on ? "text-surface/80" : "text-muted"}>
           <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -67,7 +74,7 @@ function FilterMenu({
       </button>
 
       {open && (
-        <div role="listbox" className="absolute left-0 z-40 mt-1.5 max-h-[18rem] w-56 overflow-auto rounded-item bg-surface p-1 shadow-elev-2 ring-1 ring-[var(--wb-rule-strong)]">
+        <div className="absolute left-0 z-40 mt-1.5 max-h-[18rem] w-56 max-w-[calc(100vw-2rem)] overflow-auto rounded-item bg-surface p-1 shadow-elev-2 ring-1 ring-[var(--wb-rule-strong)]">
           {searchable && (
             <input
               autoFocus
@@ -77,17 +84,21 @@ function FilterMenu({
               className="mb-1 h-8 w-full rounded-control bg-sunken px-3 text-small text-ink placeholder:text-muted focus:outline-none"
             />
           )}
+          <div role="menu" aria-label={label}>
           {shown.map((o) => {
             const checked = selected.includes(o.value);
             return (
               <button
                 key={o.value}
                 type="button"
-                role="option"
-                aria-selected={checked}
+                role={multi ? "menuitemcheckbox" : "menuitemradio"}
+                aria-checked={checked}
                 onClick={() => {
                   onToggle(o.value);
-                  if (!multi) setOpen(false);
+                  if (!multi) {
+                    setOpen(false);
+                    triggerRef.current?.focus();
+                  }
                 }}
                 className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-small text-ink hover:bg-hover"
               >
@@ -103,6 +114,7 @@ function FilterMenu({
               </button>
             );
           })}
+          </div>
           {on && (
             <button type="button" onClick={onClear} className="mt-1 w-full rounded-control px-2.5 py-1.5 text-left text-small text-ink-soft hover:bg-hover hover:text-ink">
               {p.clear}
@@ -194,7 +206,7 @@ export function FilterBar({ filters, projects, members, labels, repositories, my
       />
 
       {myLogin != null && (
-        <button type="button" aria-pressed={mine} onClick={() => (mine ? showAll() : setSingle("person", myLogin))} className={pill(mine)}>
+        <button type="button" aria-pressed={mine} onClick={() => setSingle("person", mine ? null : myLogin)} className={pill(mine)}>
           {p.mine}
         </button>
       )}
