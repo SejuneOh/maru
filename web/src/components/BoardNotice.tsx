@@ -9,6 +9,26 @@ import { Dot, Kbd } from "./ui";
 import { ISSUE_ATTR, isTyping } from "./useShortcuts";
 import { NEW_ISSUE, useIssuePanel } from "./useIssuePanel";
 
+/** A quiet warning mark for failure notices: it lifts them out of the normal flow without a red fill. */
+function WarnGlyph() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden
+      className="mt-0.5 shrink-0 text-ink-soft"
+    >
+      <path d="M8 1.75 14.75 13.5H1.25L8 1.75Z" strokeLinejoin="round" />
+      <path d="M8 6.5v3.25" strokeLinecap="round" />
+      <circle cx="8" cy="11.75" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** `s` then a number: the order the columns read, with cancelled last. */
 export const STATUS_KEYS: Status[] = ["todo", "in_progress", "in_review", "done", "cancelled"];
 const KEY_TIMEOUT_MS = 2000;
@@ -66,6 +86,7 @@ function NoticeCard({ notice }: { notice: Notice }) {
           notice.failed ? "border-l-2 border-ink-soft" : ""
         }`}
       >
+        {notice.failed && <WarnGlyph />}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
           <p className="text-ui text-ink">{notice.title}</p>
           {notice.detail && <p className="text-small text-ink-soft">{notice.detail}</p>}
@@ -96,6 +117,8 @@ function NoticeCard({ notice }: { notice: Notice }) {
       }`}
     >
       {notice.kind === "failed" ? (
+        <>
+        <WarnGlyph />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
           <p className="text-ui text-ink">{e.failed(notice.ref)}</p>
           <p className="text-small text-ink-soft">{e.errors[notice.failure satisfies EditFailure]}</p>
@@ -112,6 +135,7 @@ function NoticeCard({ notice }: { notice: Notice }) {
             </button>
           )}
         </div>
+        </>
       ) : (
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
           <p className="flex items-center gap-2 text-ui text-ink">
