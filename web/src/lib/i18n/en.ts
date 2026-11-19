@@ -223,11 +223,13 @@ export const en: Dict = {
     sprint: (name) => `Cycle ${name}`,
     project: (name) => `Project ${name}`,
     labelChip: (name) => `Label ${name}`,
+    repositoryChip: (name) => `Repo ${name}`,
     pick: {
       status: "Status",
       person: "Assignee",
       project: "Project",
       label: "Label",
+      repository: "Repo",
       any: "All",
       mine: "Mine only",
       showAll: "All",

@@ -9,6 +9,7 @@ export type BoardFilters = {
   sprint: string | null;
   project: string | null;
   label: string | null;
+  repository: string | null;
   /** `doneSince=week`: only issues closed since Monday 00:00 Asia/Seoul. */
   doneThisWeek: boolean;
 };
@@ -20,12 +21,13 @@ export const NO_FILTERS: BoardFilters = {
   sprint: null,
   project: null,
   label: null,
+  repository: null,
   doneThisWeek: false,
 };
 
 type Params = { get(name: string): string | null };
 
-export const FILTER_KEYS = ["status", "stale", "person", "sprint", "project", "label", "doneSince"] as const;
+export const FILTER_KEYS = ["status", "stale", "person", "sprint", "project", "label", "repository", "doneSince"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
 export function readFilters(params: Params): BoardFilters {
@@ -41,6 +43,7 @@ export function readFilters(params: Params): BoardFilters {
     sprint: params.get("sprint") || null,
     project: params.get("project") || null,
     label: params.get("label") || null,
+    repository: params.get("repository") || null,
     doneThisWeek: params.get("doneSince") === "week",
   };
 }
@@ -53,6 +56,7 @@ export function hasFilters(f: BoardFilters): boolean {
     f.sprint !== null ||
     f.project !== null ||
     f.label !== null ||
+    f.repository !== null ||
     f.doneThisWeek
   );
 }
@@ -66,6 +70,7 @@ export function issuesQuery(f: BoardFilters, extra: Record<string, string> = {})
   if (f.sprint) q.set("sprint", f.sprint);
   if (f.project) q.set("projectId", f.project);
   if (f.label) q.set("label", f.label);
+  if (f.repository) q.set("repository", f.repository);
   if (f.doneThisWeek) q.set("doneSince", "week");
   const s = q.toString();
   return s ? `/api/issues?${s}` : "/api/issues";
@@ -82,7 +87,8 @@ export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[
       (!f.stale || isStale(i)) &&
       (!f.person || i.assignees.some((a) => a.githubLogin === f.person)) &&
       (!f.sprint || i.sprint?.id === f.sprint) &&
-      (!f.label || i.labels.some((l) => l.id === f.label)) &&
+      (!f.label || i.labels.some((l) => l.name === f.label)) &&
+      (!f.repository || i.repository.id === f.repository) &&
       (!f.doneThisWeek || i.state === "closed"),
   );
 }

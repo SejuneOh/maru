@@ -6,22 +6,58 @@ import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import type { Member, Project, Status } from "@/lib/types";
 
-type LabelOption = { id: string; name: string };
+type LabelOption = { name: string };
+type RepoOption = { id: string; name: string };
 
 type Props = {
   filters: BoardFilters;
   projects: Project[];
   members: Member[];
   labels: LabelOption[];
+  repositories: RepoOption[];
   /** The signed-in person's GitHub login, for the "mine only" toggle. */
   myLogin?: string | null;
 };
 
-const SELECT =
-  "h-8 cursor-pointer rounded-control bg-surface px-2 text-small font-medium text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] transition-colors duration-[120ms] ease-tool hover:bg-hover focus:shadow-[inset_0_0_0_2px_var(--wb-focus)] focus:outline-none";
+const CONTROL =
+  "h-8 cursor-pointer rounded-full text-small font-medium transition-colors duration-[120ms] ease-tool focus:outline-none";
+const SELECT = `${CONTROL} appearance-none bg-surface pl-3.5 pr-8 text-ink shadow-[inset_0_0_0_1px_var(--wb-rule)] hover:bg-hover focus:shadow-[inset_0_0_0_1.5px_var(--wb-focus)]`;
+
+/** A pill-shaped native select with a chevron, so the board filters read as one clean row of controls. */
+function Picker({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string | null) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value || null)} className={SELECT}>
+        {children}
+      </select>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        aria-hidden
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+      >
+        <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
 
 /** The pickers that set board filters. Each writes its key into the URL; FilterChips shows and clears them. */
-export function FilterBar({ filters, projects, members, labels, myLogin }: Props) {
+export function FilterBar({ filters, projects, members, labels, repositories, myLogin }: Props) {
   const t = useT();
   const p = t.filters.pick;
   const router = useRouter();
@@ -42,69 +78,62 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
   const mine = myLogin != null && filters.person === myLogin;
   const showAll = () => router.replace(`${pathname}?view=all`, { scroll: false });
   const allOn = !FILTER_KEYS.some((k) => params.has(k));
+  const pill = (on: boolean) =>
+    `${CONTROL} px-3.5 ${on ? "bg-ink text-surface" : "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--wb-rule)] hover:bg-hover"}`;
 
   return (
     <div className="flex flex-wrap items-center gap-2" aria-label={t.filters.label}>
-      <select className={SELECT} aria-label={p.status} value={filters.statuses[0] ?? ""} onChange={(e) => set("status", e.target.value || null)}>
+      <Picker label={p.status} value={filters.statuses[0] ?? ""} onChange={(v) => set("status", v)}>
         <option value="">{p.status}: {p.any}</option>
         {STATUS_ORDER.map((s: Status) => (
           <option key={s} value={s}>
             {t.status[s]}
           </option>
         ))}
-      </select>
+      </Picker>
 
-      <select className={SELECT} aria-label={p.person} value={filters.person ?? ""} onChange={(e) => set("person", e.target.value || null)}>
+      <Picker label={p.person} value={filters.person ?? ""} onChange={(v) => set("person", v)}>
         <option value="">{p.person}: {p.any}</option>
         {members.map((m) => (
           <option key={m.githubLogin} value={m.githubLogin}>
             {m.displayName ?? m.githubLogin}
           </option>
         ))}
-      </select>
+      </Picker>
 
-      <select className={SELECT} aria-label={p.project} value={filters.project ?? ""} onChange={(e) => set("project", e.target.value || null)}>
+      <Picker label={p.project} value={filters.project ?? ""} onChange={(v) => set("project", v)}>
         <option value="">{p.project}: {p.any}</option>
         {projects.map((pr) => (
           <option key={pr.id} value={pr.id}>
             {pr.name}
           </option>
         ))}
-      </select>
+      </Picker>
 
-      <select className={SELECT} aria-label={p.label} value={filters.label ?? ""} onChange={(e) => set("label", e.target.value || null)}>
+      <Picker label={p.repository} value={filters.repository ?? ""} onChange={(v) => set("repository", v)}>
+        <option value="">{p.repository}: {p.any}</option>
+        {repositories.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </Picker>
+
+      <Picker label={p.label} value={filters.label ?? ""} onChange={(v) => set("label", v)}>
         <option value="">{p.label}: {p.any}</option>
         {labels.map((l) => (
-          <option key={l.id} value={l.id}>
+          <option key={l.name} value={l.name}>
             {l.name}
           </option>
         ))}
-      </select>
+      </Picker>
 
       {myLogin != null && (
-        <button
-          type="button"
-          aria-pressed={mine}
-          onClick={() => set("person", mine ? null : myLogin)}
-          className={`h-8 cursor-pointer rounded-control px-3 text-small font-medium transition-colors duration-[120ms] ease-tool ${
-            mine
-              ? "bg-ink text-surface"
-              : "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] hover:bg-hover"
-          }`}
-        >
+        <button type="button" aria-pressed={mine} onClick={() => set("person", mine ? null : myLogin)} className={pill(mine)}>
           {p.mine}
         </button>
       )}
-      <button
-        type="button"
-        aria-pressed={allOn}
-        onClick={showAll}
-        className={`h-8 cursor-pointer rounded-control px-3 text-small font-medium transition-colors duration-[120ms] ease-tool ${
-          allOn
-            ? "bg-ink text-surface"
-            : "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] hover:bg-hover"
-        }`}
-      >
+      <button type="button" aria-pressed={allOn} onClick={showAll} className={pill(allOn)}>
         {p.showAll}
       </button>
     </div>
