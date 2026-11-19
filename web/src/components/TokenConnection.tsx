@@ -11,6 +11,7 @@ import {
   updateRepositorySelection,
   useApi,
 } from "@/lib/api";
+import { showMessage } from "@/lib/boardEdits";
 import { type Dict, useFormat, useT } from "@/lib/i18n";
 import type {
   GithubConnection,
@@ -332,6 +333,7 @@ export function TokenConnectFlow({ onClose, onConnected }: { onClose: () => void
     } catch (err) {
       const f = tokenFailureOf(err, tt.errors);
       setFailure(f);
+      showMessage({ title: tt.errors[f.reason][0], detail: tt.errors[f.reason][1], failed: true });
       (ORG_ERRORS.has(f.reason) ? orgRef : tokenRef).current?.focus();
     } finally {
       setBusy(false);
