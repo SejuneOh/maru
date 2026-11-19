@@ -18,7 +18,7 @@ public static class IssuesEndpoints
     {
         api.MapGet("/issues", async (
             Guid? projectId, string? assignee, string? person, int? doneWithinDays, string? status, bool? stale,
-            Guid? sprint, string? scope, string? doneSince, TenantDb db, CancellationToken ct) =>
+            Guid? sprint, string? scope, string? doneSince, Guid? label, TenantDb db, CancellationToken ct) =>
         {
             if (doneWithinDays is < 0 or > MaxDoneWithinDays)
                 return Results.Json(new ErrorBody("invalid_doneWithinDays"), statusCode: StatusCodes.Status400BadRequest);
@@ -47,7 +47,8 @@ public static class IssuesEndpoints
                 stale ?? false,
                 sprint,
                 scope == "all",
-                doneSince == "week");
+                doneSince == "week",
+                label);
             return Results.Ok(await db.ReadAsync(s => IssueQueries.ListAsync(s, filter), ct));
         });
 

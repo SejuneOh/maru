@@ -160,10 +160,10 @@ function Stats({ o }: { o: Overview }) {
   const todo = Math.max(0, o.counts.open - o.counts.inProgress - o.counts.inReview);
 
   const stats = [
-    { href: "/people?status=in_progress", dot: STATUS_DOT.in_progress, label: st.inProgress, n: o.counts.inProgress, note: moving ? st.movingPeople(moving) : st.nobodyMoving, title: st.inProgressTitle },
-    { href: "/people?status=in_review", dot: STATUS_DOT.in_review, label: st.review, n: o.counts.inReview, note: wait === null ? st.noReviewRequested : st.oldestWait(wait), title: st.reviewTitle },
-    { href: "/people?stale=1", dot: STATUS_DOT.todo, label: st.stale, n: o.counts.stale, note: o.counts.stale ? st.longestIdle(maxIdle) : st.nothingStale, title: st.staleTitle, warn: o.counts.stale > 0 },
-    { href: "/people?status=done&doneSince=week", dot: STATUS_DOT.done, label: st.doneThisWeek, n: o.counts.doneThisWeek, note: finishers || st.sinceMonday, title: st.doneTitle },
+    { href: "/board?status=in_progress", dot: STATUS_DOT.in_progress, label: st.inProgress, n: o.counts.inProgress, note: moving ? st.movingPeople(moving) : st.nobodyMoving, title: st.inProgressTitle },
+    { href: "/board?status=in_review", dot: STATUS_DOT.in_review, label: st.review, n: o.counts.inReview, note: wait === null ? st.noReviewRequested : st.oldestWait(wait), title: st.reviewTitle },
+    { href: "/board?stale=1", dot: STATUS_DOT.todo, label: st.stale, n: o.counts.stale, note: o.counts.stale ? st.longestIdle(maxIdle) : st.nothingStale, title: st.staleTitle, warn: o.counts.stale > 0 },
+    { href: "/board?status=done&doneSince=week", dot: STATUS_DOT.done, label: st.doneThisWeek, n: o.counts.doneThisWeek, note: finishers || st.sinceMonday, title: st.doneTitle },
   ];
 
   return (
@@ -352,7 +352,7 @@ function Attention({ o, myLogin }: { o: O; myLogin: string | null }) {
         <span className="text-right">{at.colAge}</span>
       </div>
       {a.urgent.length > 0 && (
-        <Group flag={<Flag fill>{t.priority.urgent}</Flag>} total={tt.urgent} why={at.urgentWhy} more={{ href: "/people", shown: a.urgent.length }}>
+        <Group flag={<Flag fill>{t.priority.urgent}</Flag>} total={tt.urgent} why={at.urgentWhy} more={{ href: "/board", shown: a.urgent.length }}>
           {a.urgent.map(({ issue, notStarted }) => (
             <IssueRow
               key={issue.id}
@@ -365,7 +365,7 @@ function Attention({ o, myLogin }: { o: O; myLogin: string | null }) {
         </Group>
       )}
       {a.reviewWaiting.length > 0 && (
-        <Group flag={<Flag>{at.review}</Flag>} total={tt.reviewWaiting} why={at.reviewWhy} more={{ href: "/people?status=in_review", shown: a.reviewWaiting.length }}>
+        <Group flag={<Flag>{at.review}</Flag>} total={tt.reviewWaiting} why={at.reviewWhy} more={{ href: "/board?status=in_review", shown: a.reviewWaiting.length }}>
           {a.reviewWaiting.map(({ issue, pullRequest: pr }) => {
             const mine = myLogin !== null && (pr.authorGithubLogin === myLogin || issue.assignees.some((x) => x.githubLogin === myLogin));
             return (
@@ -381,14 +381,14 @@ function Attention({ o, myLogin }: { o: O; myLogin: string | null }) {
         </Group>
       )}
       {a.stale.length > 0 && (
-        <Group flag={<Flag>{at.stalled}</Flag>} total={tt.stale} why={o.counts.stale > tt.stale ? at.staleWhyExcluded(o.counts.stale - tt.stale) : at.staleWhy} more={{ href: "/people?stale=1", shown: a.stale.length }}>
+        <Group flag={<Flag>{at.stalled}</Flag>} total={tt.stale} why={o.counts.stale > tt.stale ? at.staleWhyExcluded(o.counts.stale - tt.stale) : at.staleWhy} more={{ href: "/board?stale=1", shown: a.stale.length }}>
           {a.stale.map(({ issue, idleDays }) => (
             <IssueRow key={issue.id} issue={issue} faded status={<StatusBadge status={issue.status} />} age={<Flag>{at.idleDays(idleDays)}</Flag>} />
           ))}
         </Group>
       )}
       {a.unassigned.length > 0 && (
-        <Group flag={<Flag>{t.common.unassigned}</Flag>} total={tt.unassigned} why={at.unassignedWhy} more={{ href: "/people", shown: a.unassigned.length }}>
+        <Group flag={<Flag>{t.common.unassigned}</Flag>} total={tt.unassigned} why={at.unassignedWhy} more={{ href: "/board", shown: a.unassigned.length }}>
           {a.unassigned.map((issue) => (
             <IssueRow key={issue.id} issue={issue} status={<StatusBadge status={issue.status} />} age={fmt.relativeDays(issue.updatedAt, true)} />
           ))}
@@ -444,7 +444,7 @@ function People({ o, myId }: { o: O; myId: number | null }) {
       hint={pp.hint}
       className="@container"
       action={
-        <Link href="/people" className="inline-flex items-center gap-1.5 hover:text-ink">
+        <Link href="/board" className="inline-flex items-center gap-1.5 hover:text-ink">
           {pp.board} <Kbd>g p</Kbd>
         </Link>
       }
@@ -466,7 +466,7 @@ function People({ o, myId }: { o: O; myId: number | null }) {
     <ul>
       {o.people.map((p) => {
         const openCount = p.todo + p.inProgress + p.inReview;
-        const href = `/people?person=${encodeURIComponent(p.member.githubLogin)}`;
+        const href = `/board?person=${encodeURIComponent(p.member.githubLogin)}`;
         return (
           <li
             key={p.member.id}

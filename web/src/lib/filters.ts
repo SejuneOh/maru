@@ -7,15 +7,25 @@ export type BoardFilters = {
   stale: boolean;
   person: string | null;
   sprint: string | null;
+  project: string | null;
+  label: string | null;
   /** `doneSince=week`: only issues closed since Monday 00:00 Asia/Seoul. */
   doneThisWeek: boolean;
 };
 
-export const NO_FILTERS: BoardFilters = { statuses: [], stale: false, person: null, sprint: null, doneThisWeek: false };
+export const NO_FILTERS: BoardFilters = {
+  statuses: [],
+  stale: false,
+  person: null,
+  sprint: null,
+  project: null,
+  label: null,
+  doneThisWeek: false,
+};
 
 type Params = { get(name: string): string | null };
 
-export const FILTER_KEYS = ["status", "stale", "person", "sprint", "doneSince"] as const;
+export const FILTER_KEYS = ["status", "stale", "person", "sprint", "project", "label", "doneSince"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
 export function readFilters(params: Params): BoardFilters {
@@ -29,12 +39,22 @@ export function readFilters(params: Params): BoardFilters {
     stale: stale === "1" || stale === "true",
     person: params.get("person") || null,
     sprint: params.get("sprint") || null,
+    project: params.get("project") || null,
+    label: params.get("label") || null,
     doneThisWeek: params.get("doneSince") === "week",
   };
 }
 
 export function hasFilters(f: BoardFilters): boolean {
-  return f.statuses.length > 0 || f.stale || f.person !== null || f.sprint !== null || f.doneThisWeek;
+  return (
+    f.statuses.length > 0 ||
+    f.stale ||
+    f.person !== null ||
+    f.sprint !== null ||
+    f.project !== null ||
+    f.label !== null ||
+    f.doneThisWeek
+  );
 }
 
 /** Query string for `GET /api/issues`, including `extra` pairs such as `projectId` or `scope`. */
@@ -44,6 +64,8 @@ export function issuesQuery(f: BoardFilters, extra: Record<string, string> = {})
   if (f.stale) q.set("stale", "true");
   if (f.person) q.set("person", f.person);
   if (f.sprint) q.set("sprint", f.sprint);
+  if (f.project) q.set("projectId", f.project);
+  if (f.label) q.set("label", f.label);
   if (f.doneThisWeek) q.set("doneSince", "week");
   const s = q.toString();
   return s ? `/api/issues?${s}` : "/api/issues";
@@ -60,6 +82,7 @@ export function applyFilters(issues: BoardIssue[], f: BoardFilters): BoardIssue[
       (!f.stale || isStale(i)) &&
       (!f.person || i.assignees.some((a) => a.githubLogin === f.person)) &&
       (!f.sprint || i.sprint?.id === f.sprint) &&
+      (!f.label || i.labels.some((l) => l.id === f.label)) &&
       (!f.doneThisWeek || i.state === "closed"),
   );
 }
