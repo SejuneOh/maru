@@ -323,12 +323,12 @@ Settings `GitHub:App:AppId`, `ClientId`, `ClientSecret`, `PrivateKeyPath`, `Slug
 | Name | Meaning |
 | --- | --- |
 | `projectId` | only issues in repositories of this project |
-| `person` | only issues assigned to this GitHub login |
+| `person` | only issues assigned to any of these GitHub logins (comma list) |
 | `assignee` | alias of `person`; if both are given, `person` wins |
 | `status` | comma list of `todo`, `in_progress`, `in_review`, `done`, `cancelled` (derived status). Any other value, or an empty list → `400 {"error": "invalid_status"}` |
 | `stale` | `true` keeps only open issues whose `updatedAt` is 7 or more days old. `false` or absent: no filter |
 | `sprint` | only issues in this sprint (uuid) |
-| `label` | only issues carrying a label with this name (labels repeat per repository, so filtering is by name) |
+| `label` | only issues carrying any of these label names (comma list; labels repeat per repository, so filtering is by name) |
 | `repository` | only issues in this repository (uuid) |
 | `doneSince` | `week` keeps only issues closed since Monday 00:00 in Asia/Seoul (same boundary as the overview's `doneThisWeek`); open issues are dropped and `doneWithinDays` is ignored. Any other value → `400 {"error": "invalid_doneSince"}` |
 | `scope` | `all` includes every closed issue regardless of `doneWithinDays` (use it for progress over all issues). Any other value → `400 {"error": "invalid_scope"}` |
