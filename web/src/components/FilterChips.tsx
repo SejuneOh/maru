@@ -32,8 +32,11 @@ export function FilterChips({
   const replace = (mutate: (next: URLSearchParams) => void) => {
     const next = new URLSearchParams(params.toString());
     mutate(next);
-    const qs = next.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    // Removing the last filter must not land on a bare URL, or the board's default-view memory would
+    // restore the very filter just removed. With nothing left, make it the explicit "all" view.
+    if (FILTER_KEYS.some((k) => next.has(k))) next.delete("view");
+    else next.set("view", "all");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   };
   const removeKey = (key: FilterKey) => replace((n) => n.delete(key));
   const removeStatus = (s: Status) =>

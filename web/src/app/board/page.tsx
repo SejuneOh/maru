@@ -1,6 +1,7 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ErrorBox, Loading } from "@/components/Feedback";
 import { FilterBar } from "@/components/FilterBar";
 import { FilterChips } from "@/components/FilterChips";
@@ -8,18 +9,61 @@ import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { useEditedIssues } from "@/lib/boardEdits";
-import { applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
+import { FILTER_KEYS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import { useMe } from "@/lib/me";
 import type { BoardIssue, Member, Project } from "@/lib/types";
 
+const VIEW_KEY = "maru:boardView";
+
 export default function BoardPage() {
-  const filters = readFilters(useSearchParams());
+  const params = useSearchParams();
+  const router = useRouter();
+  const filters = readFilters(params);
   const me = useMe();
   const t = useT();
   const bt = t.board;
-  const issues = useApi<BoardIssue[]>(issuesQuery(filters));
+  const myLogin = me.data?.member.githubLogin ?? null;
+
+  // Default and remember: a bare /board (nav click) restores the last view, or opens "mine" the first time.
+  // "Show all" and "clear" go to ?view=all, never a bare URL, so clearing never bounces back to a stored view.
+  const qs = params.toString();
+  useEffect(() => {
+    if (qs === "") {
+      // Read the memory on its own, so a blocked storage still falls through to the default instead of
+      // leaving the board stuck on the loading state.
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem(VIEW_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+      if (stored) router.replace(`/board?${stored}`);
+      else if (myLogin) router.replace(`/board?person=${encodeURIComponent(myLogin)}`);
+      return;
+    }
+    // Remember only the filter and view keys, never the panel params (issue, newStatus...), so returning
+    // to the board does not reopen an old panel.
+    const keep = new URLSearchParams();
+    for (const k of FILTER_KEYS) {
+      const v = params.get(k);
+      if (v) keep.set(k, v);
+    }
+    if (params.get("view")) keep.set("view", params.get("view")!);
+    const v = keep.toString();
+    if (v) {
+      try {
+        localStorage.setItem(VIEW_KEY, v);
+      } catch {
+        /* storage unavailable; the board still works without the memory */
+      }
+    }
+  }, [qs, myLogin, router, params]);
+
+  // A bare URL is on its way to a default via the effect above; don't flash the full unfiltered board.
+  const resolving = qs === "";
+  const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery(filters));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");
   // The full tenant label set, so the picker never narrows to a single active label.
