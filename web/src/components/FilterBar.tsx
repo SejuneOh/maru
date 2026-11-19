@@ -62,7 +62,7 @@ function FilterMenu({
   const searchable = options.length > 8;
   const shown = searchable && q ? options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())) : options;
   const on = selected.length > 0;
-  const triggerText = !on ? label : multi ? `${label} · ${selected.length}` : (options.find((o) => o.value === selected[0])?.label ?? label);
+  const triggerText = !on ? `${label}: ${p.any}` : multi ? `${label} · ${selected.length}` : (options.find((o) => o.value === selected[0])?.label ?? label);
 
   return (
     <div className="relative" ref={ref}>
