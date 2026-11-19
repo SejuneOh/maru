@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, ISSUES_CHANGED_EVENT, SYNC_CHANGED_EVENT, SYNC_STATUS_PATH, runSync, useApi } from "@/lib/api";
 import { supabase } from "@/lib/auth";
+import { showMessage } from "@/lib/boardEdits";
 import { type Dict, type Format, useFormat, useT } from "@/lib/i18n";
 import { useMe } from "@/lib/me";
 import type { RunSyncError, SyncStatus as Status, TokenHealth } from "@/lib/types";
@@ -99,6 +100,25 @@ export function SyncStatus({
       if (lastSynced !== null) window.dispatchEvent(new Event(ISSUES_CHANGED_EVENT));
     }
   }, [data, lastSynced]);
+
+  // A sync that just failed raises a global toast, so a silent failure is noticed even away from this bar.
+  // Only on the transition into "failed"; the first loaded status just seeds the baseline.
+  const lastResult = data?.lastResult ?? null;
+  const seenResult = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!data) {
+      seenResult.current = undefined;
+      return;
+    }
+    if (seenResult.current === undefined) {
+      seenResult.current = lastResult;
+      return;
+    }
+    if (seenResult.current !== lastResult) {
+      seenResult.current = lastResult;
+      if (lastResult === "failed") showMessage({ title: s.failed, detail: data.lastError ?? s.unknownReason, failed: true });
+    }
+  }, [data, lastResult, s]);
 
   // Push: a private Supabase Realtime channel per tenant gets a `sync_finished` event the moment a sync ends,
   // so we reload the status now instead of waiting for the poll. The reload moves lastSyncedAt, and the effect

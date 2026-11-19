@@ -7,6 +7,7 @@ import { GitHubMark } from "@/components/Auth";
 import { ConnectionRequestPanel, ConnectionRow, githubInstallUrl } from "@/components/Connections";
 import { PageHeader } from "@/components/ui";
 import { ApiError, SYNC_CHANGED_EVENT, apiGet, apiPost, createConnectionRequest } from "@/lib/api";
+import { showMessage } from "@/lib/boardEdits";
 import { type Dict, useT } from "@/lib/i18n";
 import type { ConnectGithubError, ConnectGithubRequest, ConnectionRequest, GithubConnection } from "@/lib/types";
 
@@ -158,6 +159,11 @@ export default function ConnectGithubPage() {
     const id = window.setTimeout(() => router.replace("/settings"), REDIRECT_MS);
     return () => window.clearTimeout(id);
   }, [state.kind, router]);
+
+  // A failed connect also raises the global toast, so it is noticed even if the person has moved on.
+  useEffect(() => {
+    if (state.kind === "failed") showMessage({ title: ct.failedTitle, detail: ct.errors[state.reason][0], failed: true });
+  }, [state, ct]);
 
   const view: State = input === null ? { kind: "failed", reason: "missing_params", code: null, retry: false } : state;
 
