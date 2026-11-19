@@ -233,11 +233,13 @@ export const ko = {
     sprint: (name: string) => `주기 ${name}`,
     project: (name: string) => `프로젝트 ${name}`,
     labelChip: (name: string) => `라벨 ${name}`,
+    repositoryChip: (name: string) => `저장소 ${name}`,
     pick: {
       status: "상태",
       person: "담당",
       project: "프로젝트",
       label: "라벨",
+      repository: "저장소",
       any: "전체",
       mine: "내 것만",
       showAll: "전체",

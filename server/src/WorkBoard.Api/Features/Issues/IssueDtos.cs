@@ -8,6 +8,9 @@ public sealed record SprintRef(Guid Id, string Name);
 
 public sealed record LabelDto(Guid Id, string Name, string? Color);
 
+/** A label for the board filter, deduplicated by name across repositories. */
+public sealed record LabelName(string Name, string? Color);
+
 public sealed record MilestoneRef(Guid Id, string Title, DateTime? DueOn);
 
 public record BoardIssue(
