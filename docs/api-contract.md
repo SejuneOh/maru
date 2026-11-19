@@ -330,7 +330,7 @@ Settings `GitHub:App:AppId`, `ClientId`, `ClientSecret`, `PrivateKeyPath`, `Slug
 | `sprint` | only issues in this sprint (uuid) |
 | `doneSince` | `week` keeps only issues closed since Monday 00:00 in Asia/Seoul (same boundary as the overview's `doneThisWeek`); open issues are dropped and `doneWithinDays` is ignored. Any other value → `400 {"error": "invalid_doneSince"}` |
 | `scope` | `all` includes every closed issue regardless of `doneWithinDays` (use it for progress over all issues). Any other value → `400 {"error": "invalid_scope"}` |
-| `doneWithinDays` | closed issues are included only if closed within N days, integer 0..365 (default 7). Ignored when `scope=all`. Out of range → `400 {"error": "invalid_doneWithinDays"}` |
+| `doneWithinDays` | closed issues are included only if closed within N days, integer 0..365 (default 14). Ignored when `scope=all`. Out of range → `400 {"error": "invalid_doneWithinDays"}` |
 
 Filters combine with AND. Without `scope=all`, `status=done` therefore returns only issues closed within
 `doneWithinDays`. Open issues are always included unless a filter excludes them. Sort: `updatedAt` descending.

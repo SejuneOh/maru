@@ -140,6 +140,19 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Default_board_keeps_done_for_fourteen_days()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var within = await t.AddIssueAsync(repo, closed: true, closedAt: DateTime.UtcNow.AddDays(-10));
+        var past = await t.AddIssueAsync(repo, closed: true, closedAt: DateTime.UtcNow.AddDays(-15));
+
+        var ids = Ids(await t.GetAsync("/api/issues"));
+        Assert.Contains(within.ToString(), ids);
+        Assert.DoesNotContain(past.ToString(), ids);
+    }
+
+    [DbFact]
     public async Task Unknown_scope_is_rejected()
     {
         using var client = ClientFor("haneul-dev");

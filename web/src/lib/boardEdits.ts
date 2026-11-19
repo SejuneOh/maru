@@ -6,13 +6,13 @@ import type { BoardChangeRequest, BoardIssue, Priority, Size, Status } from "./t
 
 /**
  * Card edits from the board, the panel and the `s` shortcut all go through here, so every screen shows the
- * same card in the same state. Moves between open statuses show at once and roll back on failure; a change
- * that has to close or reopen on GitHub waits for GitHub before the card moves.
+ * same card in the same state. Every move shows at once and rolls back on failure, including the ones that
+ * close or reopen on GitHub: the card moves and the GitHub write runs behind it.
  */
 
 export type BoardChange = { status?: Status; priority?: Priority | null; size?: Size | null };
 
-/** `saving`: shown already, waiting for the server. `closing` / `reopening`: waiting for GitHub, not shown yet. */
+/** The in-flight write's kind, shown on the card: a plain save, or a GitHub close / reopen. */
 export type EditPhase = "saving" | "closing" | "reopening";
 
 type Pending = { change: BoardChange; phase: EditPhase };
@@ -84,10 +84,13 @@ function merge<T extends BoardIssue>(issue: T): T {
   const mine = confirmed.get(issue.id);
   let out: T = issue;
   if (mine && freshness(mine) > freshness(issue)) out = { ...issue, ...mine };
+  // Every pending change shows at once, GitHub closes/reopens included; the failure path clears pending so
+  // the card falls back to the server copy.
   const p = pending.get(issue.id);
-  if (p?.phase === "saving") {
+  if (p) {
     out = { ...out, ...p.change };
-    if (p.change.status) out = { ...out, category: categoryOf(p.change.status) };
+    if (p.change.status)
+      out = { ...out, category: categoryOf(p.change.status), state: isClosedStatus(p.change.status) ? "closed" : "open" };
   }
   return out;
 }
