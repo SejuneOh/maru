@@ -27,6 +27,13 @@ const ICONS: Record<keyof Dict["nav"], React.ReactNode> = {
       <rect x="9" y="9" width="5" height="5" rx="1" />
     </>
   ),
+  board: (
+    <>
+      <rect x="2" y="2.5" width="3.5" height="11" rx="1" />
+      <rect x="6.25" y="2.5" width="3.5" height="7.5" rx="1" />
+      <rect x="10.5" y="2.5" width="3.5" height="9.5" rx="1" />
+    </>
+  ),
   me: (
     <>
       <circle cx="8" cy="5.5" r="2.5" />
@@ -71,8 +78,7 @@ const ICONS: Record<keyof Dict["nav"], React.ReactNode> = {
 
 const NAV: { href: string; label: keyof Dict["nav"]; key: string }[] = [
   { href: "/", label: "overview", key: "o" },
-  { href: "/me", label: "me", key: "m" },
-  { href: "/people", label: "people", key: "p" },
+  { href: "/board", label: "board", key: "m" },
   { href: "/projects", label: "projects", key: "b" },
   { href: "/sprints", label: "sprints", key: "c" },
   { href: "/notes", label: "notes", key: "n" },

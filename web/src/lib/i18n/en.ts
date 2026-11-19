@@ -14,6 +14,7 @@ export const en: Dict = {
 
   nav: {
     overview: "Overview",
+    board: "Board",
     me: "My work",
     people: "People",
     projects: "Projects",
@@ -220,6 +221,16 @@ export const en: Dict = {
     doneThisWeek: "Done this week",
     person: (name) => `Assignee ${name}`,
     sprint: (name) => `Cycle ${name}`,
+    project: (name) => `Project ${name}`,
+    labelChip: (name) => `Label ${name}`,
+    pick: {
+      status: "Status",
+      person: "Assignee",
+      project: "Project",
+      label: "Label",
+      any: "All",
+      mine: "Mine only",
+    },
   },
 
   panel: {
@@ -650,6 +661,10 @@ export const en: Dict = {
     meta: "Board",
     noMatch: "No issues match these filters.",
     matching: "Matching issues",
+    title: "Board",
+    lead: "Every issue in one place; narrow it down with filters.",
+    filtered: (n: number) => `${n} matching`,
+    all: (n: number) => `${n} total`,
   },
 
   people: {

@@ -21,6 +21,7 @@ export const ko = {
 
   nav: {
     overview: "개요",
+    board: "보드",
     me: "내 작업",
     people: "사람별 보드",
     projects: "프로젝트별 보드",
@@ -230,6 +231,16 @@ export const ko = {
     doneThisWeek: "이번 주 완료",
     person: (name: string) => `담당 ${name}`,
     sprint: (name: string) => `주기 ${name}`,
+    project: (name: string) => `프로젝트 ${name}`,
+    labelChip: (name: string) => `라벨 ${name}`,
+    pick: {
+      status: "상태",
+      person: "담당",
+      project: "프로젝트",
+      label: "라벨",
+      any: "전체",
+      mine: "내 것만",
+    },
   },
 
   panel: {
@@ -659,6 +670,10 @@ export const ko = {
     meta: "보드",
     noMatch: "이 조건에 맞는 일이 없습니다.",
     matching: "조건에 맞는 일",
+    title: "보드",
+    lead: "팀의 모든 일을 한 곳에서 보고, 필터로 좁혀 봅니다.",
+    filtered: (n: number) => `조건에 맞는 일 ${n}건`,
+    all: (n: number) => `전체 ${n}건`,
   },
 
   people: {

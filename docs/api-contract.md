@@ -328,6 +328,7 @@ Settings `GitHub:App:AppId`, `ClientId`, `ClientSecret`, `PrivateKeyPath`, `Slug
 | `status` | comma list of `todo`, `in_progress`, `in_review`, `done`, `cancelled` (derived status). Any other value, or an empty list → `400 {"error": "invalid_status"}` |
 | `stale` | `true` keeps only open issues whose `updatedAt` is 7 or more days old. `false` or absent: no filter |
 | `sprint` | only issues in this sprint (uuid) |
+| `label` | only issues carrying this label (uuid) |
 | `doneSince` | `week` keeps only issues closed since Monday 00:00 in Asia/Seoul (same boundary as the overview's `doneThisWeek`); open issues are dropped and `doneWithinDays` is ignored. Any other value → `400 {"error": "invalid_doneSince"}` |
 | `scope` | `all` includes every closed issue regardless of `doneWithinDays` (use it for progress over all issues). Any other value → `400 {"error": "invalid_scope"}` |
 | `doneWithinDays` | closed issues are included only if closed within N days, integer 0..365 (default 14). Ignored when `scope=all`. Out of range → `400 {"error": "invalid_doneWithinDays"}` |
@@ -371,6 +372,7 @@ at least one of `status`, `priority`, `size` must be present, and a present `nul
 
 Creating issues (any member, GitHub write through the App):
 
+- `GET /api/labels` returns the tenant's labels (`id`, `name`, `color`), ordered by name, for the board's label filter.
 - `GET /api/issues/new-options` returns the repositories the caller can create in (active connection with an App
   installation, archived ones last and flagged), the labels of each non-archived repository, and every member as a possible assignee.
 - `POST /api/issues` requires `Idempotency-Key` (missing or longer than 200 characters is `400 invalid_request`). Body:

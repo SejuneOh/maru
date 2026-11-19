@@ -11,10 +11,18 @@ type Props = {
   filters: BoardFilters;
   personName?: (login: string) => string;
   sprintName?: (id: string) => string | undefined;
+  projectName?: (id: string) => string | undefined;
+  labelName?: (id: string) => string | undefined;
 };
 
 /** Active board filters as removable chips; nothing renders when no filter is on. */
-export function FilterChips({ filters, personName = (l) => l, sprintName }: Props) {
+export function FilterChips({
+  filters,
+  personName = (l) => l,
+  sprintName,
+  projectName,
+  labelName,
+}: Props) {
   const t = useT();
   const f = t.filters;
   const router = useRouter();
@@ -59,6 +67,14 @@ export function FilterChips({ filters, personName = (l) => l, sprintName }: Prop
   if (filters.sprint) {
     const name = sprintName?.(filters.sprint) ?? f.sprintFallback;
     chips.push({ key: "sprint", label: f.sprint(name), title: f.remove(name), onRemove: () => removeKey("sprint") });
+  }
+  if (filters.project) {
+    const name = projectName?.(filters.project) ?? filters.project;
+    chips.push({ key: "project", label: f.project(name), title: f.remove(name), onRemove: () => removeKey("project") });
+  }
+  if (filters.label) {
+    const name = labelName?.(filters.label) ?? filters.label;
+    chips.push({ key: "label", label: f.labelChip(name), title: f.remove(name), onRemove: () => removeKey("label") });
   }
 
   if (chips.length === 0) return null;
