@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useEditedIssues } from "@/lib/boardEdits";
 import { useT } from "@/lib/i18n";
 import { STATUS_DOT, STATUS_ORDER, groupByStatus } from "@/lib/labels";
@@ -10,6 +11,32 @@ import { useDropTarget } from "./useBoardDrag";
 import { useIssuePanel } from "./useIssuePanel";
 
 const ADDABLE: Status[] = ["todo", "in_progress", "in_review"];
+
+/** A tall column is capped; the rest open on demand so a crowded board stays scannable without losing anything. */
+const COLUMN_LIMIT = 20;
+
+function ColumnCards({ issues, showAssignee, scope }: { issues: BoardIssue[]; showAssignee: boolean; scope: string }) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? issues : issues.slice(0, COLUMN_LIMIT);
+  const hidden = issues.length - shown.length;
+  return (
+    <>
+      {shown.map((issue) => (
+        <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} dragScope={scope} />
+      ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="cursor-pointer rounded-control px-1 py-1.5 text-left text-small font-medium text-ink-soft transition-colors duration-[120ms] ease-tool hover:bg-hover hover:text-ink"
+        >
+          {t.board.more(hidden)}
+        </button>
+      )}
+    </>
+  );
+}
 
 /** `+` at the end of a column head: opens the new-issue form starting in that column's status. */
 export function AddToColumn({ status, assignee }: { status: Status; assignee?: { githubUserId: number; name: string } }) {
@@ -100,9 +127,7 @@ export function StatusColumns({ issues: raw, showAssignee = true, statuses = STA
             {groups[status].length === 0 && (
               <p className="px-1 py-2 text-small text-muted">{t.common.none}</p>
             )}
-            {groups[status].map((issue) => (
-              <IssueCard key={issue.id} issue={issue} showAssignee={showAssignee} dragScope={scope} />
-            ))}
+            <ColumnCards issues={groups[status]} showAssignee={showAssignee} scope={scope} />
             {status === "done" && foldCancelled && (
               <CanceledGroup issues={groups.cancelled} showAssignee={showAssignee} dragScope={scope} />
             )}
