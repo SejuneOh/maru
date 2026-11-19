@@ -10,8 +10,7 @@ import { confirmLeave } from "@/lib/leaveGuard";
  */
 export const GO_KEYS: Record<string, string> = {
   KeyO: "/",
-  KeyM: "/me",
-  KeyP: "/people",
+  KeyM: "/board",
   KeyB: "/projects",
   KeyC: "/sprints",
   KeyN: "/notes",

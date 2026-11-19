@@ -153,6 +153,38 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Label_filter_keeps_only_issues_with_that_label()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        var labelled = await t.AddIssueAsync(repo);
+        var other = await t.AddIssueAsync(repo);
+        var labelId = await t.ScalarAsync<Guid>(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug') returning id",
+            new { tid = t.Id, repo, gid = 9001 });
+        await t.ExecAsync("insert into issue_labels (tenant_id, issue_id, label_id) values (@tid, @issue, @label)",
+            new { tid = t.Id, issue = labelled, label = labelId });
+
+        var ids = Ids(await t.GetAsync($"/api/issues?label={labelId}"));
+        Assert.Equal([labelled.ToString()], ids);
+        Assert.DoesNotContain(other.ToString(), ids);
+    }
+
+    [DbFact]
+    public async Task Labels_endpoint_lists_the_tenant_labels()
+    {
+        var (t, repo) = await NewTenant(factory);
+        await using var _ = t;
+        await t.ExecAsync(
+            "insert into labels (tenant_id, repository_id, github_label_id, name) values (@tid, @repo, @gid, 'bug')",
+            new { tid = t.Id, repo, gid = 9100 });
+
+        var res = await t.GetAsync("/api/labels");
+        var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
+        Assert.Contains("bug", names);
+    }
+
+    [DbFact]
     public async Task Unknown_scope_is_rejected()
     {
         using var client = ClientFor("haneul-dev");
