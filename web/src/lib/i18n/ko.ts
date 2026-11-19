@@ -240,6 +240,7 @@ export const ko = {
       label: "라벨",
       any: "전체",
       mine: "내 것만",
+      showAll: "전체",
     },
   },
 
@@ -674,6 +675,7 @@ export const ko = {
     lead: "팀의 모든 일을 한 곳에서 보고, 필터로 좁혀 봅니다.",
     filtered: (n: number) => `조건에 맞는 일 ${n}건`,
     all: (n: number) => `전체 ${n}건`,
+    more: (n: number) => `${n}건 더보기`,
   },
 
   people: {

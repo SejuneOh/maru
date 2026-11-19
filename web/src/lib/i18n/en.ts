@@ -230,6 +230,7 @@ export const en: Dict = {
       label: "Label",
       any: "All",
       mine: "Mine only",
+      showAll: "All",
     },
   },
 
@@ -665,6 +666,7 @@ export const en: Dict = {
     lead: "Every issue in one place; narrow it down with filters.",
     filtered: (n: number) => `${n} matching`,
     all: (n: number) => `${n} total`,
+    more: (n: number) => `Show ${n} more`,
   },
 
   people: {

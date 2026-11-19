@@ -1,6 +1,7 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ErrorBox, Loading } from "@/components/Feedback";
 import { FilterBar } from "@/components/FilterBar";
 import { FilterChips } from "@/components/FilterChips";
@@ -14,11 +15,33 @@ import { STATUS_ORDER } from "@/lib/labels";
 import { useMe } from "@/lib/me";
 import type { BoardIssue, Member, Project } from "@/lib/types";
 
+const VIEW_KEY = "maru:boardView";
+
 export default function BoardPage() {
-  const filters = readFilters(useSearchParams());
+  const params = useSearchParams();
+  const router = useRouter();
+  const filters = readFilters(params);
   const me = useMe();
   const t = useT();
   const bt = t.board;
+  const myLogin = me.data?.member.githubLogin ?? null;
+
+  // Default and remember: a bare /board (nav click) restores the last view, or opens "mine" the first time.
+  // "Show all" and "clear" go to ?view=all, never a bare URL, so clearing never bounces back to a stored view.
+  const qs = params.toString();
+  useEffect(() => {
+    try {
+      if (qs === "") {
+        const stored = localStorage.getItem(VIEW_KEY);
+        if (stored) router.replace(`/board?${stored}`);
+        else if (myLogin) router.replace(`/board?person=${encodeURIComponent(myLogin)}`);
+      } else {
+        localStorage.setItem(VIEW_KEY, qs);
+      }
+    } catch {
+      // Storage can be unavailable (private mode); the board still works, just without the memory.
+    }
+  }, [qs, myLogin, router]);
   const issues = useApi<BoardIssue[]>(issuesQuery(filters));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");

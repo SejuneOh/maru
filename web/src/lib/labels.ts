@@ -41,9 +41,19 @@ export function initial(displayName: string): string {
   return (name[0] ?? "?").toUpperCase();
 }
 
+const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+const priorityRank = (i: BoardIssue) => PRIORITY_RANK[i.priority ?? "normal"] ?? 2;
+const freshness = (i: BoardIssue) => Date.parse(i.boardUpdatedAt ?? i.updatedAt);
+
+/** Within a column, the most pressing first: higher priority, then more recently touched. */
+export function sortForColumn(a: BoardIssue, b: BoardIssue): number {
+  return priorityRank(a) - priorityRank(b) || freshness(b) - freshness(a);
+}
+
 export function groupByStatus(issues: BoardIssue[]): Record<Status, BoardIssue[]> {
   const groups: Record<Status, BoardIssue[]> = { todo: [], in_progress: [], in_review: [], done: [], cancelled: [] };
   for (const issue of issues) groups[issue.status].push(issue);
+  for (const status of Object.keys(groups) as Status[]) groups[status].sort(sortForColumn);
   return groups;
 }
 

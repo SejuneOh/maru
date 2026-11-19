@@ -37,6 +37,9 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
   };
 
   const mine = myLogin != null && filters.person === myLogin;
+  // "Show all" and turning off "mine" go to an explicit ?view=all, never a bare URL, so the board's
+  // default-view memory does not bounce the person back to their last view.
+  const showAll = () => router.replace(`${pathname}?view=all`, { scroll: false });
 
   return (
     <div className="flex flex-wrap items-center gap-2" aria-label={t.filters.label}>
@@ -80,7 +83,7 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
         <button
           type="button"
           aria-pressed={mine}
-          onClick={() => set("person", mine ? null : myLogin)}
+          onClick={() => (mine ? showAll() : set("person", myLogin))}
           className={`h-8 cursor-pointer rounded-control px-3 text-small font-medium transition-colors duration-[120ms] ease-tool ${
             mine
               ? "bg-ink text-surface"
@@ -90,6 +93,13 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
           {p.mine}
         </button>
       )}
+      <button
+        type="button"
+        onClick={showAll}
+        className="h-8 cursor-pointer rounded-control px-3 text-small font-medium text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] transition-colors duration-[120ms] ease-tool hover:bg-hover"
+      >
+        {p.showAll}
+      </button>
     </div>
   );
 }

@@ -100,7 +100,13 @@ export function FilterChips({
       {chips.length > 1 && (
         <button
           type="button"
-          onClick={() => replace((n) => FILTER_KEYS.forEach((k) => n.delete(k)))}
+          onClick={() =>
+            replace((n) => {
+              FILTER_KEYS.forEach((k) => n.delete(k));
+              // Mark an explicit "everything" view so the board does not restore the last remembered filter.
+              n.set("view", "all");
+            })
+          }
           className="link cursor-pointer text-small text-ink-soft"
         >
           {f.clearAll}
