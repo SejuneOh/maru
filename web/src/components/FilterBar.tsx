@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { type BoardFilters } from "@/lib/filters";
+import { type BoardFilters, FILTER_KEYS } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import type { Member, Project, Status } from "@/lib/types";
@@ -32,14 +32,16 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
-    const qs = next.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    // Never leave the board on a bare URL: with no filter left, make it the explicit "all" view so the
+    // default-view memory does not bounce a just-removed filter back in.
+    if (FILTER_KEYS.some((k) => next.has(k))) next.delete("view");
+    else next.set("view", "all");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   };
 
   const mine = myLogin != null && filters.person === myLogin;
-  // "Show all" and turning off "mine" go to an explicit ?view=all, never a bare URL, so the board's
-  // default-view memory does not bounce the person back to their last view.
   const showAll = () => router.replace(`${pathname}?view=all`, { scroll: false });
+  const allOn = !FILTER_KEYS.some((k) => params.has(k));
 
   return (
     <div className="flex flex-wrap items-center gap-2" aria-label={t.filters.label}>
@@ -83,7 +85,7 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
         <button
           type="button"
           aria-pressed={mine}
-          onClick={() => (mine ? showAll() : set("person", myLogin))}
+          onClick={() => set("person", mine ? null : myLogin)}
           className={`h-8 cursor-pointer rounded-control px-3 text-small font-medium transition-colors duration-[120ms] ease-tool ${
             mine
               ? "bg-ink text-surface"
@@ -95,8 +97,13 @@ export function FilterBar({ filters, projects, members, labels, myLogin }: Props
       )}
       <button
         type="button"
+        aria-pressed={allOn}
         onClick={showAll}
-        className="h-8 cursor-pointer rounded-control px-3 text-small font-medium text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] transition-colors duration-[120ms] ease-tool hover:bg-hover"
+        className={`h-8 cursor-pointer rounded-control px-3 text-small font-medium transition-colors duration-[120ms] ease-tool ${
+          allOn
+            ? "bg-ink text-surface"
+            : "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] hover:bg-hover"
+        }`}
       >
         {p.showAll}
       </button>

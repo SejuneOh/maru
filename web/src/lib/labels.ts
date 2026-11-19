@@ -43,7 +43,8 @@ export function initial(displayName: string): string {
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 const priorityRank = (i: BoardIssue) => PRIORITY_RANK[i.priority ?? "normal"] ?? 2;
-const freshness = (i: BoardIssue) => Date.parse(i.boardUpdatedAt ?? i.updatedAt);
+const freshness = (i: BoardIssue) =>
+  Math.max(Date.parse(i.updatedAt), i.boardUpdatedAt ? Date.parse(i.boardUpdatedAt) : 0);
 
 /** Within a column, the most pressing first: higher priority, then more recently touched. */
 export function sortForColumn(a: BoardIssue, b: BoardIssue): number {

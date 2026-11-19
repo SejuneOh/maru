@@ -9,7 +9,7 @@ import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { useEditedIssues } from "@/lib/boardEdits";
-import { applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
+import { FILTER_KEYS, applyFilters, hasFilters, issuesQuery, readFilters } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import { useMe } from "@/lib/me";
@@ -35,14 +35,26 @@ export default function BoardPage() {
         const stored = localStorage.getItem(VIEW_KEY);
         if (stored) router.replace(`/board?${stored}`);
         else if (myLogin) router.replace(`/board?person=${encodeURIComponent(myLogin)}`);
-      } else {
-        localStorage.setItem(VIEW_KEY, qs);
+        return;
       }
+      // Remember only the filter and view keys, never the panel params (issue, newStatus...), so returning
+      // to the board does not reopen an old panel.
+      const keep = new URLSearchParams();
+      for (const k of FILTER_KEYS) {
+        const v = params.get(k);
+        if (v) keep.set(k, v);
+      }
+      if (params.get("view")) keep.set("view", params.get("view")!);
+      const v = keep.toString();
+      if (v) localStorage.setItem(VIEW_KEY, v);
     } catch {
       // Storage can be unavailable (private mode); the board still works, just without the memory.
     }
-  }, [qs, myLogin, router]);
-  const issues = useApi<BoardIssue[]>(issuesQuery(filters));
+  }, [qs, myLogin, router, params]);
+
+  // A bare URL is on its way to a default via the effect above; don't flash the full unfiltered board.
+  const resolving = qs === "";
+  const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery(filters));
   const projects = useApi<Project[]>("/api/projects");
   const members = useApi<Member[]>("/api/members");
   // The full tenant label set, so the picker never narrows to a single active label.

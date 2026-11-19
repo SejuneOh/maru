@@ -352,7 +352,7 @@ function Attention({ o, myLogin }: { o: O; myLogin: string | null }) {
         <span className="text-right">{at.colAge}</span>
       </div>
       {a.urgent.length > 0 && (
-        <Group flag={<Flag fill>{t.priority.urgent}</Flag>} total={tt.urgent} why={at.urgentWhy} more={{ href: "/board", shown: a.urgent.length }}>
+        <Group flag={<Flag fill>{t.priority.urgent}</Flag>} total={tt.urgent} why={at.urgentWhy} more={{ href: "/board?view=all", shown: a.urgent.length }}>
           {a.urgent.map(({ issue, notStarted }) => (
             <IssueRow
               key={issue.id}
@@ -388,7 +388,7 @@ function Attention({ o, myLogin }: { o: O; myLogin: string | null }) {
         </Group>
       )}
       {a.unassigned.length > 0 && (
-        <Group flag={<Flag>{t.common.unassigned}</Flag>} total={tt.unassigned} why={at.unassignedWhy} more={{ href: "/board", shown: a.unassigned.length }}>
+        <Group flag={<Flag>{t.common.unassigned}</Flag>} total={tt.unassigned} why={at.unassignedWhy} more={{ href: "/board?view=all", shown: a.unassigned.length }}>
           {a.unassigned.map((issue) => (
             <IssueRow key={issue.id} issue={issue} status={<StatusBadge status={issue.status} />} age={fmt.relativeDays(issue.updatedAt, true)} />
           ))}
@@ -444,7 +444,7 @@ function People({ o, myId }: { o: O; myId: number | null }) {
       hint={pp.hint}
       className="@container"
       action={
-        <Link href="/board" className="inline-flex items-center gap-1.5 hover:text-ink">
+        <Link href="/board?view=all" className="inline-flex items-center gap-1.5 hover:text-ink">
           {pp.board} <Kbd>g m</Kbd>
         </Link>
       }
