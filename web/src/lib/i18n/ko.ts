@@ -265,6 +265,7 @@ export const ko = {
     children: "하위 일",
     meetings: "이 일이 나온 회의",
     conversation: "대화",
+    noBody: "설명이 없습니다.",
     prState: { open: "열림", closed: "닫힘", merged: "병합됨" },
     reviewRequested: " · 리뷰 요청",
     draft: " · 초안",
