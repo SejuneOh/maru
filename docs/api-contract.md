@@ -97,6 +97,9 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | POST | `/api/invitations/accept` | sign-in only, no membership needed | `JoinedTenant` |
 | POST | `/api/github/webhook` | HMAC signature | see "GitHub webhook" |
 | GET | `/api/projects` | dev user | `Project[]` |
+| POST | `/api/projects` | dev user, admin | create a project: `{name, repositoryIds?}` → `201 Project`. Name unique per tenant (`409 name_taken`), repos must be the tenant's (`400 invalid_repository`) |
+| PATCH | `/api/projects/{id}` | dev user, admin | rename and/or set repositories: `{name?, repositoryIds?}` → `200 Project`. `404` if gone |
+| DELETE | `/api/projects/{id}` | dev user, admin | `204`. Grouped repositories are not deleted |
 | GET | `/api/projects/done-by-week` | dev user | `DoneByWeek`, see below |
 | GET | `/api/projects/{id}/schedule` | dev user | `ProjectSchedule` or 404, see below |
 | GET | `/api/connections` | dev user | `GithubConnection[]`, active first |
