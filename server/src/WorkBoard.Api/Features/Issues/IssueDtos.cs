@@ -2,7 +2,7 @@ using WorkBoard.Api.Features.Projects;
 
 namespace WorkBoard.Api.Features.Issues;
 
-public sealed record AssigneeDto(long GithubUserId, string GithubLogin, string? DisplayName);
+public sealed record AssigneeDto(long GithubUserId, string GithubLogin, string? DisplayName, string? AvatarUrl);
 
 public sealed record SprintRef(Guid Id, string Name);
 

@@ -7,9 +7,14 @@ import type { IssueLabel, Status, StatusCounts } from "@/lib/types";
 
 type Person = { displayName: string | null; githubLogin: string | null; avatarUrl?: string | null };
 
-/** The person's GitHub photo when there is one, falling back to the name's initial on a missing or broken image. */
-export function Avatar({ person, size = "md", ghost = false }: { person: Person; size?: "sm" | "md" | "lg"; ghost?: boolean }) {
-  const dims = size === "sm" ? "h-5 w-5 text-[10px]" : size === "lg" ? "h-8 w-8 text-small" : "h-6 w-6 text-[11px]";
+/**
+ * The person's GitHub photo when there is one, falling back to the name's initial on a missing or broken image.
+ * `ring` draws a surface-coloured outline so overlapping avatars in a stack stay separated.
+ */
+export function Avatar({ person, size = "md", ghost = false, ring = false }: { person: Person; size?: "xs" | "sm" | "md" | "lg"; ghost?: boolean; ring?: boolean }) {
+  const dims =
+    size === "xs" ? "h-4 w-4 text-[9px]" : size === "sm" ? "h-5 w-5 text-[10px]" : size === "lg" ? "h-8 w-8 text-small" : "h-6 w-6 text-[11px]";
+  const edge = ring ? "ring-2 ring-surface" : "";
   const fmt = useFormat();
   // Track the src that failed, not a bare flag, so a reused Avatar whose person changes retries the new photo.
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -23,13 +28,13 @@ export function Avatar({ person, size = "md", ghost = false }: { person: Person;
         src={src}
         loading="lazy"
         onError={() => setFailedSrc(src)}
-        className={`shrink-0 rounded-full bg-sunken object-cover ${dims}`}
+        className={`shrink-0 rounded-full bg-sunken object-cover ${dims} ${edge}`}
       />
     );
   }
   const tone = ghost ? "shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] text-muted" : "bg-ink text-on-ink";
   return (
-    <span aria-hidden className={`grid shrink-0 place-items-center rounded-full font-semibold ${dims} ${tone}`}>
+    <span aria-hidden className={`grid shrink-0 place-items-center rounded-full font-semibold ${dims} ${tone} ${edge}`}>
       {initial(fmt.person(person))}
     </span>
   );

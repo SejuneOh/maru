@@ -293,7 +293,7 @@ export type Category = "todo" | "in_progress" | "done";
 export type Size = "S" | "M" | "L";
 export type Priority = "urgent" | "high" | "normal" | "low";
 
-export type Assignee = { githubUserId: number; githubLogin: string; displayName: string | null };
+export type Assignee = { githubUserId: number; githubLogin: string; displayName: string | null; avatarUrl: string | null };
 
 /** `color` is six hex digits without `#`, as GitHub sends it. */
 export type IssueLabel = { id: string; name: string; color: string | null };
@@ -634,7 +634,7 @@ export type Overview = {
   activity: {
     kind: ActivityKind;
     at: string;
-    actor: { githubLogin: string | null; displayName: string | null } | null;
+    actor: { githubLogin: string | null; displayName: string | null; avatarUrl: string | null } | null;
     issue: { id: string; repositoryName: string; number: number; title: string } | null;
     pullRequest: { repositoryName: string; number: number; title: string } | null;
     note: { id: string; title: string } | null;
