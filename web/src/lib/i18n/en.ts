@@ -255,6 +255,7 @@ export const en: Dict = {
     children: "Sub-issues",
     meetings: "From meetings",
     conversation: "Conversation",
+    noBody: "No description.",
     prState: { open: "Open", closed: "Closed", merged: "Merged" },
     reviewRequested: " · review requested",
     draft: " · draft",

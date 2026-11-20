@@ -11,6 +11,7 @@ import { isTyping } from "./useShortcuts";
 import type { CreatedIssue, IssueDetail, Member, PostedComment, Priority, Size } from "@/lib/types";
 import { AssigneeMenu } from "./AssigneeMenu";
 import { CommentBox } from "./CommentBox";
+import { Markdown } from "./Markdown";
 import { STATUS_KEYS } from "./BoardNotice";
 import { ErrorBox, Loading } from "./Feedback";
 import { PropertyMenu } from "./PropertyMenu";
@@ -351,9 +352,9 @@ export function IssuePanel() {
                 )}
               </header>
 
-              {shown.body && <p className="whitespace-pre-wrap text-body text-ink-soft">{shown.body}</p>}
+              {shown.body?.trim() ? <Markdown text={shown.body} /> : <p className="text-small text-muted">{p.noBody}</p>}
 
-              <Section title={p.pullRequests} count={shown.pullRequests.length}>
+              <Section title={p.pullRequests} count={shown.pullRequests.length} hideWhenEmpty>
                 {shown.pullRequests.map((pr) => ({ pr, url: safeHttpUrl(pr.htmlUrl) })).map(({ pr, url }) => (
                   <li key={pr.id} className="flex justify-between gap-3 py-2 text-ui">
                     {url ? (
@@ -387,7 +388,7 @@ export function IssuePanel() {
                 ))}
               </Section>
 
-              <Section title={p.children} count={shown.children.length}>
+              <Section title={p.children} count={shown.children.length} hideWhenEmpty>
                 {shown.children.map((c) => (
                   <li key={c.id}>
                     <button
@@ -407,7 +408,7 @@ export function IssuePanel() {
                 ))}
               </Section>
 
-              <Section title={p.meetings} count={shown.meetingNotes.length}>
+              <Section title={p.meetings} count={shown.meetingNotes.length} hideWhenEmpty>
                 {shown.meetingNotes.map((n) => (
                   <li key={n.id} className="py-2 text-ui">
                     <Link href={`/notes/view?id=${n.id}`} className="link">
@@ -417,6 +418,17 @@ export function IssuePanel() {
                   </li>
                 ))}
               </Section>
+
+              {(() => {
+                const empty = [
+                  shown.pullRequests.length === 0 ? p.pullRequests : null,
+                  shown.children.length === 0 ? p.children : null,
+                  shown.meetingNotes.length === 0 ? p.meetings : null,
+                ].filter((x): x is string => x !== null);
+                return empty.length > 0 ? (
+                  <p className="text-small text-muted">{empty.map((x) => `${x} ${t.common.none}`).join(" · ")}</p>
+                ) : null;
+              })()}
 
               <Section
                 title={p.conversation}
@@ -430,7 +442,7 @@ export function IssuePanel() {
                       <span className="font-medium text-ink-soft">{fmt.person(c.author)}</span> · <span>{fmt.relativeDays(c.createdAt)}</span>
                     </div>
                     {c.body ? (
-                      <p className="whitespace-pre-wrap text-ink-soft">{c.body}</p>
+                      <Markdown text={c.body} compact />
                     ) : (
                       <p className="text-small text-muted">{p.comment.bodyOnGithub}</p>
                     )}
@@ -496,16 +508,20 @@ function Section({
   title,
   count,
   divided = true,
+  hideWhenEmpty = false,
   footer,
   children,
 }: {
   title: string;
   count: number;
   divided?: boolean;
+  /** Empty sections are collapsed into one line elsewhere, so the ones that opt in render nothing here. */
+  hideWhenEmpty?: boolean;
   footer?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const t = useT();
+  if (count === 0 && hideWhenEmpty) return null;
   return (
     <section>
       <h3 className="mb-2 flex items-center gap-2 text-heading font-semibold">
