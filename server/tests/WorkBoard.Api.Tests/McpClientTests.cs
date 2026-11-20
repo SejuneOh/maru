@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using WorkBoard.Api.Tests.Fakes;
@@ -52,18 +54,79 @@ public class McpClientTests(WebApplicationFactory<Program> factory) : IClassFixt
         Assert.StartsWith("wbm_", token);
         Assert.Equal("read", body.GetProperty("client").GetProperty("scope").GetString());
 
-        // The plaintext is nowhere in the row; only its hash and a short visible prefix are.
-        var storedPlain = await t.ScalarAsync<int>(
-            "select count(*) from mcp_clients where encode(token_hash, 'hex') = @plain or token_prefix = @plain",
-            new { plain = token });
-        Assert.Equal(0, storedPlain);
+        // The row stores the SHA-256 of the token, not the token: the stored hash equals sha256(token) and nothing holds
+        // the plaintext. Only a 12-char display prefix is visible.
+        var id = body.GetProperty("client").GetProperty("id").GetGuid();
+        var storedHash = await t.ScalarAsync<byte[]>("select token_hash from mcp_clients where id = @id", new { id });
+        Assert.Equal(SHA256.HashData(Encoding.ASCII.GetBytes(token)), storedHash);
         var prefix = body.GetProperty("client").GetProperty("tokenPrefix").GetString()!;
-        Assert.StartsWith(prefix, token);
-        Assert.True(prefix.Length < token.Length);
+        Assert.Equal(token[..12], prefix);
+        Assert.Equal(0, await t.ScalarAsync<int>("select count(*) from mcp_clients where token_prefix = @token", new { token }));
 
         // The list never returns the token again.
         var list = await (await Client(t.ViewerLogin).GetAsync("/api/mcp-clients")).Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(list[0].TryGetProperty("token", out _));
+    }
+
+    [DbFact]
+    public async Task Replaying_the_same_idempotency_key_returns_the_client_without_the_token()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var c = Client(t.ViewerLogin);
+        var key = Guid.NewGuid().ToString();
+        var first = new HttpRequestMessage(HttpMethod.Post, "/api/mcp-clients") { Content = JsonContent.Create(new { name = "tool" }) };
+        first.Headers.Add("Idempotency-Key", key);
+        var firstBody = await (await c.SendAsync(first)).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.NotNull(firstBody.GetProperty("token").GetString());
+
+        var replay = new HttpRequestMessage(HttpMethod.Post, "/api/mcp-clients") { Content = JsonContent.Create(new { name = "tool" }) };
+        replay.Headers.Add("Idempotency-Key", key);
+        var replayBody = await (await c.SendAsync(replay)).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, replayBody.GetProperty("token").ValueKind);
+        Assert.Equal(firstBody.GetProperty("client").GetProperty("id").GetGuid(), replayBody.GetProperty("client").GetProperty("id").GetGuid());
+        Assert.Equal(1, await t.ScalarAsync<int>("select count(*) from mcp_clients"));
+    }
+
+    [DbFact]
+    public async Task A_non_admin_cannot_see_the_whole_company_even_with_all()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var (other, _) = await t.AddMemberAsync("other");
+        await CreatedAsync(Client(t.ViewerLogin), "mine");
+        await CreatedAsync(Client(other), "theirs");
+
+        var asAll = await (await Client(t.ViewerLogin).GetAsync("/api/mcp-clients?all=true")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, asAll.GetArrayLength());
+    }
+
+    [DbFact]
+    public async Task Active_tokens_are_capped_but_expired_ones_do_not_count()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var memberId = await t.ScalarAsync<Guid>(
+            "select id from members where tenant_id = @tid and github_login = @login", new { tid = t.Id, login = t.ViewerLogin });
+        // Seed 20 active tokens and one already expired directly.
+        await t.ExecAsync("""
+            insert into mcp_clients (tenant_id, owner_member_id, name, token_hash, token_prefix, scope, expires_at)
+            select @tid, @mid, 'bulk', decode(md5('a' || g::text), 'hex'), 'wbm_bulkseed', 'read', now() + interval '30 days'
+              from generate_series(1, 20) g
+            """, new { tid = t.Id, mid = memberId });
+        await t.ExecAsync("""
+            insert into mcp_clients (tenant_id, owner_member_id, name, token_hash, token_prefix, scope, expires_at)
+            values (@tid, @mid, 'old', decode(md5('expired'), 'hex'), 'wbm_expired0', 'read', now() - interval '1 day')
+            """, new { tid = t.Id, mid = memberId });
+
+        // 21 active would exceed the cap, so the next mint is refused.
+        Assert.Equal("too_many_clients", await ErrorAsync(await CreateAsync(Client(t.ViewerLogin))));
+    }
+
+    [DbFact]
+    public async Task Revoking_an_already_revoked_token_is_not_found()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var (id, _) = await CreatedAsync(Client(t.ViewerLogin));
+        Assert.Equal(HttpStatusCode.NoContent, (await Client(t.ViewerLogin).DeleteAsync($"/api/mcp-clients/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await Client(t.ViewerLogin).DeleteAsync($"/api/mcp-clients/{id}")).StatusCode);
     }
 
     [DbFact]

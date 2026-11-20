@@ -122,6 +122,13 @@ public static class McpClients
         await s.ExecuteAsync("select pg_advisory_xact_lock(hashtextextended(@scope, 0))",
             new { scope = $"mcp-client:{memberId:N}" });
 
+        // The caller must still be in the company. A `for share` lock blocks on a concurrent removal (which locks the
+        // row `for update` and sets left_at), so a token can never be minted for someone an admin just removed.
+        var stillMember = await s.QuerySingleOrDefaultAsync<Guid?>(
+            "select id from members where id = @memberId and left_at is null for share", new { memberId });
+        if (stillMember is null)
+            return WriteError(StatusCodes.Status404NotFound, ApiErrors.NotFound);
+
         var active = await s.QuerySingleOrDefaultAsync<int>(
             "select count(*)::int from mcp_clients where owner_member_id = @memberId and revoked_at is null and expires_at > now()",
             new { memberId });
