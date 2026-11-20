@@ -235,6 +235,7 @@ export const en: Dict = {
       showAll: "All",
       search: "Search",
       clear: "Clear",
+      empty: "No options",
     },
   },
 
