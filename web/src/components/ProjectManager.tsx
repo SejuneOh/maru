@@ -73,6 +73,8 @@ export function ProjectManager({ projects, onChanged }: { projects: Project[]; o
         )}
       </div>
 
+      {error && !open && <p role="alert" className="mt-2 text-small text-ink">{error}</p>}
+
       {open && (
         <div className="mt-3 flex flex-col gap-3">
           <input

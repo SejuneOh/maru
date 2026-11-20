@@ -24,10 +24,15 @@ public sealed class ProjectWrites(ICurrentUser user, IAuditLog audit)
     private static WriteResult Forbidden() => Error(StatusCodes.Status403Forbidden, ApiErrors.AdminOnly);
     private static WriteResult NotFound() => Error(StatusCodes.Status404NotFound, ApiErrors.NotFound);
 
-    // The ids must all be this tenant's repositories (repositories is tenant-scoped by RLS), or the request is rejected.
+    // Only this tenant's synced repositories can be grouped (same set the picker and the project view show), or
+    // the request is rejected. repositories is tenant-scoped by RLS, so a foreign id drops the count.
     private static async Task<bool> ReposBelongAsync(TenantSession s, Guid[] ids) =>
         ids.Length == 0 ||
-        await s.QuerySingleOrDefaultAsync<int>("select count(*)::int from repositories where id = any(@ids)", new { ids }) == ids.Length;
+        await s.QuerySingleOrDefaultAsync<int>("select count(*)::int from repositories where id = any(@ids) and sync_enabled", new { ids }) == ids.Length;
+
+    // One name change at a time per tenant, so two requests do not both pass the uniqueness check and then collide.
+    private Task LockNamesAsync(TenantSession s) =>
+        s.ExecuteAsync("select pg_advisory_xact_lock(hashtextextended(@scope, 0))", new { scope = $"project-names:{TenantId:N}" });
 
     private async Task SetReposAsync(TenantSession s, Guid projectId, Guid[] ids)
     {
@@ -35,7 +40,7 @@ public sealed class ProjectWrites(ICurrentUser user, IAuditLog audit)
         if (ids.Length > 0)
             await s.ExecuteAsync("""
                 insert into project_repositories (tenant_id, project_id, repository_id)
-                select @tid, @projectId, id from repositories where id = any(@ids)
+                select @tid, @projectId, id from repositories where id = any(@ids) and sync_enabled
                 """, new { tid = TenantId, projectId, ids });
     }
 
@@ -43,6 +48,7 @@ public sealed class ProjectWrites(ICurrentUser user, IAuditLog audit)
     {
         if (!IsAdmin) return Forbidden();
         if (!await ReposBelongAsync(s, repoIds)) return Error(StatusCodes.Status400BadRequest, InvalidRepository);
+        await LockNamesAsync(s);
         var id = await s.QuerySingleOrDefaultAsync<Guid?>(
             "insert into projects (tenant_id, name) values (@tid, @name) on conflict (tenant_id, name) do nothing returning id",
             new { tid = TenantId, name });
@@ -60,6 +66,7 @@ public sealed class ProjectWrites(ICurrentUser user, IAuditLog audit)
         if (repoIds is not null && !await ReposBelongAsync(s, repoIds)) return Error(StatusCodes.Status400BadRequest, InvalidRepository);
         if (name is not null)
         {
+            await LockNamesAsync(s);
             var renamed = await s.ExecuteAsync(
                 "update projects set name = @name where id = @id and not exists (select 1 from projects where tenant_id = @tid and name = @name and id <> @id)",
                 new { id, name, tid = TenantId });
