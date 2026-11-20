@@ -53,7 +53,7 @@ public sealed record ActionItemIssue(Guid Id, string RepositoryName, int Number,
 
 public sealed record OverviewActionItem(Guid Id, string Text, Member? Assignee, ActionItemIssue? Issue, NoteRef Note);
 
-public sealed record ActivityActor(string? GithubLogin, string? DisplayName);
+public sealed record ActivityActor(string? GithubLogin, string? DisplayName, string? AvatarUrl);
 
 public sealed record ActivityIssue(Guid Id, string RepositoryName, int Number, string Title);
 
