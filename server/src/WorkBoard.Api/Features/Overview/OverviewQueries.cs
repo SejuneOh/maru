@@ -147,7 +147,7 @@ public static class OverviewQueries
              where i.id = any(@ids)
             """, new { ids });
         var assignees = (await s.QueryAsync<AssigneeRow>("""
-            select ia.issue_id, ia.github_user_id, m.github_login, m.display_name
+            select ia.issue_id, ia.github_user_id, m.github_login, m.display_name, m.avatar_url
               from issue_assignees ia
               left join members m on m.github_user_id = ia.github_user_id
              where ia.issue_id = any(@ids)
@@ -158,7 +158,7 @@ public static class OverviewQueries
             r => r.Id,
             r => new OverviewIssueRef(
                 r.Id, r.RepositoryName, r.Number, r.Title, r.Status, r.UpdatedAt,
-                assignees[r.Id].Select(a => new AssigneeDto(a.GithubUserId, a.GithubLogin ?? "unknown", a.DisplayName)).ToList()));
+                assignees[r.Id].Select(a => new AssigneeDto(a.GithubUserId, a.GithubLogin ?? "unknown", a.DisplayName, a.AvatarUrl)).ToList()));
     }
 
     // ---- people ----
@@ -322,7 +322,7 @@ public static class OverviewQueries
     {
         var rows = await s.QueryAsync<ActivityRow>("""
             select * from (
-              select 'comment' as kind, c.github_created_at as at, am.github_login as actor_login, am.display_name as actor_name,
+              select 'comment' as kind, c.github_created_at as at, am.github_login as actor_login, am.display_name as actor_name, am.avatar_url as actor_avatar,
                      i.id as issue_id, r.name as issue_repository, i.number as issue_number, i.title as issue_title,
                      null::text as pr_repository, null::int as pr_number, null::text as pr_title,
                      null::uuid as note_id, null::text as note_title, left(c.body, 80) as snippet
@@ -335,7 +335,7 @@ public static class OverviewQueries
               select case when p.state = 'merged' then 'pr_merged'
                           when p.review_requested then 'pr_review_requested'
                           else 'pr_opened' end,
-                     p.github_updated_at, am.github_login, am.display_name,
+                     p.github_updated_at, am.github_login, am.display_name, am.avatar_url,
                      null, null, null, null,
                      r.name, p.number, p.title,
                      null, null, null
@@ -344,7 +344,7 @@ public static class OverviewQueries
                 left join members am on am.github_user_id = p.author_github_id
                where p.state in ('open', 'merged') and p.github_updated_at >= now() - make_interval(days => @days)
               union all
-              select 'issue_closed', i.closed_at, null, null,
+              select 'issue_closed', i.closed_at, null, null, null,
                      i.id, r.name, i.number, i.title,
                      null, null, null,
                      null, null, null
@@ -352,7 +352,7 @@ public static class OverviewQueries
                 join repositories r on r.id = i.repository_id and r.sync_enabled
                where i.state = 'closed' and i.closed_at >= now() - make_interval(days => @days)
               union all
-              select 'meeting_note', n.held_at, am.github_login, am.display_name,
+              select 'meeting_note', n.held_at, am.github_login, am.display_name, am.avatar_url,
                      null, null, null, null,
                      null, null, null,
                      n.id, n.title, null
@@ -367,7 +367,7 @@ public static class OverviewQueries
         return rows
             .Select(a => new ActivityItem(
                 a.Kind, a.At,
-                a.ActorLogin is null && a.ActorName is null ? null : new ActivityActor(a.ActorLogin, a.ActorName),
+                a.ActorLogin is null && a.ActorName is null ? null : new ActivityActor(a.ActorLogin, a.ActorName, a.ActorAvatar),
                 a.IssueId is { } iid ? new ActivityIssue(iid, a.IssueRepository ?? "", a.IssueNumber ?? 0, a.IssueTitle ?? "") : null,
                 a.PrNumber is { } prn ? new ActivityPullRequest(a.PrRepository ?? "", prn, a.PrTitle ?? "") : null,
                 a.NoteId is { } nid ? new ActivityNote(nid, a.NoteTitle ?? "") : null,
@@ -455,6 +455,7 @@ public static class OverviewQueries
         public long GithubUserId { get; set; }
         public string? GithubLogin { get; set; }
         public string? DisplayName { get; set; }
+        public string? AvatarUrl { get; set; }
     }
 
     private sealed class PersonRow
@@ -544,6 +545,7 @@ public static class OverviewQueries
         public DateTime At { get; set; }
         public string? ActorLogin { get; set; }
         public string? ActorName { get; set; }
+        public string? ActorAvatar { get; set; }
         public Guid? IssueId { get; set; }
         public string? IssueRepository { get; set; }
         public int? IssueNumber { get; set; }

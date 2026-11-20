@@ -138,7 +138,7 @@ public static class IssueQueries
 
         var ids = rows.Select(r => r.Id).ToArray();
         var assignees = (await s.QueryAsync<AssigneeRow>("""
-            select ia.issue_id, ia.github_user_id, m.github_login, m.display_name
+            select ia.issue_id, ia.github_user_id, m.github_login, m.display_name, m.avatar_url
               from issue_assignees ia
               left join members m on m.github_user_id = ia.github_user_id
              where ia.issue_id = any(@ids)
@@ -171,7 +171,7 @@ public static class IssueQueries
             r.Status,
             r.Category,
             assignees[r.Id]
-                .Select(a => new AssigneeDto(a.GithubUserId, a.GithubLogin ?? "unknown", a.DisplayName))
+                .Select(a => new AssigneeDto(a.GithubUserId, a.GithubLogin ?? "unknown", a.DisplayName, a.AvatarUrl))
                 .ToList(),
             r.OpenPullRequestCount,
             r.CommentCount,
@@ -231,6 +231,7 @@ public static class IssueQueries
         public long GithubUserId { get; set; }
         public string? GithubLogin { get; set; }
         public string? DisplayName { get; set; }
+        public string? AvatarUrl { get; set; }
     }
 
     private sealed class IssueProjectRow
