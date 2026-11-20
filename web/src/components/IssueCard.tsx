@@ -78,7 +78,10 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false, drag
         </div>
       )}
       <div className="mt-2 flex items-center justify-between gap-2 text-meta text-muted">
-        <span className={`flex min-w-0 flex-1 items-center gap-1.5 ${unassigned ? "" : fade}`}>
+        <span
+          className={`flex min-w-0 flex-1 items-center gap-1.5 ${unassigned ? "" : fade}`}
+          title={!unassigned && issue.assignees.length > 0 ? issue.assignees.map(fmt.person).join(", ") : undefined}
+        >
           {showAssignee &&
             (unassigned ? (
               <span className="inline-flex items-center gap-1.5 text-accent">
@@ -87,7 +90,7 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false, drag
               </span>
             ) : issue.assignees.length > 0 ? (
               <>
-                <span className="inline-flex shrink-0 items-center [&>*+*]:-ml-1" title={issue.assignees.map(fmt.person).join(", ")}>
+                <span className="inline-flex shrink-0 items-center [&>*+*]:-ml-1">
                   {issue.assignees.slice(0, 3).map((a) => (
                     <Avatar key={a.githubUserId} person={a} size="xs" ring />
                   ))}
