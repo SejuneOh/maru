@@ -243,16 +243,18 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
-    public async Task Repositories_endpoint_lists_unarchived()
+    public async Task Repositories_endpoint_lists_synced_only()
     {
         var (t, repo) = await NewTenant(factory);
         await using var _ = t;
-        var archived = await t.AddRepoAsync("old");
-        await t.ExecAsync("update repositories set archived = true where id = @id", new { id = archived });
+        await t.ExecAsync("update repositories set name = 'synced' where id = @id", new { id = repo });
+        var off = await t.AddRepoAsync("not-synced");
+        await t.ExecAsync("update repositories set sync_enabled = false where id = @id", new { id = off });
 
         var res = await t.GetAsync("/api/repositories");
         var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
-        Assert.DoesNotContain("old", names);
+        Assert.Contains("synced", names);
+        Assert.DoesNotContain("not-synced", names);
     }
 
     [DbFact]
