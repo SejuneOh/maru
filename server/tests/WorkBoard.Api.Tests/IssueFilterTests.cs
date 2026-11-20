@@ -247,8 +247,9 @@ public class IssueFilterTests(WebApplicationFactory<Program> factory) : IClassFi
     {
         var (t, repo) = await NewTenant(factory);
         await using var _ = t;
-        await t.ExecAsync("update repositories set sync_enabled = true, name = 'synced' where id = @id", new { id = repo });
-        await t.AddRepoAsync("not-synced"); // sync_enabled defaults to false
+        await t.ExecAsync("update repositories set name = 'synced' where id = @id", new { id = repo });
+        var off = await t.AddRepoAsync("not-synced");
+        await t.ExecAsync("update repositories set sync_enabled = false where id = @id", new { id = off });
 
         var res = await t.GetAsync("/api/repositories");
         var names = res.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToArray();
