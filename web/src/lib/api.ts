@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
 import type {
+  Project,
   ActionItemIssueResult,
   AddCommentRequest,
   AssignedIssue,
@@ -211,6 +212,21 @@ export function updateRepositorySelection(id: string, repositories: number[]): P
 }
 
 export const MILESTONES_PATH = "/api/milestones";
+
+/** `POST /api/projects` (admin): create a project and pick the repositories to group. */
+export function createProject(name: string, repositoryIds: string[]): Promise<Project> {
+  return request<Project>("/api/projects", { method: "POST", body: { name, repositoryIds } });
+}
+
+/** `PATCH /api/projects/{id}` (admin): rename and/or change the grouped repositories. */
+export function updateProject(id: string, patch: { name?: string; repositoryIds?: string[] }): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(id)}`, { method: "PATCH", body: patch });
+}
+
+/** `DELETE /api/projects/{id}` (admin). */
+export async function deleteProject(id: string): Promise<void> {
+  await request<null>(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
 export const SYNC_STATUS_PATH = "/api/sync/status";
 
 export function getMilestones(): Promise<Milestone[]> {

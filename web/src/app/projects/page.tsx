@@ -6,6 +6,7 @@ import { WeeklyDone } from "@/components/Charts";
 import { BoardSkeleton, Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
 import { Schedule } from "@/components/Schedule";
+import { ProjectManager } from "@/components/ProjectManager";
 import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader, ProgressBar, SectionHead, progressLine } from "@/components/ui";
 import { useApi } from "@/lib/api";
@@ -116,6 +117,8 @@ export default function ProjectsBoardPage() {
             ? pt.leading(stats.length, leading.project.name, leading.pct)
             : pt.noIssues(stats.length)}
       </PageHeader>
+
+      <ProjectManager projects={projects.data} onChanged={projects.reload} />
 
       {stats.length > 0 && (
         <div className="reveal mt-2 grid grid-cols-1 gap-4 [animation-delay:30ms] md:grid-cols-2 xl:grid-cols-3">
