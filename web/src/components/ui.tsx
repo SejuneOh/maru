@@ -11,9 +11,10 @@ type Person = { displayName: string | null; githubLogin: string | null; avatarUr
 export function Avatar({ person, size = "md", ghost = false }: { person: Person; size?: "sm" | "md" | "lg"; ghost?: boolean }) {
   const dims = size === "sm" ? "h-5 w-5 text-[10px]" : size === "lg" ? "h-8 w-8 text-small" : "h-6 w-6 text-[11px]";
   const fmt = useFormat();
-  const [broken, setBroken] = useState(false);
+  // Track the src that failed, not a bare flag, so a reused Avatar whose person changes retries the new photo.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = ghost ? null : safeHttpUrl(person.avatarUrl);
-  if (src && !broken) {
+  if (src && failedSrc !== src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
@@ -21,7 +22,7 @@ export function Avatar({ person, size = "md", ghost = false }: { person: Person;
         alt=""
         src={src}
         loading="lazy"
-        onError={() => setBroken(true)}
+        onError={() => setFailedSrc(src)}
         className={`shrink-0 rounded-full bg-sunken object-cover ${dims}`}
       />
     );

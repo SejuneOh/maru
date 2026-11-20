@@ -42,8 +42,8 @@ function parseBlocks(src: string): Block[] {
       blocks.push({ kind: "code", text: body.join("\n") });
       continue;
     }
-    // Heading: #..###### followed by a space
-    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    // Heading: #..###### followed by a space ([^\n] so a stray line separator in the text can't void the match)
+    const h = /^(#{1,6})\s+([^\n]*)$/.exec(line);
     if (h) {
       blocks.push({ kind: "heading", level: h[1].length, text: h[2].trim() });
       i++;
@@ -70,8 +70,9 @@ function parseBlocks(src: string): Block[] {
       blocks.push({ kind: "ol", items });
       continue;
     }
-    // Paragraph: gather until a blank line or the start of another block
-    const body: string[] = [];
+    // Paragraph: consume this line (it started no other block), then gather until a blank line or a new block.
+    // Taking the first line unconditionally guarantees i advances, so the outer loop can never stall.
+    const body: string[] = [lines[i++]];
     while (
       i < lines.length &&
       lines[i].trim() !== "" &&
@@ -161,9 +162,10 @@ function nextToken(s: string): Token | null {
     { re: /!\[([^\]]*)\]\(([^)\s]+)\)/, make: (mm) => linkNode(mm[2], mm[1] || mm[2]) },
     { re: /\[([^\]]+)\]\(([^)\s]+)\)/, make: (mm, d) => linkNode(mm[2], mm[1], d) },
     { re: /\*\*([^*]+)\*\*/, make: (mm, d) => <strong className="font-semibold text-ink">{renderInline(mm[1], d + 1)}</strong> },
-    { re: /__([^_]+)__/, make: (mm, d) => <strong className="font-semibold text-ink">{renderInline(mm[1], d + 1)}</strong> },
+    // Underscore emphasis only at word boundaries, so identifiers like user_id_field stay literal.
+    { re: /(?<!\w)__([^_]+)__(?!\w)/, make: (mm, d) => <strong className="font-semibold text-ink">{renderInline(mm[1], d + 1)}</strong> },
     { re: /\*([^*]+)\*/, make: (mm, d) => <em>{renderInline(mm[1], d + 1)}</em> },
-    { re: /_([^_]+)_/, make: (mm, d) => <em>{renderInline(mm[1], d + 1)}</em> },
+    { re: /(?<!\w)_([^_]+)_(?!\w)/, make: (mm, d) => <em>{renderInline(mm[1], d + 1)}</em> },
   ];
   let best: Token | null = null;
   for (const { re, make } of patterns) {
