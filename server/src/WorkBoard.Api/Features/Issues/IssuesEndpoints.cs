@@ -61,7 +61,7 @@ public static class IssuesEndpoints
 
         api.MapGet("/repositories", async (TenantDb db, CancellationToken ct) =>
             Results.Ok(await db.ReadAsync(s =>
-                s.QueryAsync<RepositoryRef>("select id, name from repositories where not archived order by name"), ct)));
+                s.QueryAsync<RepositoryRef>("select id, name from repositories where sync_enabled order by name"), ct)));
 
         api.MapGet("/issues/{id:guid}", async (Guid id, TenantDb db, IOptions<GitHubAppOptions> app, CancellationToken ct) =>
         {

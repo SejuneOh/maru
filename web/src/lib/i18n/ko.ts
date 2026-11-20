@@ -697,6 +697,20 @@ export const ko = {
     openCount: (n: number) => `열린 일 ${n}`,
   },
 
+  projectManager: {
+    title: "프로젝트 관리",
+    new: "새 프로젝트",
+    namePlaceholder: "프로젝트 이름",
+    create: "만들기",
+    cancel: "취소",
+    delete: "삭제",
+    noRepos: "묶을 저장소가 없습니다. 먼저 저장소를 연결하세요.",
+    nameTaken: "같은 이름의 프로젝트가 이미 있습니다.",
+    createFailed: "만들지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    deleteFailed: "삭제하지 못했습니다.",
+    confirmDelete: (name: string) => `"${name}" 프로젝트를 삭제할까요? 묶인 레포는 지워지지 않습니다.`,
+  },
+
   projects: {
     title: "프로젝트별 보드",
     lead: "프로젝트는 저장소 묶음입니다. 진행률은 그 프로젝트의 모든 이슈 기준입니다.",

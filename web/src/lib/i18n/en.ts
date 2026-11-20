@@ -688,6 +688,20 @@ export const en: Dict = {
     openCount: (n) => `Open ${n}`,
   },
 
+  projectManager: {
+    title: "Manage projects",
+    new: "New project",
+    namePlaceholder: "Project name",
+    create: "Create",
+    cancel: "Cancel",
+    delete: "Delete",
+    noRepos: "No repositories to group yet. Connect one first.",
+    nameTaken: "A project with that name already exists.",
+    createFailed: "Could not create it. Please try again.",
+    deleteFailed: "Could not delete it.",
+    confirmDelete: (name: string) => `Delete the project "${name}"? The grouped repositories are not deleted.`,
+  },
+
   projects: {
     title: "Projects",
     lead: "A project is a group of repositories. Progress counts every issue in the project.",
