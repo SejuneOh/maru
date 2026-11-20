@@ -1,14 +1,31 @@
 "use client";
 
+import { useState } from "react";
 import { type Dict, useFormat, useT } from "@/lib/i18n";
 import { STATUS_DOT, initial, labelStyle, percent, safeHttpUrl } from "@/lib/labels";
 import type { IssueLabel, Status, StatusCounts } from "@/lib/types";
 
-type Person = { displayName: string | null; githubLogin: string | null };
+type Person = { displayName: string | null; githubLogin: string | null; avatarUrl?: string | null };
 
+/** The person's GitHub photo when there is one, falling back to the name's initial on a missing or broken image. */
 export function Avatar({ person, size = "md", ghost = false }: { person: Person; size?: "sm" | "md" | "lg"; ghost?: boolean }) {
   const dims = size === "sm" ? "h-5 w-5 text-[10px]" : size === "lg" ? "h-8 w-8 text-small" : "h-6 w-6 text-[11px]";
   const fmt = useFormat();
+  const [broken, setBroken] = useState(false);
+  const src = ghost ? null : safeHttpUrl(person.avatarUrl);
+  if (src && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        aria-hidden
+        alt=""
+        src={src}
+        loading="lazy"
+        onError={() => setBroken(true)}
+        className={`shrink-0 rounded-full bg-sunken object-cover ${dims}`}
+      />
+    );
+  }
   const tone = ghost ? "shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] text-muted" : "bg-ink text-on-ink";
   return (
     <span aria-hidden className={`grid shrink-0 place-items-center rounded-full font-semibold ${dims} ${tone}`}>
