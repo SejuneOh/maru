@@ -18,7 +18,8 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export function BoardSkeleton() {
   const t = useT();
   return (
-    <div className="@container" aria-busy aria-label={t.common.loading}>
+    <div className="@container" role="status" aria-busy>
+      <span className="sr-only">{t.common.loading}…</span>
       <div className="grid grid-cols-1 items-start gap-x-4 gap-y-6 @[34rem]:grid-cols-2 @[64rem]:grid-cols-4">
         {[0, 1, 2, 3].map((col) => (
           <div key={col} className="flex min-w-0 flex-col gap-2">
