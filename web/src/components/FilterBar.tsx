@@ -10,7 +10,7 @@ import { Dot } from "./ui";
 
 type Option = { value: string; label: string; dot?: string };
 
-const CONTROL = "h-8 cursor-pointer rounded-full text-small font-medium transition-colors duration-[120ms] ease-tool focus:outline-none";
+const CONTROL = "h-8 cursor-pointer rounded-full text-small font-medium transition-colors duration-[120ms] ease-tool";
 const TRIGGER_IDLE = "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--wb-rule)] hover:bg-hover";
 const TRIGGER_ON = "bg-ink text-surface";
 
@@ -81,7 +81,7 @@ function FilterMenu({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={p.search}
-              className="mb-1 h-8 w-full rounded-control bg-sunken px-3 text-small text-ink placeholder:text-muted focus:outline-none"
+              className="mb-1 h-8 w-full rounded-control bg-sunken px-3 text-small text-ink placeholder:text-muted"
             />
           )}
           <div role="menu" aria-label={label}>

@@ -731,3 +731,27 @@ html[data-lang-pending] body {
     transition: none !important;
   }
 }
+
+/* Loading skeletons: a sunken block with a soft sweep; the sweep stops for reduced motion. */
+@layer components {
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--wb-sunken);
+    border-radius: var(--radius-control);
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, var(--wb-hover), transparent);
+    animation: wb-shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes wb-shimmer {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after { animation: none; }
+}
