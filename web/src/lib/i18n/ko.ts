@@ -245,6 +245,7 @@ export const ko = {
       showAll: "전체",
       search: "검색",
       clear: "지우기",
+      empty: "항목 없음",
     },
   },
 

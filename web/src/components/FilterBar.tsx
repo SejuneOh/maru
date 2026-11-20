@@ -85,6 +85,7 @@ function FilterMenu({
             />
           )}
           <div role="menu" aria-label={label}>
+          {shown.length === 0 && <p className="px-2.5 py-2 text-small text-muted">{p.empty}</p>}
           {shown.map((o) => {
             const checked = selected.includes(o.value);
             return (
