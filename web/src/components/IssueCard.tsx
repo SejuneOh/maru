@@ -5,7 +5,7 @@ import { useFormat, useT } from "@/lib/i18n";
 import { STALE_DAYS, daysSince, isCanceled, isStale, safeHttpUrl } from "@/lib/labels";
 import { useSettings } from "@/lib/me";
 import type { BoardIssue } from "@/lib/types";
-import { Flag, GitHubLink, LabelChips, MilestoneTag, StatusBadge } from "./ui";
+import { Avatar, Flag, GitHubLink, LabelChips, MilestoneTag, StatusBadge } from "./ui";
 import { cardDragProps, useCanDrag, useDragging } from "./useBoardDrag";
 import { ISSUE_ATTR, ROW_ATTR } from "./useShortcuts";
 import { useIssuePanel } from "./useIssuePanel";
@@ -78,16 +78,26 @@ export function IssueCard({ issue, showAssignee = true, showStatus = false, drag
         </div>
       )}
       <div className="mt-2 flex items-center justify-between gap-2 text-meta text-muted">
-        <span className={`truncate ${unassigned ? "" : fade}`}>
+        <span className={`flex min-w-0 flex-1 items-center gap-1.5 ${unassigned ? "" : fade}`}>
           {showAssignee &&
             (unassigned ? (
               <span className="inline-flex items-center gap-1.5 text-accent">
-                <span aria-hidden className="inline-block h-3 w-3 rounded-full border border-dashed border-accent" />
+                <span aria-hidden className="inline-block h-4 w-4 rounded-full border border-dashed border-accent" />
                 {t.common.unassigned}
               </span>
-            ) : (
-              issue.assignees.map(fmt.person).join(", ")
-            ))}
+            ) : issue.assignees.length > 0 ? (
+              <>
+                <span className="inline-flex shrink-0 items-center [&>*+*]:-ml-1" title={issue.assignees.map(fmt.person).join(", ")}>
+                  {issue.assignees.slice(0, 3).map((a) => (
+                    <Avatar key={a.githubUserId} person={a} size="xs" ring />
+                  ))}
+                </span>
+                <span className="truncate">
+                  {fmt.person(issue.assignees[0])}
+                  {issue.assignees.length > 1 && t.overview.attention.others(issue.assignees.length - 1)}
+                </span>
+              </>
+            ) : null)}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {!phase && issue.openPullRequestCount > 0 && (

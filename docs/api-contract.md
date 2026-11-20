@@ -633,7 +633,8 @@ tenant transaction (no cache). Rules:
 - `attention.actionItemsWithoutIssue` covers every meeting action item without an issue (no date window);
   `actionItems` covers notes held in the last 14 days whose item has no issue or an unfinished one.
 - `activity`: last 3 days, newest first, max 12. A PR event kind is inferred from its current state (merged,
-  open with review requested, other open); closed-unmerged PRs are skipped. `actor` is null when the author is not a member.
+  open with review requested, other open); closed-unmerged PRs are skipped. `actor` is null when the author is not a member;
+  otherwise `actor` is `{ githubLogin, displayName, avatarUrl }` (`avatarUrl` is null when the member has no stored photo).
 
 ## Invitations and removal
 
@@ -766,7 +767,7 @@ type JoinedTenant = { tenant: { id: string; name: string }; member: Member };
 type OverviewIssueRef = {
   id: string; repositoryName: string; number: number; title: string;
   status: Status; updatedAt: string;
-  assignees: { githubUserId: number; githubLogin: string; displayName: string | null }[];
+  assignees: { githubUserId: number; githubLogin: string; displayName: string | null; avatarUrl: string | null }[];
 };
 
 type StatusCounts = { todo: number; inProgress: number; inReview: number; done: number };
@@ -890,7 +891,7 @@ type BoardIssue = {
   state: "open" | "closed";
   status: Status;            // from the issue_status view
   category: Category;        // from the issue_status view
-  assignees: { githubUserId: number; githubLogin: string; displayName: string | null }[];
+  assignees: { githubUserId: number; githubLogin: string; displayName: string | null; avatarUrl: string | null }[];
   openPullRequestCount: number;
   commentCount: number;
   parentIssueId: string | null;
