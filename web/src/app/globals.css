@@ -13,6 +13,8 @@
   --wb-rule-strong: #cdd2d9;
   --wb-ring: rgb(16 19 23 / 0.07);
   --wb-focus: #2f5bd3;
+  /* Fill under a card's drop target; derived from focus so it follows the theme on its own. */
+  --wb-drop-wash: color-mix(in srgb, var(--wb-focus) 10%, transparent);
   --wb-accent: #c2381c;
   --wb-accent-wash: #fcebe6;
   --wb-accent-ring: rgb(194 56 28 / 0.32);
@@ -603,24 +605,26 @@ html[data-lang-pending] body {
     animation: wb-pulse 1s var(--ease-tool) infinite alternate;
   }
 
-  /* Board columns while a card is dragged: dashed where it may land, solid ring under the pointer. */
+  /* Board columns while a card is dragged: a filled, dashed landing zone, a focus-blue ring under the pointer. */
   .drop-col {
     border-radius: var(--radius-item);
     transition:
       background-color 120ms var(--ease-tool),
-      outline-color 120ms var(--ease-tool);
+      outline-color 120ms var(--ease-tool),
+      opacity 120ms var(--ease-tool);
   }
   .drop-col[data-drop="can"] {
     outline: 1.5px dashed var(--wb-rule-strong);
     outline-offset: 4px;
+    background: var(--wb-sunken);
   }
   .drop-col[data-drop="over"] {
-    outline: 1.5px solid var(--wb-ink-soft);
+    outline: 2px solid var(--wb-focus);
     outline-offset: 4px;
-    background: var(--wb-hover);
+    background: var(--wb-drop-wash);
   }
   .drop-col[data-drop="off"] {
-    opacity: 0.6;
+    opacity: 0.45;
   }
   .card-lifted {
     opacity: 0.4;
