@@ -98,7 +98,7 @@ export function FilterChips({
           onClick={c.onRemove}
           title={c.title}
           aria-label={c.title}
-          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-surface px-3 text-small font-medium text-ink shadow-[inset_0_0_0_1px_var(--wb-rule-strong)] transition-colors duration-[120ms] ease-tool hover:bg-hover"
+          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-surface px-3 text-small font-medium text-ink shadow-[inset_0_0_0_1px_var(--wb-rule)] transition-colors duration-[120ms] ease-tool hover:bg-hover"
         >
           {c.label}
           <span aria-hidden className="text-muted">

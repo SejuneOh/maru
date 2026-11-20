@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { WeeklyDone } from "@/components/Charts";
-import { Empty, ErrorBox, Loading } from "@/components/Feedback";
+import { BoardSkeleton, Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { FilterChips } from "@/components/FilterChips";
 import { Schedule } from "@/components/Schedule";
 import { StatusColumns } from "@/components/StatusColumns";
@@ -204,7 +204,7 @@ export default function ProjectsBoardPage() {
               {board.error ? (
                 <ErrorBox error={board.error} />
               ) : !boardIssues ? (
-                <Loading />
+                <BoardSkeleton />
               ) : boardIssues.length === 0 ? (
                 <Empty>{t.board.noMatch}</Empty>
               ) : (

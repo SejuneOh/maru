@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ErrorBox, Loading } from "@/components/Feedback";
+import { BoardSkeleton, ErrorBox } from "@/components/Feedback";
 import { FilterBar } from "@/components/FilterBar";
 import { FilterChips } from "@/components/FilterChips";
 import { StatusColumns } from "@/components/StatusColumns";
@@ -121,7 +121,9 @@ export default function BoardPage() {
         sprintName={name.sprint}
       />
       {filtered == null ? (
-        <Loading />
+        <div className="mt-2">
+          <BoardSkeleton />
+        </div>
       ) : filtered.length === 0 ? (
         <p className="rounded-item border border-dashed border-rule-strong px-4 py-3 text-small text-muted">{bt.noMatch}</p>
       ) : (
