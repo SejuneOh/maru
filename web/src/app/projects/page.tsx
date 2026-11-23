@@ -126,10 +126,10 @@ export default function ProjectsBoardPage() {
             const recentNotes = notes.data!.filter((n) => n.project?.id === p.id).slice(0, 2);
             const isSelected = p.id === selected?.id;
             return (
-              <button
+              // The whole card selects by mouse; the name button carries keyboard access and the pressed state, so the
+              // repository links can sit in the card without nesting inside a button.
+              <div
                 key={p.id}
-                type="button"
-                aria-pressed={isSelected}
                 onClick={() => select(isSelected ? null : p.id)}
                 className={`flex cursor-pointer flex-col rounded-card bg-surface px-5 py-4 text-left transition-shadow duration-[120ms] ease-tool ${
                   isSelected ? "shadow-[0_0_0_2px_var(--wb-ink)]" : "shadow-elev-1 hover:shadow-[0_0_0_1px_var(--wb-rule-strong)]"
@@ -137,8 +137,35 @@ export default function ProjectsBoardPage() {
               >
                 <div className="mb-3 flex min-w-0 items-center gap-2">
                   <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-mark" style={{ background: p.color ?? "var(--wb-muted)" }} />
-                  <h2 className="shrink-0 text-ui font-semibold">{p.name}</h2>
-                  <span className={`truncate text-meta text-muted ${p.repositories.length ? "font-mono" : ""}`}>{p.repositories.map((r) => r.name).join(" · ") || t.common.noRepos}</span>
+                  <h2 className="shrink-0 text-ui font-semibold">
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        select(isSelected ? null : p.id);
+                      }}
+                      className="cursor-pointer text-left"
+                    >
+                      {p.name}
+                    </button>
+                  </h2>
+                  <span className="truncate text-meta text-muted">
+                    {p.repositories.length === 0
+                      ? t.common.noRepos
+                      : p.repositories.map((r, i) => (
+                          <span key={r.id}>
+                            {i > 0 && " · "}
+                            <Link
+                              href={`/projects/repo?repo=${r.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="link font-mono text-muted hover:text-ink"
+                            >
+                              {r.name}
+                            </Link>
+                          </span>
+                        ))}
+                  </span>
                   <span className="ml-auto shrink-0 font-mono text-small font-medium">{pct}%</span>
                 </div>
                 <ProgressBar counts={counts} />
@@ -163,7 +190,7 @@ export default function ProjectsBoardPage() {
                     ))}
                   </ul>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>

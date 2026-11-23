@@ -86,7 +86,10 @@ const NAV: { href: string; label: keyof Dict["nav"]; key: string }[] = [
 ];
 
 /** Screens reached from another one count as that one in the menu. */
-const PARENT: [prefix: string, href: string][] = [["/connect/", "/settings"]];
+const PARENT: [prefix: string, href: string][] = [
+  ["/connect/", "/settings"],
+  ["/projects/repo", "/projects"],
+];
 
 function isActive(path: string, href: string) {
   const pathname = PARENT.find(([prefix]) => path.startsWith(prefix))?.[1] ?? path;
