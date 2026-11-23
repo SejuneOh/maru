@@ -249,6 +249,9 @@ public static class Invitations
                 return WriteError(StatusCodes.Status409Conflict, LastAdmin);
 
             await s.ExecuteAsync("update members set left_at = now() where id = @id", new { id });
+            // A departed member's AI tool tokens stop working at once.
+            await s.ExecuteAsync(
+                "update mcp_clients set revoked_at = now() where owner_member_id = @id and revoked_at is null", new { id });
             var revoked = await s.QueryAsync<Guid>("""
                 update invitations set revoked_at = now()
                  where invited_by = @id and accepted_at is null and revoked_at is null

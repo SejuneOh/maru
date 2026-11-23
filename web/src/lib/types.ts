@@ -48,6 +48,20 @@ export type Invitation = {
 /** `POST /api/invitations` 201. `token` is shown once (null in an `Idempotency-Key` replay); the link is `/join#<token>`. */
 export type CreatedInvitation = { invitation: Invitation; token: string | null };
 
+/** An AI tool (MCP client) access token. `token` is returned only once, when it is created. */
+export type McpClient = {
+  id: string;
+  name: string;
+  scope: "read" | "write";
+  tokenPrefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+  revokedAt: string | null;
+  owner: { githubLogin: string; displayName: string | null } | null;
+};
+export type CreatedMcpClient = { client: McpClient; token: string | null };
+
 export type InviteError =
   | "invalid_request"
   | "invalid_login"
