@@ -105,7 +105,7 @@ public class McpWriteToolsTests(WebApplicationFactory<Program> factory) : IClass
         // Company A's token sees nothing of company B, so the issue is not found and nothing changes.
         var result = await ResultAsync(await CallAsync(Client(token), "change_card", new { id = bIssue.ToString(), status = "in_progress" }));
         Assert.True(result.GetProperty("isError").GetBoolean());
-        Assert.Null(await b.ScalarAsync<string?>("select status_override from board_fields where issue_id = @i", new { i = bIssue }));
+        Assert.Equal(0, await b.ScalarAsync<int>("select count(*) from board_fields where issue_id = @i", new { i = bIssue }));
     }
 
     [DbFact]
@@ -125,6 +125,6 @@ public class McpWriteToolsTests(WebApplicationFactory<Program> factory) : IClass
         // Closing an issue (done/cancelled) is out of scope for AI tools.
         var closing = await ResultAsync(await CallAsync(c, "change_card", new { id = issue.ToString(), status = "done" }));
         Assert.True(closing.GetProperty("isError").GetBoolean());
-        Assert.Null(await t.ScalarAsync<string?>("select status_override from board_fields where issue_id = @i", new { i = issue }));
+        Assert.Equal(0, await t.ScalarAsync<int>("select count(*) from board_fields where issue_id = @i", new { i = issue }));
     }
 }
