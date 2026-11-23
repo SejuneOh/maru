@@ -13,7 +13,7 @@ import { useIssuePanel } from "./useIssuePanel";
 const ADDABLE: Status[] = ["todo", "in_progress", "in_review"];
 
 /** A tall column is capped; the rest open on demand so a crowded board stays scannable without losing anything. */
-const COLUMN_LIMIT = 20;
+const COLUMN_LIMIT = 10;
 
 function ColumnCards({ issues, showAssignee, scope }: { issues: BoardIssue[]; showAssignee: boolean; scope: string }) {
   const t = useT();
