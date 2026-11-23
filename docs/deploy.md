@@ -53,6 +53,7 @@ alter default privileges in schema public revoke all on functions from anon, aut
 | `GitHub__Credentials__KeyFile` | 토큰 암호화 키 파일 절대 경로(모드 600, 저장소 밖). 없으면 토큰 연결 저장 불가(경고) |
 | `GitHub__Credentials__Key` | 키 파일 대신 키 파일 JSON 내용을 그대로. 파일 권한을 600으로 둘 수 없는 호스팅(Render)용. `KeyFile`이 있으면 파일을 씀 |
 | `Sync__Enabled` | 기본 `true` |
+| `Mcp__AllowedHosts__0` | `/mcp`(AI 도구용 MCP 엔드포인트)를 받을 Host. 기본은 localhost만이라, 원격에서 쓰려면 API 공개 호스트를 넣습니다(예: `maru-api.onrender.com`). 안 넣으면 원격 `/mcp` 요청은 `403`. 여러 개면 `__1`, `__2` |
 | `Maintenance__IdempotencyRetentionHours` | 만료된 멱등성 키 보관 시간. 기본 48, 최소 24 |
 | `Maintenance__CleanupIntervalMinutes` | 정리 주기. 기본 60 |
 
