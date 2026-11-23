@@ -27,3 +27,6 @@ services:
         sync: false
       - key: Web__AllowedOrigins__0
         sync: false
+      # Host the AI-tool MCP endpoint (/mcp) accepts; without it remote /mcp answers 403 forbidden_host.
+      - key: Mcp__AllowedHosts__0
+        value: maru-api-xut8.onrender.com
