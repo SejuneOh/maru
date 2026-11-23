@@ -95,6 +95,20 @@ public class McpWriteToolsTests(WebApplicationFactory<Program> factory) : IClass
     }
 
     [DbFact]
+    public async Task A_write_token_cannot_change_another_companys_card()
+    {
+        var a = await TestTenant.CreateAsync(_factory);
+        var b = await TestTenant.CreateAsync(_factory);
+        var bIssue = await b.AddIssueAsync(await b.AddRepoAsync("b-repo"));
+        var (token, _) = await SeedTokenAsync(a, "write");
+
+        // Company A's token sees nothing of company B, so the issue is not found and nothing changes.
+        var result = await ResultAsync(await CallAsync(Client(token), "change_card", new { id = bIssue.ToString(), status = "in_progress" }));
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Null(await b.ScalarAsync<string?>("select status_override from board_fields where issue_id = @i", new { i = bIssue }));
+    }
+
+    [DbFact]
     public async Task Change_card_rejects_a_bad_value_or_no_field()
     {
         var t = await TestTenant.CreateAsync(_factory);

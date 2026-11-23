@@ -87,6 +87,8 @@ internal static class McpWriteTools
         var body = Get.Str(args, "body")?.Trim();
         if (string.IsNullOrEmpty(body))
             throw new ToolException("body is required");
+        if (body.Length > CommentWrites.BodyMaxLength)
+            throw new ToolException($"body must be at most {CommentWrites.BodyMaxLength} characters");
         var (key, hash) = Idem(client, "add_comment", args);
         return await services.GetRequiredService<CommentWrites>().AddAsync(issueId, body, key, hash, ct);
     }
