@@ -285,6 +285,7 @@ export const en: Dict = {
       invalid_scope: "That access value is not valid.",
       invalid_expiry: "Expiry must be between 1 and 90 days.",
       too_many_clients: "You can have up to 20 active tokens.",
+      noToken: "It was already created, but the token cannot be shown again. Disconnect it and make a new one.",
       network: "Could not reach the server.",
       unknown: "Could not create the token. Try again in a moment.",
     },

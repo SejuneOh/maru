@@ -295,6 +295,7 @@ export const ko = {
       invalid_scope: "권한 값이 올바르지 않습니다.",
       invalid_expiry: "만료는 1~90일 사이여야 합니다.",
       too_many_clients: "활성 토큰은 20개까지 만들 수 있습니다.",
+      noToken: "이미 만들어졌지만 토큰을 다시 보여 줄 수 없습니다. 연결을 끊고 새로 만드세요.",
       network: "서버에 연결하지 못했습니다.",
       unknown: "토큰을 만들지 못했습니다. 잠시 뒤 다시 시도하세요.",
     },

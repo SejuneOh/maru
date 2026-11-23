@@ -138,7 +138,14 @@ function CreateForm({ onClose, onCreated }: { onClose: () => void; onCreated: (n
     setError(null);
     try {
       const res = await createMcpClient({ name: name.trim(), scope, expiresInDays: days }, key.current);
-      onCreated(res.client.name, res.token ?? "");
+      if (!res.token) {
+        // A replay of the same key created the token earlier; the plaintext is gone and cannot be shown again.
+        key.current = newIdempotencyKey();
+        setError(at.errors.noToken);
+        setBusy(false);
+        return;
+      }
+      onCreated(res.client.name, res.token);
     } catch (e) {
       key.current = newIdempotencyKey();
       const code = e instanceof ApiError ? e.code : "network";
