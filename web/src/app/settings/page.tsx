@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Empty, ErrorBox, Loading } from "@/components/Feedback";
 import { GitHubMark } from "@/components/Auth";
 import { ConnectionRequestPanel, ConnectionRow, ROW_LINE, githubInstallUrl } from "@/components/Connections";
+import { AiTools } from "@/components/AiTools";
 import { TeamCard } from "@/components/TeamCard";
 import { DisconnectTokenDialog, OrganizationImport, ReplaceTokenForm, STOPPED, TokenConnectFlow } from "@/components/TokenConnection";
 import { Card, Count, PageHeader } from "@/components/ui";
@@ -36,6 +37,8 @@ export default function SettingsPage() {
       </PageHeader>
 
       <ConnectionsCard connections={connections} isAdmin={me.data.member.role === "admin"} />
+
+      <AiTools me={me.data.member} />
 
       {me.data.member.role === "admin" && <TeamCard me={me.data.member} />}
 

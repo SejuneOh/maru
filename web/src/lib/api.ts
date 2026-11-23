@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AUTH_EVENT, GATE_EVENT, authEnabled, getAccessToken, getTenant, signOutIfStill } from "./auth";
 import type {
   Project,
+  CreatedMcpClient,
   ActionItemIssueResult,
   AddCommentRequest,
   AssignedIssue,
@@ -226,6 +227,23 @@ export function updateProject(id: string, patch: { name?: string; repositoryIds?
 /** `DELETE /api/projects/{id}` (admin). */
 export async function deleteProject(id: string): Promise<void> {
   await request<null>(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export const MCP_CLIENTS_PATH = "/api/mcp-clients";
+/** The address an AI tool points its MCP client at. */
+export const MCP_ENDPOINT_URL = `${API_URL}/mcp`;
+
+/** `POST /api/mcp-clients`: mint a token. The plaintext `token` is in the response only once. */
+export function createMcpClient(
+  req: { name: string; scope: "read" | "write"; expiresInDays: number },
+  idempotencyKey: string,
+): Promise<CreatedMcpClient> {
+  return request<CreatedMcpClient>(MCP_CLIENTS_PATH, { method: "POST", body: req, headers: { "Idempotency-Key": idempotencyKey } });
+}
+
+/** `DELETE /api/mcp-clients/{id}`: revoke a token. */
+export async function revokeMcpClient(id: string): Promise<void> {
+  await request<null>(`${MCP_CLIENTS_PATH}/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export const SYNC_STATUS_PATH = "/api/sync/status";
 
