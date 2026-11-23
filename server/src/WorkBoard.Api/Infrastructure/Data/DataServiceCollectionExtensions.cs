@@ -19,6 +19,9 @@ public static class DataServiceCollectionExtensions
         services.AddScoped<TenantDb>();
         services.AddSingleton<TenantSessions>();
         services.Configure<Features.Mcp.McpOptions>(config.GetSection(Features.Mcp.McpOptions.Section));
+        services.Configure<Features.Repositories.RepositoriesOptions>(
+            config.GetSection(Features.Repositories.RepositoriesOptions.Section));
+        services.AddScoped<Features.Repositories.RepositoryCodeReader>();
         services.AddScoped<IAuditLog, AuditLog>();
         services.AddScoped<IIssueEvents, IssueEvents>();
         services.AddScoped<IGitHubWriteTargets, GitHubWriteTargets>();
