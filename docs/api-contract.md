@@ -95,6 +95,9 @@ first calls `select set_config('app.tenant_id', @tenantId, true)`. RLS policies 
 | DELETE | `/api/invitations/{id}` | dev user, admin | `204` |
 | POST | `/api/invitations/preview` | sign-in only, no membership needed | `InvitationPreview` |
 | POST | `/api/invitations/accept` | sign-in only, no membership needed | `JoinedTenant` |
+| GET | `/api/mcp-clients` | dev user | `McpClient[]`, the caller's own, newest first; `?all=true` (admin) lists the company's with each `owner` |
+| POST | `/api/mcp-clients` | dev user | `201 CreatedMcpClient`, see "AI tool tokens" |
+| DELETE | `/api/mcp-clients/{id}` | dev user | `204`, revokes own (or any in the company for an admin) |
 | POST | `/api/github/webhook` | HMAC signature | see "GitHub webhook" |
 | GET | `/api/projects` | dev user | `Project[]` |
 | POST | `/api/projects` | dev user, admin | create a project: `{name, repositoryIds?}` → `201 Project`. Name unique per tenant (`409 name_taken`), repos must be the tenant's (`400 invalid_repository`) |
@@ -694,6 +697,24 @@ account. Rules:
   `Idempotency-Key` like other DB-only writes.
 - Development: `X-Dev-User` also accepts a login that has an invitation, so the join can be tried without Supabase.
 
+## AI tool tokens
+
+Access tokens an AI tool (MCP client) uses to read, and optionally write, the board on the member's behalf. Added by #79;
+the `/mcp` endpoint that consumes them is #80.
+
+- `POST /api/mcp-clients` body `{"name": string, "scope"?: "read" | "write", "expiresInDays"?: number}` mints a token for
+  the caller. `name` is 1..80 chars (`400 invalid_name`), `scope` defaults to `read` (`400 invalid_scope` otherwise),
+  `expiresInDays` is 1..90, default 30 (`400 invalid_expiry`). The token is `wbm_` + 256 bits of base64url randomness; only
+  its SHA-256 is stored (`token_hash`), with a 12-character `tokenPrefix` kept for display. Response `201 CreatedMcpClient`
+  shows the plaintext `token` once; a replay of the same `Idempotency-Key` returns the client with `token: null`. A member
+  may hold at most 20 active (not revoked, not expired) tokens (`409 too_many_clients`). `audit_log` action `mcp_client.create`.
+- `GET /api/mcp-clients` returns the caller's own tokens (`McpClient[]`, newest first, revoked and expired included so the
+  screen can show state). An admin may pass `?all=true` for every token in the company, each with its `owner`
+  (`{githubLogin, displayName}`); otherwise `owner` is null. The token itself is never returned here.
+- `DELETE /api/mcp-clients/{id}` revokes a token (`revoked_at`): `204`, or `404 not_found` (unknown, already revoked,
+  another company's, or another member's when the caller is not an admin). An admin may revoke any token in the company.
+- When a member is removed (`DELETE /api/members/{id}`), their tokens are revoked in the same transaction.
+
 ## Sync
 
 A background service syncs every tenant with an active connection that has an `installation_id` each
@@ -763,6 +784,13 @@ type InvitationPreview = {
   invitedBy: { githubLogin: string; displayName: string | null } | null; expiresAt: string; alreadyMember: boolean;
 };
 type JoinedTenant = { tenant: { id: string; name: string }; member: Member };
+
+type McpClient = {
+  id: string; name: string; scope: "read" | "write"; tokenPrefix: string;
+  createdAt: string; lastUsedAt: string | null; expiresAt: string; revokedAt: string | null;
+  owner: { githubLogin: string; displayName: string | null } | null;
+};
+type CreatedMcpClient = { client: McpClient; token: string | null };
 
 type OverviewIssueRef = {
   id: string; repositoryName: string; number: number; title: string;
