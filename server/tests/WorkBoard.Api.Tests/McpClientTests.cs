@@ -84,7 +84,7 @@ public class McpClientTests(WebApplicationFactory<Program> factory) : IClassFixt
         var replayBody = await (await c.SendAsync(replay)).Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(JsonValueKind.Null, replayBody.GetProperty("token").ValueKind);
         Assert.Equal(firstBody.GetProperty("client").GetProperty("id").GetGuid(), replayBody.GetProperty("client").GetProperty("id").GetGuid());
-        Assert.Equal(1, await t.ScalarAsync<int>("select count(*) from mcp_clients"));
+        Assert.Equal(1, await t.ScalarAsync<int>("select count(*) from mcp_clients where tenant_id = @tid", new { tid = t.Id }));
     }
 
     [DbFact]
