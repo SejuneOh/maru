@@ -824,6 +824,8 @@ export const ko = {
       `${lang ? `${lang} 중심 저장소입니다. ` : ""}맨 위 폴더 ${folders}개${deps > 0 ? `와 의존성 ${deps}개` : ""}, 열린 이슈 ${openIssues}건이 있습니다.`,
     rateLimited: "GitHub 요청 한도에 걸렸습니다. 몇 분 뒤 새로 고침해 보세요.",
     credential: "이 저장소의 GitHub 연결 자격이 없거나 만료되었습니다. 설정에서 연결을 확인하세요.",
+    forbidden: "GitHub 연결로 이 저장소를 읽지 못했습니다(권한 거부). GitHub App의 Contents 읽기 권한과 설치 상태를 확인하세요.",
+    moreProjects: (n: number) => `외 ${n}개`,
     status: "현황",
     progress: "진행률",
     progressError: "이슈를 불러오지 못했습니다.",

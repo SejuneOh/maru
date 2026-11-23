@@ -631,7 +631,9 @@ default 600). A new commit on the default branch gives a fresh read; a restart e
   since Monday 00:00 Asia/Seoul).
 - `generatedAt` is when the GitHub part was read; `cached` is true when it came from memory.
 - Errors: `404 not_found` (not this company's, or its connection is disconnected or has no credential), `429 github_rate_limited`,
-  `409 credential_missing | credential_revoked | credential_invalid | credential_expired`, `502 github_unavailable`.
+  `409 credential_missing | credential_revoked | credential_invalid | credential_expired`,
+  `403 github_read_not_granted` (GitHub answered 403 with a permission message: the connection cannot read the repository's contents;
+  a rate-limit 403 is `429 github_rate_limited`), `502 github_unavailable`.
 
 `GET /api/search` matches `q` (case-insensitive substring, min 2 chars) against issue titles,
 comment bodies and meeting note titles/bodies. Up to 20 results per group.

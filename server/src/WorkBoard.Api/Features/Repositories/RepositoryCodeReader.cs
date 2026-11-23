@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using WorkBoard.Api.Infrastructure.GitHub;
@@ -11,6 +12,10 @@ public sealed class RepositoryCodeReader(IGitHubRepositoryReader github, IMemory
 {
     private const int MaxDependencyAttempts = 10;
 
+    // One read runs at a time per cache key, so concurrent first-time requests for the same repository and
+    // commit do not each call GitHub. Gates are removed once no one holds them.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new();
+
     public static string CacheKey(Guid tenantId, Guid repositoryId, string baseCommit) =>
         $"repo-info:{tenantId:N}:{repositoryId:N}:{baseCommit}";
 
@@ -23,15 +28,30 @@ public sealed class RepositoryCodeReader(IGitHubRepositoryReader github, IMemory
         if (cache.TryGetValue(key, out RepositoryCodeInfo? hit) && hit is not null)
             return (hit, true);
 
-        var languages = Languages(await github.GetLanguagesAsync(repo.Connection, repo.Owner, repo.Name, ct));
-        var readme = await github.GetReadmeAsync(repo.Connection, repo.Owner, repo.Name, o.ReadmeMaxBytes, ct);
-        var (tree, truncated, seen) = await ReadTreeAsync(repo, head.CommitSha, o, ct);
-        var dependencies = await ReadDependenciesAsync(repo, seen, o, ct);
+        var gate = Gates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            // A request that waited behind the gate takes the entry the first one just stored.
+            if (cache.TryGetValue(key, out hit) && hit is not null)
+                return (hit, true);
 
-        var info = new RepositoryCodeInfo(
-            head.DefaultBranch, head.CommitSha, languages, readme, tree, truncated, dependencies, DateTimeOffset.UtcNow);
-        cache.Set(key, info, TimeSpan.FromSeconds(o.CacheTtlSeconds));
-        return (info, false);
+            var languages = Languages(await github.GetLanguagesAsync(repo.Connection, repo.Owner, repo.Name, ct));
+            var readme = await github.GetReadmeAsync(repo.Connection, repo.Owner, repo.Name, o.ReadmeMaxBytes, ct);
+            var (tree, truncated, seen) = await ReadTreeAsync(repo, head.CommitSha, o, ct);
+            var dependencies = await ReadDependenciesAsync(repo, seen, o, ct);
+
+            var info = new RepositoryCodeInfo(
+                head.DefaultBranch, head.CommitSha, languages, readme, tree, truncated, dependencies, DateTimeOffset.UtcNow);
+            cache.Set(key, info, TimeSpan.FromSeconds(o.CacheTtlSeconds));
+            return (info, false);
+        }
+        finally
+        {
+            gate.Release();
+            if (gate.CurrentCount == 1)
+                Gates.TryRemove(new KeyValuePair<string, SemaphoreSlim>(key, gate));
+        }
     }
 
     public static IReadOnlyList<LanguageShare> Languages(IReadOnlyDictionary<string, long> bytes)

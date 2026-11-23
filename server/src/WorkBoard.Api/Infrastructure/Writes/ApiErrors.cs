@@ -18,6 +18,7 @@ public static class ApiErrors
     public const string CredentialExpired = "credential_expired";
     public const string GithubUnavailable = "github_unavailable";
     public const string GithubWriteNotGranted = "github_write_not_granted";
+    public const string GithubReadNotGranted = "github_read_not_granted";
     public const string AssigneeNotCollaborator = "assignee_not_collaborator";
     public const string FieldDisabled = "field_disabled";
     public const string RepositoryArchived = "repository_archived";
@@ -31,4 +32,5 @@ public static class ApiErrors
     public static IResult ConflictResult(string code = Conflict) => Of(StatusCodes.Status409Conflict, code);
     public static IResult GithubUnavailableResult() => Of(StatusCodes.Status502BadGateway, GithubUnavailable);
     public static IResult GithubWriteNotGrantedResult() => Of(StatusCodes.Status403Forbidden, GithubWriteNotGranted);
+    public static IResult GithubReadNotGrantedResult() => Of(StatusCodes.Status403Forbidden, GithubReadNotGranted);
 }

@@ -815,6 +815,8 @@ export const en: Dict = {
       `${lang ? `A mostly ${lang} repository with ` : "A repository with "}${pl(folders, "top-level folder", "top-level folders")}, ${pl(openIssues, "open issue", "open issues")}${deps > 0 ? ` and ${pl(deps, "dependency", "dependencies")}` : ""}.`,
     rateLimited: "GitHub's request limit was reached. Refresh in a few minutes.",
     credential: "The GitHub connection for this repository has no valid credential. Check it in Settings.",
+    forbidden: "The GitHub connection could not read this repository (forbidden). Check the GitHub App's Contents read access and installation.",
+    moreProjects: (n: number) => (n === 1 ? "+1 more" : `+${n} more`),
     status: "At a glance",
     progress: "Progress",
     progressError: "Couldn't load the issues.",
