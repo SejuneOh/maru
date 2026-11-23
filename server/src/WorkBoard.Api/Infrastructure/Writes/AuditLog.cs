@@ -15,8 +15,8 @@ public sealed class AuditLog(ICurrentUser user) : IAuditLog
 {
     public Task WriteAsync(TenantSession session, string action, string targetType, Guid? targetId, object? before, object? after) =>
         session.ExecuteAsync("""
-            insert into audit_log (tenant_id, member_id, action, target_type, target_id, before, after)
-            values (@tenantId, @memberId, @action, @targetType, @targetId, cast(@before as jsonb), cast(@after as jsonb))
+            insert into audit_log (tenant_id, member_id, action, target_type, target_id, before, after, mcp_client_id)
+            values (@tenantId, @memberId, @action, @targetType, @targetId, cast(@before as jsonb), cast(@after as jsonb), @mcpClientId)
             """, new
         {
             tenantId = user.Identity.TenantId,
@@ -26,5 +26,6 @@ public sealed class AuditLog(ICurrentUser user) : IAuditLog
             targetId,
             before = before is null ? null : TokenMasker.Apply(JsonSerializer.Serialize(before, JsonSerializerOptions.Web)),
             after = after is null ? null : TokenMasker.Apply(JsonSerializer.Serialize(after, JsonSerializerOptions.Web)),
+            mcpClientId = user.McpClientId,
         });
 }
