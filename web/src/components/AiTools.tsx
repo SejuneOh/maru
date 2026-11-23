@@ -61,7 +61,14 @@ export function AiTools({ me }: { me: Member }) {
             <button type="button" aria-pressed={!all} onClick={() => setAll(false)}>
               {at.mine}
             </button>
-            <button type="button" aria-pressed={all} onClick={() => setAll(true)}>
+            <button
+              type="button"
+              aria-pressed={all}
+              onClick={() => {
+                setAll(true);
+                setOpen(false);
+              }}
+            >
               {at.company}
             </button>
           </div>
@@ -78,6 +85,7 @@ export function AiTools({ me }: { me: Member }) {
           <div className="mx-5 mb-4 border-t border-rule pt-4">
             <CreateForm
               onClose={closeForm}
+              onReload={clients.reload}
               onCreated={(name, token) => {
                 setOpen(false);
                 setCreated({ name, token });
@@ -120,7 +128,7 @@ export function AiTools({ me }: { me: Member }) {
   );
 }
 
-function CreateForm({ onClose, onCreated }: { onClose: () => void; onCreated: (name: string, token: string) => void }) {
+function CreateForm({ onClose, onReload, onCreated }: { onClose: () => void; onReload: () => void; onCreated: (name: string, token: string) => void }) {
   const t = useT();
   const at = t.aiTools;
   const fmt = useFormat();
@@ -141,6 +149,7 @@ function CreateForm({ onClose, onCreated }: { onClose: () => void; onCreated: (n
       if (!res.token) {
         // A replay of the same key created the token earlier; the plaintext is gone and cannot be shown again.
         key.current = newIdempotencyKey();
+        onReload();
         setError(at.errors.noToken);
         setBusy(false);
         return;
@@ -290,7 +299,12 @@ function ToolRow({ client, showOwner, onDisconnect }: { client: McpClient; showO
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className={`text-ui font-medium ${inactive ? "" : "text-ink"}`}>{client.name}</span>
           <span className="tag">{at.scopes[client.scope].short}</span>
-          {showOwner && client.owner && <span className="font-mono text-meta text-muted">@{client.owner.githubLogin}</span>}
+          {showOwner && client.owner && (
+            <span className="inline-flex items-center gap-1.5 text-small text-muted">
+              {client.owner.displayName ?? client.owner.githubLogin}
+              <span className="font-mono text-meta">@{client.owner.githubLogin}</span>
+            </span>
+          )}
         </div>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-small text-muted">
           <span className="font-mono">{client.tokenPrefix}…</span>
@@ -360,7 +374,7 @@ function DisconnectDialog({ client, onClose, onDone }: { client: McpClient; onCl
       <div className="p-6 max-[639px]:p-5">
         <h2 id={`${id}-title`} className="text-title font-semibold">{at.confirmTitle(client.name)}</h2>
         <p className="mt-3 text-body text-ink-soft">{at.confirmBody}</p>
-        {error && <p role="alert" className="mt-4 border-l-2 border-ink-soft pl-3 text-small text-ink">{at.errors.unknown}</p>}
+        {error && <p role="alert" className="mt-4 border-l-2 border-ink-soft pl-3 text-small text-ink">{at.errors.disconnectFailed}</p>}
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button ref={keep} type="button" className="btn" onClick={onClose} disabled={busy}>
             {at.keep}

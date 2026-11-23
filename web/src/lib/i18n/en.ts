@@ -288,6 +288,7 @@ export const en: Dict = {
       noToken: "It was already created, but the token cannot be shown again. Disconnect it and make a new one.",
       network: "Could not reach the server.",
       unknown: "Could not create the token. Try again in a moment.",
+      disconnectFailed: "Could not disconnect it. Try again in a moment.",
     },
   },
 
