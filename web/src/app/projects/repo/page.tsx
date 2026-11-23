@@ -51,15 +51,19 @@ function readmeSummary(src: string): { text: string; cut: boolean } {
   const out: string[] = [];
   let chars = 0;
   let fence = false;
+  let clipped = false;
   for (const l of lines) {
     if (/^\s*```/.test(l)) fence = !fence;
     if (!fence && l.trim() === "" && (out.length >= README_LINES || chars >= README_CHARS)) break;
     if (out.length >= README_LINES * 2 || chars >= README_CHARS * 2) break;
-    out.push(l);
-    chars += l.length + 1;
+    // A single line with no break (a long table row or minified block) is capped so it cannot render huge.
+    const line = l.length > README_CHARS ? l.slice(0, README_CHARS) : l;
+    if (line !== l) clipped = true;
+    out.push(line);
+    chars += line.length + 1;
   }
   const text = out.join("\n").trim();
-  return { text, cut: out.length < lines.length && lines.slice(out.length).some((l) => l.trim() !== "") };
+  return { text, cut: clipped || (out.length < lines.length && lines.slice(out.length).some((l) => l.trim() !== "")) };
 }
 
 export default function RepositoryPage() {
@@ -89,7 +93,9 @@ export default function RepositoryPage() {
         ? rt.rateLimited
         : info.error instanceof ApiError && info.error.status === 409
           ? rt.credential
-          : null;
+          : info.error instanceof ApiError && info.error.status === 403
+            ? rt.forbidden
+            : null;
     return (
       <div className="flex flex-col gap-4">
         <PageHeader meta={rt.meta} title={rt.title} />
@@ -112,7 +118,7 @@ export default function RepositoryPage() {
     );
 
   const d = info.data;
-  const project = projects.data?.find((p) => p.repositories.some((r) => r.id === id)) ?? null;
+  const repoProjects = projects.data?.filter((p) => p.repositories.some((r) => r.id === id)) ?? [];
   const repoName = d.fullName.split("/").pop() ?? d.fullName;
   const folders = d.tree.filter((n) => n.type === "dir").length;
   const depCount = d.dependencies.reduce((sum, l) => sum + l.items.length, 0);
@@ -123,11 +129,12 @@ export default function RepositoryPage() {
         <PageHeader
           meta={
             <>
-              {project && (
+              {repoProjects.length > 0 && (
                 <>
-                  <Link href={`/projects?project=${project.id}`} className="link text-muted">
-                    {project.name}
+                  <Link href={`/projects?project=${repoProjects[0].id}`} className="link text-muted">
+                    {repoProjects[0].name}
                   </Link>
+                  {repoProjects.length > 1 && <span className="text-muted"> {rt.moreProjects(repoProjects.length - 1)}</span>}
                   {" · "}
                 </>
               )}

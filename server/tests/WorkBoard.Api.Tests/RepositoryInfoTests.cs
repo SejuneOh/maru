@@ -21,8 +21,9 @@ public class RepositoryInfoTests
     {
         public string Commit { get; set; } = "c1";
         public bool TruncateRecursive { get; set; }
+        public int ReadDelayMs { get; set; }
         public Dictionary<string, (long Size, string? Text)> Files { get; } = [];
-        public int HeadCalls, TreeCalls, BlobCalls;
+        public int HeadCalls, TreeCalls, BlobCalls, LanguageCalls;
         public List<string> BlobsRead { get; } = [];
 
         public Task<RepositoryHead> GetHeadAsync(GitHubConnectionRef c, string o, string n, CancellationToken ct)
@@ -31,8 +32,13 @@ public class RepositoryInfoTests
             return Task.FromResult(new RepositoryHead("main", Commit));
         }
 
-        public Task<IReadOnlyDictionary<string, long>> GetLanguagesAsync(GitHubConnectionRef c, string o, string n, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long> { ["C#"] = 750, ["TypeScript"] = 250 });
+        public async Task<IReadOnlyDictionary<string, long>> GetLanguagesAsync(GitHubConnectionRef c, string o, string n, CancellationToken ct)
+        {
+            Interlocked.Increment(ref LanguageCalls);
+            if (ReadDelayMs > 0)
+                await Task.Delay(ReadDelayMs, ct);
+            return new Dictionary<string, long> { ["C#"] = 750, ["TypeScript"] = 250 };
+        }
 
         public Task<string?> GetReadmeAsync(GitHubConnectionRef c, string o, string n, int max, CancellationToken ct) =>
             Task.FromResult<string?>("# hello");
@@ -206,6 +212,21 @@ public class RepositoryInfoTests
         Assert.Same(first, second);
         Assert.Equal(treeCalls, github.TreeCalls);
         Assert.Equal(2, github.HeadCalls);
+    }
+
+    [Fact]
+    public async Task Concurrent_first_reads_call_github_once()
+    {
+        var github = new FakeReader { ReadDelayMs = 50 };
+        var reader = Reader(github, NewCache());
+
+        // Several requests for the same repository and commit arrive before the first finishes; the gate lets
+        // one read GitHub and the rest take the stored entry.
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 6).Select(_ => reader.GetAsync(TenantA, RepoId, Repo(TenantA), default)));
+
+        Assert.Equal(1, github.LanguageCalls);
+        Assert.Equal(1, results.Count(r => !r.Cached));
     }
 
     [Fact]
