@@ -151,6 +151,46 @@ public class McpEndpointTests(WebApplicationFactory<Program> factory) : IClassFi
     }
 
     [DbFact]
+    public async Task Get_issue_of_another_company_is_not_found()
+    {
+        var a = await TestTenant.CreateAsync(_factory);
+        var b = await TestTenant.CreateAsync(_factory);
+        var bIssue = await b.AddIssueAsync(await b.AddRepoAsync("b-repo"), title: "secret");
+
+        var c = Client(await SeedTokenAsync(a));
+        var (isError, _, text) = await ToolAsync(await RpcAsync(c, "tools/call",
+            new { name = "get_issue", arguments = new { id = bIssue.ToString() } }));
+        Assert.True(isError);
+        Assert.Contains("not found", text);
+    }
+
+    [DbFact]
+    public async Task A_token_whose_owner_left_the_company_is_rejected()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var token = await SeedTokenAsync(t);
+        await t.ExecAsync("update members set left_at = now() where tenant_id = @tid and github_login = @login",
+            new { tid = t.Id, login = t.ViewerLogin });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RpcAsync(Client(token), "initialize")).StatusCode);
+    }
+
+    [DbFact]
+    public async Task Notifications_get_202_and_unknown_methods_get_a_json_rpc_error()
+    {
+        var t = await TestTenant.CreateAsync(_factory);
+        var c = Client(await SeedTokenAsync(t));
+
+        var note = await c.PostAsJsonAsync("/mcp", new { jsonrpc = "2.0", method = "notifications/initialized" });
+        Assert.Equal(HttpStatusCode.Accepted, note.StatusCode);
+
+        var unknown = await c.PostAsJsonAsync("/mcp", new { jsonrpc = "2.0", id = 7, method = "no/such/method" });
+        unknown.EnsureSuccessStatusCode();
+        var body = await unknown.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(-32601, body.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Equal(7, body.GetProperty("id").GetInt32());
+    }
+
+    [DbFact]
     public async Task A_result_over_the_size_cap_is_refused()
     {
         var t = await TestTenant.CreateAsync(_factory);

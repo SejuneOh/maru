@@ -40,10 +40,13 @@ internal static class McpTools
             {
                 var person = Get.Str(a, "person");
                 var label = Get.Str(a, "label");
+                var doneWithinDays = Get.Int(a, "doneWithinDays") ?? 14;
+                if (doneWithinDays is < 0 or > 365)
+                    throw new ToolException("doneWithinDays must be between 0 and 365");
                 var filter = new IssueFilter(
                     ProjectId: null,
                     People: person is null ? null : [person],
-                    DoneWithinDays: Get.Int(a, "doneWithinDays") ?? 14,
+                    DoneWithinDays: doneWithinDays,
                     Statuses: Split(Get.Str(a, "status")),
                     Stale: Get.Bool(a, "stale"),
                     Labels: label is null ? null : [label]);
