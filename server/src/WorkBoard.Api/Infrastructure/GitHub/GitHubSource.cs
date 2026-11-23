@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 namespace WorkBoard.Api.Infrastructure.GitHub;
 
 public sealed partial class GitHubSource(HttpClient http, IGitHubCredentials credentials, GitHubEtagCache? etags = null)
-    : IGitHubSource, IGitHubOrgReader
+    : IGitHubSource, IGitHubOrgReader, IGitHubRepositoryReader
 {
     private const string ApiBase = "https://api.github.com";
     private const int PageSize = 100;

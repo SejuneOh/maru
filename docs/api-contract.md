@@ -601,6 +601,38 @@ Turning an action item into a GitHub issue (any member, GitHub write through the
   out). An item whose create ended with an unknown outcome can be removed once its claim is older than 2 minutes; if GitHub did create that
   issue, it stays unlinked.
 
+`GET /api/repositories/{id}/info` (any member) reads a repository's code-side information from GitHub with the
+connection's own credential. Nothing from GitHub (source, README, file names) is stored in the database; the answer is
+kept in server memory only, keyed by company, repository and default-branch commit (`Repositories:CacheTtlSeconds`,
+default 600). A new commit on the default branch gives a fresh read; a restart empties the cache. Two GitHub calls
+(`GET /repos/{o}/{r}` and the default branch) are made on every request to learn the commit.
+
+```
+200 {
+  fullName, defaultBranch, baseCommit,
+  languages: [{ name, bytes, ratio }],        // ratio = bytes / total, 4 decimals, largest first
+  readme: string | null,                      // raw markdown, cut at Repositories:ReadmeMaxBytes (256 KiB); not sanitized
+  tree: [{ name, path, type: "dir" | "file", children: [...] | null }],   // children null for files
+  truncated: boolean,
+  dependencies: [{ file, manager: "npm" | "nuget" | "go" | "pip", items: [string] }],
+  activity: { openIssues, openPrs, doneThisWeek },
+  generatedAt, cached
+}
+```
+
+- `tree` shows 3 folder levels (`TreeDepth`) and at most 2000 nodes (`MaxTreeNodes`), shallower levels first; folders first,
+  then files, each by name. Folders below the depth limit have `children: []`. `truncated` is true when the node limit,
+  or GitHub's own listing limit that could not be worked around (folder reads are capped at `MaxTreeRequests` = 40), cut the tree.
+  Submodules are left out. File contents are never downloaded for the tree.
+- `dependencies` reads up to 5 manifests (`package.json`, `*.csproj`, `go.mod`, `pyproject.toml`), shallowest first,
+  each at most 1 MiB; larger, binary or unparsable files are skipped and do not use a slot. Folders such as
+  `node_modules`, `vendor`, `bin`, `obj` are ignored. `items` are names only, sorted, at most 300.
+- `activity` is counted from the mirror per request (not cached): `openIssues`, `openPrs` and `doneThisWeek` (status `done`, closed
+  since Monday 00:00 Asia/Seoul).
+- `generatedAt` is when the GitHub part was read; `cached` is true when it came from memory.
+- Errors: `404 not_found` (not this company's, or its connection is disconnected or has no credential), `429 github_rate_limited`,
+  `409 credential_missing | credential_revoked | credential_invalid | credential_expired`, `502 github_unavailable`.
+
 `GET /api/search` matches `q` (case-insensitive substring, min 2 chars) against issue titles,
 comment bodies and meeting note titles/bodies. Up to 20 results per group.
 
