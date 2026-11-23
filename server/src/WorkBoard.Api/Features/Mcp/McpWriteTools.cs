@@ -13,19 +13,22 @@ internal static class McpWriteTools
 {
     public static readonly HashSet<string> Names = ["change_card", "add_comment"];
 
+    // MCP may move a card only among open statuses; done and cancelled close the issue on GitHub, which #82 keeps out.
+    private static readonly string[] OpenStatuses = ["todo", "in_progress", "in_review"];
+
     public static readonly object[] List =
     [
         new
         {
             name = "change_card",
-            description = "Change one issue card's board fields: status (todo, in_progress, in_review, done, cancelled), priority (urgent, high, normal, low) and size (S, M, L). Moving to done or cancelled closes the issue on GitHub. Give the issue UUID and at least one field.",
+            description = "Change one issue card's board fields: status (todo, in_progress, in_review), priority (urgent, high, normal, low) and size (S, M, L). Give the issue UUID and at least one field. Closing an issue (done or cancelled) is not available to AI tools.",
             inputSchema = new
             {
                 type = "object",
                 properties = new
                 {
                     id = new { type = "string", description = "The issue UUID." },
-                    status = new { type = "string", description = "todo, in_progress, in_review, done or cancelled." },
+                    status = new { type = "string", description = "todo, in_progress or in_review." },
                     priority = new { type = "string", description = "urgent, high, normal or low." },
                     size = new { type = "string", description = "S, M or L." },
                 },
@@ -69,7 +72,7 @@ internal static class McpWriteTools
         JsonElement args, IServiceProvider services, AuthedClient client, CancellationToken ct)
     {
         var issueId = Get.Guid(args, "id") ?? throw new ToolException("id (a UUID) is required");
-        var status = Choice(args, "status", BoardPatch.Statuses);
+        var status = Choice(args, "status", OpenStatuses);
         var priority = Choice(args, "priority", BoardPatch.Priorities);
         var size = Choice(args, "size", BoardPatch.Sizes);
         if (status is null && priority is null && size is null)

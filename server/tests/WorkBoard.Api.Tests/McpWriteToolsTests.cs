@@ -121,5 +121,10 @@ public class McpWriteToolsTests(WebApplicationFactory<Program> factory) : IClass
 
         var empty = await ResultAsync(await CallAsync(c, "change_card", new { id = issue.ToString() }));
         Assert.True(empty.GetProperty("isError").GetBoolean());
+
+        // Closing an issue (done/cancelled) is out of scope for AI tools.
+        var closing = await ResultAsync(await CallAsync(c, "change_card", new { id = issue.ToString(), status = "done" }));
+        Assert.True(closing.GetProperty("isError").GetBoolean());
+        Assert.Null(await t.ScalarAsync<string?>("select status_override from board_fields where issue_id = @i", new { i = issue }));
     }
 }

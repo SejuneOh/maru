@@ -740,9 +740,10 @@ outside `/api` and its `CurrentMemberFilter`, so `X-Dev-User` is never honoured 
 - **Write tools** (#82) appear in `tools/list` and run only for a `write`-scope token; a read token never sees or runs
   them (a call is "Unknown tool"). They act as the token's owner through the same write path as the REST endpoints
   (GitHub, the mirror and idempotency included), and each write's `audit_log` row carries the owner as `member_id` and
-  this token as `mcp_client_id`. `change_card` (args: `id`, and any of `status`, `priority`, `size`; moving to done or
-  cancelled closes the issue on GitHub) and `add_comment` (args: `issueId`, `body`). An optional `idempotencyKey`
-  argument dedupes a retry. Creating issues is not in this set yet.
+  this token as `mcp_client_id`. `change_card` (args: `id`, and any of `status` (`todo`, `in_progress`, `in_review`
+  only — closing an issue with `done`/`cancelled` is not available to AI tools), `priority`, `size`) and `add_comment`
+  (args: `issueId`, `body`, up to 60,000 chars). An optional `idempotencyKey` argument dedupes a retry. Creating issues
+  is not in this set yet.
 
 ## Sync
 
