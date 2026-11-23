@@ -779,3 +779,35 @@ export type ScheduleSprint = {
   unfinishedCount: number;
   overdueDays: number;
 };
+
+/** `GET /api/repositories/{id}/info`. Read from GitHub and cached in server memory; ratio is bytes / total. */
+export type RepoLanguage = { name: string; bytes: number; ratio: number };
+
+export type RepoTreeNode = {
+  name: string;
+  path: string;
+  type: "dir" | "file";
+  /** null for files; [] for a folder cut off by the depth or node limit. */
+  children: RepoTreeNode[] | null;
+};
+
+export type RepoDependencyList = {
+  file: string;
+  manager: "npm" | "nuget" | "go" | "pip";
+  items: string[];
+};
+
+export type RepositoryInfo = {
+  fullName: string;
+  defaultBranch: string;
+  baseCommit: string;
+  languages: RepoLanguage[];
+  /** Raw markdown, not sanitized; null when the repository has no README. */
+  readme: string | null;
+  tree: RepoTreeNode[];
+  truncated: boolean;
+  dependencies: RepoDependencyList[];
+  activity: { openIssues: number; openPrs: number; doneThisWeek: number };
+  generatedAt: string;
+  cached: boolean;
+};
