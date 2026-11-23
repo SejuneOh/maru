@@ -48,6 +48,8 @@ public static class RepositoriesEndpoints
         GitHubSourceErrorKind.CredentialRevoked => ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialRevoked),
         GitHubSourceErrorKind.CredentialInvalid => ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialInvalid),
         GitHubSourceErrorKind.CredentialExpired => ApiErrors.Of(StatusCodes.Status409Conflict, ApiErrors.CredentialExpired),
+        // 403 that is not a rate limit means the connection cannot read the repository's contents.
+        GitHubSourceErrorKind.Forbidden => ApiErrors.GithubReadNotGrantedResult(),
         GitHubSourceErrorKind.NotFound => ApiErrors.NotFoundResult(),
         _ => ApiErrors.GithubUnavailableResult(),
     };
