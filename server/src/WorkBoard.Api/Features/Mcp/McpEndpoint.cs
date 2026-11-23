@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using WorkBoard.Api.Features.Issues;
 using WorkBoard.Api.Features.McpClients;
+using WorkBoard.Api.Features.Members;
 using WorkBoard.Api.Features.Overview;
 using WorkBoard.Api.Features.Search;
 using WorkBoard.Api.Features.Sprints;
@@ -123,9 +124,13 @@ public static class McpEndpoint
                 case "ping":
                     return JsonRpc.Ok(id, new { });
                 case "tools/list":
-                    return JsonRpc.Ok(id, new { tools = McpTools.List });
+                    // Write tools exist only for a write-scope token; a read token never sees or calls them.
+                    return JsonRpc.Ok(id, new
+                    {
+                        tools = client.Scope == "write" ? McpTools.List.Concat(McpWriteTools.List).ToArray() : McpTools.List,
+                    });
                 case "tools/call":
-                    return await CallToolAsync(id.Value, root, client, sessions, gh.Value, opt, ct);
+                    return await CallToolAsync(id.Value, root, client, sessions, gh.Value, opt, http.RequestServices, ct);
                 default:
                     return JsonRpc.Error(id, -32601, "Method not found");
             }
@@ -134,16 +139,39 @@ public static class McpEndpoint
 
     private static async Task<IResult> CallToolAsync(
         JsonElement id, JsonElement root, AuthedClient client, TenantSessions sessions, GitHubAppOptions gh,
-        McpOptions opt, CancellationToken ct)
+        McpOptions opt, IServiceProvider services, CancellationToken ct)
     {
         if (!root.TryGetProperty("params", out var pars) || pars.ValueKind != JsonValueKind.Object
             || !pars.TryGetProperty("name", out var nameEl) || nameEl.ValueKind != JsonValueKind.String)
             return JsonRpc.Error(id, -32602, "Invalid params");
         var name = nameEl.GetString()!;
+        var args = pars.TryGetProperty("arguments", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
+
+        // Write tools: only for a write-scope token, and run through the existing write services as the token's owner.
+        if (McpWriteTools.Names.Contains(name))
+        {
+            if (client.Scope != "write")
+                return JsonRpc.Error(id, -32602, "Unknown tool");
+            try
+            {
+                var resp = await McpWriteTools.RunAsync(name, args, services, client, ct);
+                return resp.StatusCode is >= 200 and < 300
+                    ? JsonRpc.Ok(id, ToolContent.Text(resp.Json ?? "{}"))
+                    : JsonRpc.Ok(id, ToolContent.Error(resp.Json ?? "{\"error\":\"failed\"}"));
+            }
+            catch (ToolException e)
+            {
+                return JsonRpc.Ok(id, ToolContent.Error(e.Message));
+            }
+            catch (Exception)
+            {
+                return JsonRpc.Error(id, -32603, "Internal error");
+            }
+        }
+
         var tool = McpTools.Find(name);
         if (tool is null)
             return JsonRpc.Error(id, -32602, "Unknown tool");
-        var args = pars.TryGetProperty("arguments", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
 
         object? data;
         try
@@ -183,23 +211,30 @@ public static class McpEndpoint
 
     // ---- auth ----
 
-    private sealed record AuthedClient(Guid Id, Guid TenantId, Guid OwnerMemberId, string Scope);
-
     private static async Task<AuthedClient?> AuthenticateAsync(NpgsqlDataSource sync, string token, CancellationToken ct)
     {
         await using var conn = await sync.OpenConnectionAsync(ct);
         var hash = Clients.HashToken(token);
         await using var cmd = conn.CreateCommand();
+        // Sync (RLS-bypass) connection, because the tenant is unknown until the token is found. The owner's full
+        // member row and the company name come along, so a write tool can act as the owner without another query.
         cmd.CommandText = """
-            select c.id, c.tenant_id, c.owner_member_id, c.scope
-              from mcp_clients c join members m on m.id = c.owner_member_id
+            select c.id, c.tenant_id, c.scope, t.name,
+                   m.id, m.github_user_id, m.github_login, m.display_name, m.avatar_url, m.role, m.removed_at
+              from mcp_clients c
+              join members m on m.id = c.owner_member_id
+              join tenants t on t.id = c.tenant_id
              where c.token_hash = @hash and c.revoked_at is null and c.expires_at > now() and m.left_at is null
             """;
         cmd.Parameters.AddWithValue("hash", hash);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct))
             return null;
-        return new AuthedClient(r.GetGuid(0), r.GetGuid(1), r.GetGuid(2), r.GetString(3));
+        var member = new Member(
+            r.GetGuid(4), r.GetInt64(5), r.GetString(6),
+            r.IsDBNull(7) ? null : r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9),
+            r.IsDBNull(10) ? null : r.GetDateTime(10));
+        return new AuthedClient(r.GetGuid(0), r.GetGuid(1), r.GetString(3), r.GetString(2), member);
     }
 
     private static string? BearerToken(string header)
@@ -242,3 +277,9 @@ internal static class RateLimiter
 }
 
 internal sealed class ToolException(string message) : Exception(message);
+
+// An authenticated MCP token: the company it acts in, its scope, and the owner it acts as.
+internal sealed record AuthedClient(Guid Id, Guid TenantId, string TenantName, string Scope, Member Member)
+{
+    public Guid OwnerMemberId => Member.Id;
+}

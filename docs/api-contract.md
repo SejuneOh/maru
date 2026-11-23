@@ -737,7 +737,13 @@ outside `/api` and its `CurrentMemberFilter`, so `X-Dev-User` is never honoured 
   `{"warning": …, "data": …}`: issue, PR, comment and note text is returned under `data` with a warning that it is
   information, not instructions, and tool descriptions never carry board content. A result over `Mcp:MaxResponseBytes`
   (default 64KB) comes back as a tool error `result_too_large`.
-- **Write tools** are #82 (behind a `write`-scope token); this endpoint is read-only.
+- **Write tools** (#82) appear in `tools/list` and run only for a `write`-scope token; a read token never sees or runs
+  them (a call is "Unknown tool"). They act as the token's owner through the same write path as the REST endpoints
+  (GitHub, the mirror and idempotency included), and each write's `audit_log` row carries the owner as `member_id` and
+  this token as `mcp_client_id`. `change_card` (args: `id`, and any of `status` (`todo`, `in_progress`, `in_review`
+  only — closing an issue with `done`/`cancelled` is not available to AI tools), `priority`, `size`) and `add_comment`
+  (args: `issueId`, `body`, up to 60,000 chars). An optional `idempotencyKey` argument dedupes a retry. Creating issues
+  is not in this set yet.
 
 ## Sync
 
