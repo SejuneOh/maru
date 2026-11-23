@@ -651,6 +651,42 @@ html[data-lang-pending] body {
     animation: wb-rise 280ms var(--ease-tool) both;
   }
 
+  /* Repository structure: one box per top-level folder, no fill, a strong inner ring. */
+  .tree-box {
+    min-width: 0;
+    padding: 12px 16px;
+    border-radius: var(--radius-item);
+    box-shadow: inset 0 0 0 1px var(--wb-rule-strong);
+  }
+  /* A row inside the structure. Its focus ring is drawn inside so the card edge never clips it. */
+  .tree-row {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    text-align: left;
+  }
+  .tree-row:focus-visible {
+    outline-offset: -2px;
+  }
+  .tree-row > [data-caret] {
+    color: var(--wb-faint);
+    transition: transform 200ms var(--ease-tool);
+  }
+  .tree-row[aria-expanded="true"] > [data-caret],
+  .tree-row[data-open="true"] > [data-caret] {
+    transform: rotate(90deg);
+  }
+  /* One opened level: indented 12px behind a 1px rule. */
+  .tree-sub {
+    margin-left: 5px;
+    padding-left: 12px;
+    border-left: 1px solid var(--wb-rule);
+    animation: wb-open 200ms var(--ease-tool) both;
+  }
+
   .link {
     color: var(--wb-ink);
     text-decoration: underline;
@@ -684,6 +720,17 @@ html[data-lang-pending] body {
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes wb-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
