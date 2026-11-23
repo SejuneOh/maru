@@ -7,6 +7,7 @@ using WorkBoard.Api.Features.Me;
 using WorkBoard.Api.Features.MeetingNotes;
 using WorkBoard.Api.Features.Milestones;
 using WorkBoard.Api.Features.Overview;
+using WorkBoard.Api.Features.Mcp;
 using WorkBoard.Api.Features.McpClients;
 using WorkBoard.Api.Features.Members;
 using WorkBoard.Api.Features.Projects;
@@ -105,6 +106,9 @@ authed.MapMeetingNotes();
 authed.MapActionItemIssues();
 authed.MapSearch();
 authed.MapSync();
+
+// Outside /api and its CurrentMemberFilter: the MCP endpoint authenticates with its own wbm_ token, never X-Dev-User.
+app.MapMcp();
 
 app.Run();
 return 0;

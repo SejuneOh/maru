@@ -29,7 +29,9 @@ public static class SearchEndpoints
             return await db.ReadAsync(s => SearchAsync(s, term), ct);
         });
 
-    private static async Task<SearchResult> SearchAsync(TenantSession s, string term)
+    public const int MinSearchLength = MinQueryLength;
+
+    public static async Task<SearchResult> SearchAsync(TenantSession s, string term)
     {
         var param = new { term, limit = MaxPerGroup };
 
