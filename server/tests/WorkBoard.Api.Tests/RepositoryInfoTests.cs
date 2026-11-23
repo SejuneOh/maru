@@ -258,6 +258,25 @@ public class RepositoryInfoTests
         Assert.Null(DependencyParsers.Parse("npm", "{not json", 100));
     }
 
+    [Fact]
+    public void Broken_csproj_is_not_a_manifest()
+    {
+        Assert.Null(DependencyParsers.Parse("nuget", "<Project><ItemGroup>", 100));
+    }
+
+    [Fact]
+    public void A_hostile_csproj_is_parsed_quickly()
+    {
+        // A '<PackageReference' with a long run of whitespace and no closing tag drove the old
+        // backtracking regex to quadratic time; the XML parser rejects it in linear time.
+        var hostile = "<PackageReference" + new string(' ', 200_000);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = DependencyParsers.Parse("nuget", hostile, 100);
+        sw.Stop();
+        Assert.Null(result);
+        Assert.True(sw.ElapsedMilliseconds < 1_000, $"parse took {sw.ElapsedMilliseconds}ms");
+    }
+
     // ---- GitHubSource decoding ----
 
     private sealed class Handler(Func<Uri, HttpResponseMessage> respond) : HttpMessageHandler

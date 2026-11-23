@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace WorkBoard.Api.Features.Repositories;
 
@@ -52,8 +54,26 @@ public static partial class DependencyParsers
         }
     }
 
-    private static List<string> ParseCsproj(string text) =>
-        PackageReference().Matches(text).Select(m => m.Groups[1].Value).ToList();
+    private static List<string>? ParseCsproj(string text)
+    {
+        try
+        {
+            // DtdProcessing.Prohibit (the default) blocks XXE; a linear XML parse replaces a
+            // backtracking regex that ran in quadratic time on hostile input.
+            var doc = XDocument.Parse(text);
+            return doc.Descendants()
+                .Where(e => string.Equals(e.Name.LocalName, "PackageReference", StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.Attributes()
+                    .FirstOrDefault(a => string.Equals(a.Name.LocalName, "Include", StringComparison.OrdinalIgnoreCase))?.Value)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v!)
+                .ToList();
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+    }
 
     private static List<string> ParseGoMod(string text)
     {
@@ -138,9 +158,6 @@ public static partial class DependencyParsers
             else if (c == quote) { yield return s[start..i]; quote = '\0'; }
         }
     }
-
-    [GeneratedRegex(@"<PackageReference\s+(?:[^>]*?\s)?Include\s*=\s*""([^""]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex PackageReference();
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*")]
     private static partial Regex RequirementName();
