@@ -200,7 +200,7 @@ function Entry({ node, level, ctx }: { node: RepoTreeNode; level: number; ctx: C
   if (level === 1)
     return (
       <li className="min-w-0">
-        <div className="tree-row">
+        <div className="tree-row" data-open="true">
           <Caret />
           {name}
         </div>
@@ -236,10 +236,17 @@ function Entry({ node, level, ctx }: { node: RepoTreeNode; level: number; ctx: C
     );
   }
 
+  // Depth 3 is the last level the server reads, so this folder cannot open here; link out instead of
+  // showing a caret that does nothing.
   return (
-    <li className="tree-row">
-      <Caret />
-      {name}
+    <li className="tree-row pl-4">
+      <GitHubLink
+        href={ctx.folderUrl(node.path)}
+        label={node.path}
+        className="link inline-flex min-w-0 items-center gap-1"
+      >
+        {name}
+      </GitHubLink>
     </li>
   );
 }

@@ -675,7 +675,8 @@ html[data-lang-pending] body {
     color: var(--wb-faint);
     transition: transform 200ms var(--ease-tool);
   }
-  .tree-row[aria-expanded="true"] > [data-caret] {
+  .tree-row[aria-expanded="true"] > [data-caret],
+  .tree-row[data-open="true"] > [data-caret] {
     transform: rotate(90deg);
   }
   /* One opened level: indented 12px behind a 1px rule. */

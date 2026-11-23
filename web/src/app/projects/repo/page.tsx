@@ -38,11 +38,16 @@ function countByStatus(issues: BoardIssue[]): StatusCounts {
  * line near the limits. `cut` says whether anything was left out.
  */
 function readmeSummary(src: string): { text: string; cut: boolean } {
+  // A line that is only HTML tags, or only badge images (the Markdown renderer cannot show those and
+  // breaks them into stray text), is dropped from the summary.
+  const badgeOnly = (l: string) =>
+    l.trim() !== "" &&
+    l.replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, "").replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim() === "";
   const lines = src
     .replace(/\r\n?/g, "\n")
     .replace(/<!--[\s\S]*?-->/g, "")
     .split("\n")
-    .filter((l) => !/^\s*(<\/?[a-zA-Z][^>]*>\s*)+$/.test(l));
+    .filter((l) => !/^\s*(<\/?[a-zA-Z][^>]*>\s*)+$/.test(l) && !badgeOnly(l));
   const out: string[] = [];
   let chars = 0;
   let fence = false;
