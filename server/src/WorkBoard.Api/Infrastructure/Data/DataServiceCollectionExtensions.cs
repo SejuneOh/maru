@@ -17,6 +17,8 @@ public static class DataServiceCollectionExtensions
         services.AddScoped<CurrentUser>();
         services.AddScoped<ICurrentUser>(sp => sp.GetRequiredService<CurrentUser>());
         services.AddScoped<TenantDb>();
+        services.AddSingleton<TenantSessions>();
+        services.Configure<Features.Mcp.McpOptions>(config.GetSection(Features.Mcp.McpOptions.Section));
         services.AddScoped<IAuditLog, AuditLog>();
         services.AddScoped<IIssueEvents, IssueEvents>();
         services.AddScoped<IGitHubWriteTargets, GitHubWriteTargets>();

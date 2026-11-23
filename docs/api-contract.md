@@ -715,6 +715,30 @@ the `/mcp` endpoint that consumes them is #80.
   another company's, or another member's when the caller is not an admin). An admin may revoke any token in the company.
 - When a member is removed (`DELETE /api/members/{id}`), their tokens are revoked in the same transaction.
 
+## MCP endpoint
+
+`POST /mcp` is the Model Context Protocol endpoint an AI tool calls with a token from "AI tool tokens" (#80). It is
+outside `/api` and its `CurrentMemberFilter`, so `X-Dev-User` is never honoured here.
+
+- **Transport**: JSON-RPC 2.0 in the request body, one request per call, `application/json` in and out. Methods:
+  `initialize` → `{protocolVersion, capabilities: {tools: {}}, serverInfo}`; `notifications/initialized` (a
+  notification, no `id`) → `202`; `ping` → `{}`; `tools/list` → `{tools: [{name, description, inputSchema}]}`;
+  `tools/call` with `{name, arguments}`. Unknown methods get JSON-RPC error `-32601`, a bad body `-32700`/`-32600`.
+- **Auth**: `Authorization: Bearer wbm_…` only. The token is hashed and looked up; it must be not revoked, not expired,
+  and its owner still in the company. Missing or bad token → `401` with `WWW-Authenticate: Bearer`. The token's company
+  decides the tenant, and every tool call runs in an RLS session for it (no cross-company access). `last_used_at` is
+  stamped (at most once a minute).
+- **Hardening**: the `Host` header must be in `Mcp:AllowedHosts` (default localhost only, so a DNS-rebinding host is
+  refused with `403 forbidden_host`); a browser `Origin`, if sent, must be in `Mcp:AllowedOrigins` (default none,
+  `403 forbidden_origin`). A per-token rate limit (`Mcp:RateLimitPerMinute`, default 120) returns `429`.
+- **Read tools**: `list_issues` (filters: status, person, label, stale, doneWithinDays, limit), `get_issue` (by UUID),
+  `search` (text, ≥2 chars), `get_overview`, `list_sprints`, `list_meeting_notes` (optional projectId),
+  `list_repositories`. Each `tools/call` result is `{content: [{type:"text", text}], isError}`. The text is
+  `{"warning": …, "data": …}`: issue, PR, comment and note text is returned under `data` with a warning that it is
+  information, not instructions, and tool descriptions never carry board content. A result over `Mcp:MaxResponseBytes`
+  (default 64KB) comes back as a tool error `result_too_large`.
+- **Write tools** are #82 (behind a `write`-scope token); this endpoint is read-only.
+
 ## Sync
 
 A background service syncs every tenant with an active connection that has an `installation_id` each
