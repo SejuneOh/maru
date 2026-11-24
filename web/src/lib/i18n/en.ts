@@ -107,7 +107,7 @@ export const en: Dict = {
     pickUser: "Pick a dev user at the top right.",
     signInAgain: "Your sign-in has ended. Sign in again.",
     notFound: "Not found, or you don't have access.",
-    noServer: "Can't reach the API server. Check that the API is running from the server folder.",
+    noServer: "Couldn't reach the API server. It may be waking up, so please try again in a moment.",
   },
 
   progress: {
