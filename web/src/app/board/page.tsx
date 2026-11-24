@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { BoardSkeleton, ErrorBox } from "@/components/Feedback";
 import { FilterBar } from "@/components/FilterBar";
 import { FilterChips } from "@/components/FilterChips";
+import { FilterPresets } from "@/components/FilterPresets";
 import { StatusColumns } from "@/components/StatusColumns";
 import { PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
@@ -13,7 +14,7 @@ import { FILTER_KEYS, NO_FILTERS, applyFilters, hasFilters, issuesQuery, readFil
 import { useT } from "@/lib/i18n";
 import { STATUS_ORDER } from "@/lib/labels";
 import { useMe } from "@/lib/me";
-import type { BoardIssue, Member, Project } from "@/lib/types";
+import type { BoardIssue, Member, Project, SprintList } from "@/lib/types";
 
 const VIEW_KEY = "maru:boardView";
 
@@ -67,6 +68,7 @@ export default function BoardPage() {
   // changes apply instantly with no server round trip. Only doneThisWeek narrows the set server-side.
   const issues = useApi<BoardIssue[]>(resolving ? null : issuesQuery({ ...NO_FILTERS, doneThisWeek: filters.doneThisWeek }));
   const projects = useApi<Project[]>("/api/projects");
+  const sprints = useApi<SprintList>("/api/sprints");
   const members = useApi<Member[]>("/api/members");
   // Distinct label names and the tenant's repositories, so the pickers never narrow to the current filter.
   const labelList = useApi<{ name: string; color: string | null }[]>("/api/labels");
@@ -104,13 +106,17 @@ export default function BoardPage() {
   return (
     <div className="flex flex-col gap-4">
       {header}
+      <FilterPresets
+        filters={filters}
+        myLogin={myLogin}
+        activeSprintId={sprints.data?.current[0]?.id ?? null}
+      />
       <FilterBar
         filters={filters}
         projects={projects.data ?? []}
         members={members.data ?? []}
         labels={labels}
         repositories={repositories}
-        myLogin={me.data?.member.githubLogin ?? null}
       />
       <FilterChips
         filters={filters}

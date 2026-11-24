@@ -201,6 +201,11 @@
 - 묶음 머리: 깃발 + 개수(Mono) + 이유(`muted`). 줄은 hover와 초점에 `hover` 바탕.
 - 카드 폭 560px 미만에서는 한 줄이 세 줄로 접힙니다: 번호·경과 / 제목 / 상태·담당.
 
+### 보드 필터·빠른 보기
+
+- 필터 바 위에 빠른 보기 `.seg`를 둡니다: `내 것만 / 이번 스프린트 / 멈춘 일 / 전체`. 로그인 계정이 없으면 "내 것만", 활성 스프린트가 없으면 "이번 스프린트" 칸은 숨깁니다.
+- 빠른 보기는 그 보기로 전환합니다(기존 필터를 비우고 해당 필터만 켬). 선택된 칸은 `aria-pressed`. 세부 필터(상태·담당자·라벨·프로젝트·저장소)는 필터 바의 팝오버 메뉴에서 켜고, 켜진 필터는 `FilterChips`가 지울 수 있는 칩으로 보여 줍니다.
+
 ### 이슈 카드 (보드)
 
 ```
@@ -544,7 +549,7 @@ GitHub 요청 한도 때문에 잠시 쉬는 동기화(`syncPausedUntil`)는 기
 - 다크 값은 `@media (prefers-color-scheme: dark)`의 `:root:not([data-theme="light"])`와 `:root[data-theme="dark"]` 두 곳에 같게 둡니다.
   기본은 OS 설정을 따르고, 밝게·어둡게 토글이 `<html data-theme>`를 고정하면 그쪽이 우선합니다.
 - 이슈 패널 뒤 어둑한 막은 `--wb-scrim`(라이트 `rgb(14 16 19 / 0.32)`, 다크 `rgb(0 0 0 / 0.55)`)입니다.
-- 공용 클래스: `.card`(판), `.btn` / `.btn-primary` / `.btn-lg`(버튼), `.seg`(두 칸 토글), `.flag` / `.flag-fill`(주의), `.tag`(주홍 없는 표지: 연결 종류, 동기화 쉬는 중), `.secret` / `.secret-value`(한 번만 상자), `.gutter`(왼쪽 주홍 거터),
+- 공용 클래스: `.card`(판), `.btn` / `.btn-primary` / `.btn-lg`(버튼), `.seg`(토글 칸 묶음, 둘 이상, 선택된 칸만 흰 판), `.flag` / `.flag-fill`(주의), `.tag`(주홍 없는 표지: 연결 종류, 동기화 쉬는 중), `.secret` / `.secret-value`(한 번만 상자), `.gutter`(왼쪽 주홍 거터),
   `.kbd`(단축키), `.bar`(막대), `.link`, `.tabs`(스스로 스크롤하는 탭 줄), `.reveal`,
   `.prop-trigger` / `.menu`(패널에서 고치는 값과 그 목록) / `.menu-wide` / `.menu-foot`(여러 값을 골라 저장하는 목록과 그 아래 줄), `.pick-box`(여러 개를 고르는 체크 상자: 담당자 목록, 대기 목록 줄), `.busy-dot`(기다리는 중), `.drop-col` / `.card-lifted`(끌어 옮기기), `.notice` / `.undo-clock`(변경 알림과 되돌리기 남은 시간),
   `.spark` / `.spark-line` / `.spark-ideal` / `.spark-base` / `.spark-dot`(남은 일 추이, 점 고리 색은 `--spark-bg`), `.cols`(한 주에 끝낸 일 기둥).
