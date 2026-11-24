@@ -133,11 +133,10 @@ type Props = {
   members: Member[];
   labels: { name: string }[];
   repositories: { id: string; name: string }[];
-  myLogin?: string | null;
 };
 
 /** The pickers that set board filters. Each writes its key into the URL; FilterChips shows and clears them. */
-export function FilterBar({ filters, projects, members, labels, repositories, myLogin }: Props) {
+export function FilterBar({ filters, projects, members, labels, repositories }: Props) {
   const t = useT();
   const p = t.filters.pick;
   const router = useRouter();
@@ -157,11 +156,6 @@ export function FilterBar({ filters, projects, members, labels, repositories, my
     const nextList = current.includes(value) ? current.filter((x) => x !== value) : [...current, value];
     apply((n) => (nextList.length ? n.set(key, nextList.join(",")) : n.delete(key)));
   };
-
-  const mine = myLogin != null && filters.people.length === 1 && filters.people[0] === myLogin;
-  const showAll = () => router.replace(`${pathname}?view=all`, { scroll: false });
-  const allOn = !FILTER_KEYS.some((k) => params.has(k));
-  const pill = (on: boolean) => `${CONTROL} px-3.5 ${on ? TRIGGER_ON : TRIGGER_IDLE}`;
 
   return (
     <div className="flex flex-wrap items-center gap-2" aria-label={t.filters.label}>
@@ -205,15 +199,6 @@ export function FilterBar({ filters, projects, members, labels, repositories, my
         onClear={() => setSingle("repository", null)}
         options={repositories.map((r) => ({ value: r.id, label: r.name }))}
       />
-
-      {myLogin != null && (
-        <button type="button" aria-pressed={mine} onClick={() => setSingle("person", mine ? null : myLogin)} className={pill(mine)}>
-          {p.mine}
-        </button>
-      )}
-      <button type="button" aria-pressed={allOn} onClick={showAll} className={pill(allOn)}>
-        {p.showAll}
-      </button>
     </div>
   );
 }
