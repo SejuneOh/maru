@@ -119,15 +119,39 @@ async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
   return (await send<T>(path, init)).data;
 }
 
+const COLD_START_RETRIES = 3;
+const COLD_START_STATUSES = new Set([502, 503, 504]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function send<T>(path: string, init: ReqInit = {}): Promise<{ status: number; data: T }> {
   const headers: Record<string, string> = { Accept: "application/json", ...(await authHeaders()), ...init.headers };
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(`${API_URL}${path}`, {
-    method: init.method ?? "GET",
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    keepalive: init.keepalive,
-  });
+  const method = init.method ?? "GET";
+  // A free Render instance can be asleep; its first read fails or answers 5xx while it wakes. Retry reads
+  // only, with backoff. Writes are never retried, so a request that did land is not sent twice.
+  const retryable = method === "GET";
+  let res!: Response;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(`${API_URL}${path}`, {
+        method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        keepalive: init.keepalive,
+      });
+    } catch (err) {
+      if (retryable && attempt < COLD_START_RETRIES) {
+        await sleep(Math.min(500 * 2 ** attempt, 4000));
+        continue;
+      }
+      throw err;
+    }
+    if (retryable && COLD_START_STATUSES.has(res.status) && attempt < COLD_START_RETRIES) {
+      await sleep(Math.min(500 * 2 ** attempt, 4000));
+      continue;
+    }
+    break;
+  }
   if (!res.ok) {
     const { code, body } = await readBody(res);
     if (res.status === 401 && code === "unauthenticated" && headers.Authorization) {

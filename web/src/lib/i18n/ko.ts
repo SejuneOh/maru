@@ -115,7 +115,7 @@ export const ko = {
     pickUser: "오른쪽 위에서 개발용 사용자를 선택하세요.",
     signInAgain: "로그인이 끝났습니다. 다시 로그인하세요.",
     notFound: "찾을 수 없거나 볼 권한이 없습니다.",
-    noServer: "API 서버에 연결할 수 없습니다. server 폴더에서 API를 실행했는지 확인하세요.",
+    noServer: "API 서버에 연결하지 못했습니다. 서버가 깨어나는 중일 수 있으니 잠시 후 다시 시도해 주세요.",
   },
 
   progress: {
