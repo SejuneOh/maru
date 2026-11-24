@@ -231,8 +231,6 @@ export const en: Dict = {
       label: "Label",
       repository: "Repo",
       any: "All",
-      mine: "Mine only",
-      showAll: "All",
       search: "Search",
       clear: "Clear",
       empty: "No options",
@@ -726,6 +724,13 @@ export const en: Dict = {
     filtered: (n: number) => `${n} matching`,
     all: (n: number) => `${n} total`,
     more: (n: number) => `Show ${n} more`,
+    presets: {
+      label: "Quick views",
+      mine: "Mine",
+      sprint: "This sprint",
+      stale: "Stale",
+      all: "All",
+    },
   },
 
   people: {

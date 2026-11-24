@@ -241,8 +241,6 @@ export const ko = {
       label: "라벨",
       repository: "저장소",
       any: "전체",
-      mine: "내 것만",
-      showAll: "전체",
       search: "검색",
       clear: "지우기",
       empty: "항목 없음",
@@ -735,6 +733,13 @@ export const ko = {
     filtered: (n: number) => `조건에 맞는 일 ${n}건`,
     all: (n: number) => `전체 ${n}건`,
     more: (n: number) => `${n}건 더보기`,
+    presets: {
+      label: "빠른 보기",
+      mine: "내 것만",
+      sprint: "이번 스프린트",
+      stale: "멈춘 일",
+      all: "전체",
+    },
   },
 
   people: {
